@@ -1,0 +1,11 @@
+{
+  "api_key": "ragflow-lmBmCb-T_yV1D8gaV65ThoTLPLWsAr4zKUh72XKFFBs",
+  "base_url": "http://127.0.0.1",
+  "dataset_name": "知识库调研",
+  "default_conversation_name": "知识库问答",
+  "timeout": 10,
+  "log_level": "INFO",
+  "log_file": "/log",
+  "max_retries": 3,
+  "retry_delay": 1.0
+}

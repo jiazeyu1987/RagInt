@@ -1,0 +1,18 @@
+
+# RAGFlow Retrieval Sample
+
+This document contains information about RAGFlow retrieval capabilities.
+
+## Features
+- Semantic search
+- Vector similarity
+- Document chunking
+- Fast retrieval
+
+## Usage
+You can query this knowledge base to test retrieval functionality.
+
+## Best Practices
+- Use clear, specific questions
+- Check the sources provided
+- Verify the answers against the original documents

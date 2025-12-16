@@ -1,0 +1,6 @@
+{
+  "ragflow": {
+    "api_key": "YOUR_RAGFLOW_API_KEY_HERE",
+    "base_url": "http://localhost:9380"
+  }
+}
