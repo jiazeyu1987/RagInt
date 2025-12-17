@@ -3,6 +3,15 @@
   "base_url": "http://127.0.0.1",
   "dataset_name": "知识库调研",
   "default_conversation_name": "知识库问答",
+  "text_cleaning": {
+    "enabled": true,
+    "show_cleaned_output": false,
+    "language": "zh-CN",
+    "cleaning_level": "standard",
+    "tts_buffer_enabled": true,
+    "semantic_chunking": true,
+    "max_chunk_size": 200
+  },
   "timeout": 10,
   "log_level": "INFO",
   "log_file": "/log",
