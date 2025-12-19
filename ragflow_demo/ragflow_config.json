@@ -1,8 +1,8 @@
 {
   "api_key": "ragflow-lmBmCb-T_yV1D8gaV65ThoTLPLWsAr4zKUh72XKFFBs",
   "base_url": "http://127.0.0.1",
-  "dataset_name": "知识库调研",
-  "default_conversation_name": "知识库问答",
+  "dataset_name": "展厅",
+  "default_conversation_name": "展厅聊天",
   "text_cleaning": {
     "enabled": true,
     "show_cleaned_output": false,
