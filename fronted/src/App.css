@@ -1,0 +1,192 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  min-height: 100vh;
+}
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.container {
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+  padding: 40px;
+  width: 100%;
+  max-width: 600px;
+}
+
+h1 {
+  text-align: center;
+  color: #333;
+  margin-bottom: 40px;
+  font-size: 2.5em;
+}
+
+.input-section {
+  margin-bottom: 30px;
+}
+
+.voice-input {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.record-btn {
+  background: #4CAF50;
+  color: white;
+  border: none;
+  border-radius: 50px;
+  padding: 15px 30px;
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.record-btn:hover {
+  background: #45a049;
+  transform: translateY(-2px);
+}
+
+.record-btn:active {
+  transform: translateY(0);
+}
+
+.record-btn.recording {
+  background: #f44336;
+  animation: pulse 1s infinite;
+}
+
+.record-btn:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+  transform: none;
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(244, 67, 54, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(244, 67, 54, 0);
+  }
+}
+
+.text-input {
+  display: flex;
+  gap: 10px;
+}
+
+.text-input input {
+  flex: 1;
+  padding: 12px 16px;
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  font-size: 16px;
+  outline: none;
+  transition: border-color 0.3s;
+}
+
+.text-input input:focus {
+  border-color: #4CAF50;
+}
+
+.text-input input:disabled {
+  background: #f5f5f5;
+  cursor: not-allowed;
+}
+
+.text-input button {
+  background: #2196F3;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 12px 24px;
+  font-size: 16px;
+  cursor: pointer;
+  transition: background 0.3s;
+}
+
+.text-input button:hover:not(:disabled) {
+  background: #1976D2;
+}
+
+.text-input button:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+.question-section, .answer-section {
+  margin-bottom: 20px;
+  padding: 20px;
+  border-radius: 8px;
+  background: #f9f9f9;
+}
+
+.question-section {
+  background: #e3f2fd;
+}
+
+.answer-section {
+  background: #e8f5e8;
+}
+
+.question-section h3, .answer-section h3 {
+  color: #333;
+  margin-bottom: 10px;
+  font-size: 1.2em;
+}
+
+.answer-section p {
+  color: #333;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.loading {
+  text-align: center;
+  padding: 20px;
+  color: #666;
+  font-style: italic;
+}
+
+@media (max-width: 768px) {
+  .container {
+    padding: 20px;
+    margin: 10px;
+  }
+
+  h1 {
+    font-size: 2em;
+  }
+
+  .text-input {
+    flex-direction: column;
+  }
+
+  .text-input button {
+    width: 100%;
+  }
+
+  .record-btn {
+    width: 100%;
+    max-width: 200px;
+  }
+}
