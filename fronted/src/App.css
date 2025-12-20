@@ -167,6 +167,34 @@ h1 {
   font-style: italic;
 }
 
+.queue-status {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  color: white;
+  padding: 12px;
+  border-radius: 8px;
+  text-align: center;
+  margin-top: 15px;
+  font-size: 0.85em;
+  box-shadow: 0 4px 8px rgba(240, 147, 251, 0.3);
+  animation: statusPulse 2s ease-in-out infinite;
+}
+
+.queue-status small {
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+
+@keyframes statusPulse {
+  0%, 100% {
+    opacity: 0.9;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
 @media (max-width: 768px) {
   .container {
     padding: 20px;
