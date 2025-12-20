@@ -19,8 +19,8 @@
   "tts": {
     "provider": "bailian",
     "mimetype": "audio/wav",
-    "debug_dump_dir": "Audio",
-    "debug_dump_max_bytes": 20000000,
+    "debug_dump_dir": "",
+    "debug_dump_max_bytes": 0,
     "local": {
       "enabled": false,
       "url": "http://127.0.0.1:9880/tts",

@@ -207,71 +207,6 @@ def _get_nested(config: dict, path: list, default=None):
     return cur
 
 
-def _resolve_dump_dir(app_config: dict) -> str:
-    dump_dir = str(_get_nested(app_config, ["tts", "debug_dump_dir"], "") or "").strip()
-    if not dump_dir:
-        return ""
-    p = Path(dump_dir)
-    if p.is_absolute():
-        return str(p)
-    # Resolve relative paths against project root so runs from different cwd are consistent.
-    project_root = Path(__file__).parent.parent
-    return str((project_root / p).resolve())
-
-
-def _fix_wav_sizes_inplace(path: str) -> bool:
-    """
-    Fix RIFF/data chunk sizes for streamed WAV files where sizes are placeholders (e.g. 0x7FFFFFFF).
-
-    This makes saved analysis files playable in more tools; it does not affect the response stream.
-    """
-    try:
-        p = Path(path)
-        size = p.stat().st_size
-        if size < 44:
-            return False
-        with p.open("r+b") as f:
-            header = f.read(4096)
-            if len(header) < 44 or header[:4] != b"RIFF" or header[8:12] != b"WAVE":
-                return False
-
-            def u32(off: int) -> int:
-                return int.from_bytes(header[off:off + 4], "little", signed=False)
-
-            riff_size_field = u32(4)
-            offset = 12
-            data_size_off = None
-            data_payload_off = None
-            while offset + 8 <= len(header):
-                cid = header[offset:offset + 4]
-                csz = u32(offset + 4)
-                payload = offset + 8
-                if cid == b"data":
-                    data_size_off = offset + 4
-                    data_payload_off = payload
-                    break
-                offset = payload + csz
-                if offset % 2 == 1:
-                    offset += 1
-
-            if data_size_off is None or data_payload_off is None:
-                return False
-
-            new_riff_size = max(0, size - 8)
-            new_data_size = max(0, size - data_payload_off)
-            # Only patch when it looks like a placeholder or mismatch.
-            if riff_size_field == new_riff_size and u32(data_size_off) == new_data_size:
-                return True
-
-            f.seek(4)
-            f.write(int(new_riff_size).to_bytes(4, "little", signed=False))
-            f.seek(data_size_off)
-            f.write(int(new_data_size).to_bytes(4, "little", signed=False))
-        return True
-    except Exception:
-        return False
-
-
 def _stream_local_gpt_sovits(text: str, request_id: str, config: dict):
     tts_cfg = _get_nested(config, ["tts", "local"], {}) or {}
     if tts_cfg.get("enabled") is False:
@@ -1115,47 +1050,14 @@ def text_to_speech():
     logger.info(f"[{request_id}] tts_provider={provider} response_mimetype={_get_nested(app_config, ['tts', 'mimetype'], 'audio/wav')}")
 
     def generate_audio():
-        dump_dir = _resolve_dump_dir(app_config)
-        dump_max_bytes = int(_get_nested(app_config, ["tts", "debug_dump_max_bytes"], 0) or 0)
-        dump_file = None
-        dumped = 0
-        dump_path = None
         try:
             logger.info(f"[{request_id}] 开始TTS音频生成 provider={provider}")
-            for chunk in _stream_tts_provider(text=text, request_id=request_id, provider=provider, config=app_config):
-                if chunk and dump_dir and dump_max_bytes > 0 and dump_file is None:
-                    try:
-                        Path(dump_dir).mkdir(parents=True, exist_ok=True)
-                        ts = time.strftime("%Y%m%d_%H%M%S")
-                        dump_path = Path(dump_dir) / f"{request_id}_segna_{provider}_{ts}.wav"
-                        dump_file = open(dump_path, "wb")
-                        logger.info(
-                            f"[{request_id}] tts_dump_open endpoint=/api/text_to_speech path={dump_path} max_bytes={dump_max_bytes}"
-                        )
-                    except Exception as e:
-                        logger.warning(f"[{request_id}] tts_dump_open_failed {e}")
-                        dump_file = None
-
-                if chunk and dump_file and dumped < dump_max_bytes:
-                    to_write = chunk[: max(0, dump_max_bytes - dumped)]
-                    if to_write:
-                        dump_file.write(to_write)
-                        dumped += len(to_write)
-                yield chunk
+            yield from _stream_tts_provider(text=text, request_id=request_id, provider=provider, config=app_config)
         except GeneratorExit:
             logger.info(f"[{request_id}] tts_generator_exit endpoint=/api/text_to_speech (client_disconnect?)")
             raise
         except Exception as e:
             logger.error(f"[{request_id}] TTS音频生成异常: {e}", exc_info=True)
-        finally:
-            with contextlib.suppress(Exception):
-                if dump_file:
-                    dump_file.flush()
-                    dump_file.close()
-                    fixed = _fix_wav_sizes_inplace(str(dump_path)) if dump_path else False
-                    logger.info(
-                        f"[{request_id}] tts_dump_close endpoint=/api/text_to_speech path={dump_path} bytes={dumped} wav_fix={fixed}"
-                    )
 
     return Response(
         generate_audio(),
@@ -1208,11 +1110,6 @@ def text_to_speech_stream():
     )
 
     def generate_streaming_audio():
-        dump_dir = _resolve_dump_dir(app_config)
-        dump_max_bytes = int(_get_nested(app_config, ["tts", "debug_dump_max_bytes"], 0) or 0)
-        dump_file = None
-        dumped = 0
-        dump_path = None
         try:
             logger.info(f"[{request_id}] 开始流式TTS音频生成 provider={provider}")
 
@@ -1223,25 +1120,6 @@ def text_to_speech_stream():
             for chunk in _stream_tts_provider(text=text, request_id=request_id, provider=provider, config=app_config):
                 if not chunk:
                     continue
-                if chunk and dump_dir and dump_max_bytes > 0 and dump_file is None:
-                    try:
-                        Path(dump_dir).mkdir(parents=True, exist_ok=True)
-                        ts = time.strftime("%Y%m%d_%H%M%S")
-                        seg = str(segment_index) if segment_index is not None else "na"
-                        dump_path = Path(dump_dir) / f"{request_id}_seg{seg}_{provider}_{ts}.wav"
-                        dump_file = open(dump_path, "wb")
-                        logger.info(
-                            f"[{request_id}] tts_dump_open endpoint=/api/text_to_speech_stream path={dump_path} max_bytes={dump_max_bytes}"
-                        )
-                    except Exception as e:
-                        logger.warning(f"[{request_id}] tts_dump_open_failed {e}")
-                        dump_file = None
-
-                if dump_file and dumped < dump_max_bytes:
-                    to_write = chunk[: max(0, dump_max_bytes - dumped)]
-                    if to_write:
-                        dump_file.write(to_write)
-                        dumped += len(to_write)
                 chunk_count += 1
                 total_size += len(chunk)
                 if first_audio_chunk_at is None:
@@ -1326,15 +1204,6 @@ def text_to_speech_stream():
             raise
         except Exception as e:
             logger.error(f"[{request_id}] tts_stream_exception {e} provider={provider}", exc_info=True)
-        finally:
-            with contextlib.suppress(Exception):
-                if dump_file:
-                    dump_file.flush()
-                    dump_file.close()
-                    fixed = _fix_wav_sizes_inplace(str(dump_path)) if dump_path else False
-                    logger.info(
-                        f"[{request_id}] tts_dump_close endpoint=/api/text_to_speech_stream path={dump_path} bytes={dumped} wav_fix={fixed}"
-                    )
 
     return Response(
         generate_streaming_audio(),
@@ -1344,6 +1213,7 @@ def text_to_speech_stream():
             "X-Accel-Buffering": "no",
         },
     )
+
 
 if __name__ == '__main__':
     logger.info("启动语音问答后端服务")

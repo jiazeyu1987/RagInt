@@ -93,20 +93,35 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
     throw new Error('WebAudio is not supported');
   }
 
-  if (!audioContextRef.current) {
-    audioContextRef.current = new AudioContextClass();
-  }
-  const audioCtx = audioContextRef.current;
-  if (audioCtx.state === 'suspended') {
+  const abortController = new AbortController();
+  let audioCtx = null;
+  let processor = null;
+  let pcmQueue = [];
+  let pcmQueueIndex = 0;
+  let pcmQueueOffset = 0;
+  let ended = false;
+  let drainedResolver = null;
+  let drainedPromise = new Promise((resolve) => (drainedResolver = resolve));
+
+  const stopPlayback = () => {
     try {
-      await audioCtx.resume();
+      abortController.abort();
     } catch (_) {
       // ignore
     }
-  }
+    try {
+      if (processor) processor.disconnect();
+    } catch (_) {
+      // ignore
+    }
+    try {
+      if (drainedResolver) drainedResolver();
+    } catch (_) {
+      // ignore
+    }
+  };
 
-  const abortController = new AbortController();
-  currentAudioRef.current = { stop: () => abortController.abort() };
+  currentAudioRef.current = { stop: stopPlayback };
 
   const sources = [];
   const stopAllSources = () => {
@@ -166,20 +181,159 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
     let headerBuffer = new Uint8Array(0);
     let wavInfo = null;
     let pcmRemainder = new Uint8Array(0);
-    let nextStartTime = audioCtx.currentTime + 0.05;
     let sanitySamples = [];
     let sanityDone = false;
+    let warnedRateMismatch = false;
+    let resampleState = null;
 
-    const schedulePcmChunk = (pcmBytes) => {
+    const ensureAudioContext = async (targetSampleRate) => {
+      if (audioContextRef.current && audioContextRef.current.sampleRate !== targetSampleRate) {
+        try {
+          await audioContextRef.current.close();
+        } catch (_) {
+          // ignore
+        }
+        audioContextRef.current = null;
+      }
+      if (!audioContextRef.current) {
+        try {
+          audioContextRef.current = new AudioContextClass({ sampleRate: targetSampleRate });
+        } catch (_) {
+          // Fallback: let browser pick the hardware sample rate (will resample internally).
+          audioContextRef.current = new AudioContextClass();
+        }
+      }
+      audioCtx = audioContextRef.current;
+      if (audioCtx.state === 'suspended') {
+        try {
+          await audioCtx.resume();
+        } catch (_) {
+          // ignore
+        }
+      }
+    };
+
+    const ensureProcessor = () => {
+      if (!audioCtx || !wavInfo) return;
+      if (processor) return;
+      const bufferSize = 2048;
+      processor = audioCtx.createScriptProcessor(bufferSize, 0, wavInfo.channels);
+      processor.onaudioprocess = (e) => {
+        const frames = e.outputBuffer.length;
+        const channels = wavInfo.channels;
+
+        for (let ch = 0; ch < channels; ch++) {
+          const out = e.outputBuffer.getChannelData(ch);
+          out.fill(0);
+        }
+
+        let framesWritten = 0;
+        while (framesWritten < frames) {
+          if (pcmQueueIndex >= pcmQueue.length) break;
+          const chunk = pcmQueue[pcmQueueIndex];
+          const chunkFrames = chunk.length / channels;
+          const availableFrames = chunkFrames - pcmQueueOffset;
+          if (availableFrames <= 0) {
+            pcmQueueIndex += 1;
+            pcmQueueOffset = 0;
+            continue;
+          }
+          const toCopy = Math.min(frames - framesWritten, availableFrames);
+
+          for (let ch = 0; ch < channels; ch++) {
+            const out = e.outputBuffer.getChannelData(ch);
+            for (let i = 0; i < toCopy; i++) {
+              out[framesWritten + i] = chunk[(pcmQueueOffset + i) * channels + ch];
+            }
+          }
+
+          pcmQueueOffset += toCopy;
+          framesWritten += toCopy;
+        }
+
+        if (ended && pcmQueueIndex >= pcmQueue.length) {
+          try {
+            processor.disconnect();
+          } catch (_) {
+            // ignore
+          }
+          processor = null;
+          if (drainedResolver) drainedResolver();
+          drainedResolver = null;
+        }
+      };
+      processor.connect(audioCtx.destination);
+    };
+
+    const ensureResampler = () => {
+      if (!audioCtx || !wavInfo) return;
+      if (audioCtx.sampleRate === wavInfo.sampleRate) {
+        resampleState = null;
+        return;
+      }
+      if (!warnedRateMismatch) {
+        warnedRateMismatch = true;
+        console.warn(
+          `[TTS] sampleRate mismatch: wav=${wavInfo.sampleRate}Hz audioCtx=${audioCtx.sampleRate}Hz; enabling resampler`
+        );
+      }
+      if (resampleState) return;
+      resampleState = {
+        channels: wavInfo.channels,
+        srcRate: wavInfo.sampleRate,
+        dstRate: audioCtx.sampleRate,
+        step: wavInfo.sampleRate / audioCtx.sampleRate,
+        srcPos: 0,
+        carry: new Float32Array(0),
+      };
+    };
+
+    const resampleInterleaved = (inputInterleaved) => {
+      if (!resampleState) return inputInterleaved;
+      const { channels, step } = resampleState;
+      const carry = resampleState.carry;
+      const merged = new Float32Array(carry.length + inputInterleaved.length);
+      merged.set(carry, 0);
+      merged.set(inputInterleaved, carry.length);
+
+      const totalFrames = merged.length / channels;
+      let srcPos = resampleState.srcPos;
+      if (totalFrames < 2) {
+        resampleState.carry = merged;
+        resampleState.srcPos = srcPos;
+        return new Float32Array(0);
+      }
+
+      const out = [];
+      while (srcPos + 1 < totalFrames) {
+        const i0 = Math.floor(srcPos);
+        const frac = srcPos - i0;
+        const base0 = i0 * channels;
+        const base1 = (i0 + 1) * channels;
+        for (let ch = 0; ch < channels; ch++) {
+          const s0 = merged[base0 + ch];
+          const s1 = merged[base1 + ch];
+          out.push(s0 + (s1 - s0) * frac);
+        }
+        srcPos += step;
+      }
+
+      const carryStartFrame = Math.floor(srcPos);
+      const carryStart = carryStartFrame * channels;
+      resampleState.carry = carryStart < merged.length ? merged.slice(carryStart) : new Float32Array(0);
+      resampleState.srcPos = srcPos - carryStartFrame;
+
+      return new Float32Array(out);
+    };
+
+    const enqueuePcmChunk = (pcmBytes) => {
       if (!wavInfo) return;
+      if (!audioCtx) return;
       if (wavInfo.bitsPerSample !== 16) throw new Error(`Unsupported bitsPerSample: ${wavInfo.bitsPerSample}`);
 
       const blockAlign = wavInfo.channels * 2;
       const usableBytes = pcmBytes.byteLength - (pcmBytes.byteLength % blockAlign);
       if (usableBytes <= 0) return;
-
-      const frames = usableBytes / blockAlign;
-      const audioBuffer = audioCtx.createBuffer(wavInfo.channels, frames, wavInfo.sampleRate);
 
       const aligned = pcmBytes.slice(0, usableBytes);
       const int16 = new Int16Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 2);
@@ -213,21 +367,14 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
         }
       }
 
-      for (let ch = 0; ch < wavInfo.channels; ch++) {
-        const channelData = audioBuffer.getChannelData(ch);
-        for (let i = 0; i < frames; i++) {
-          channelData[i] = int16[i * wavInfo.channels + ch] / 32768;
-        }
+      // Convert to interleaved float32 (matches ScriptProcessor fill loop)
+      const floats = new Float32Array(int16.length);
+      for (let i = 0; i < int16.length; i++) {
+        floats[i] = int16[i] / 32768;
       }
-
-      const src = audioCtx.createBufferSource();
-      src.buffer = audioBuffer;
-      src.connect(audioCtx.destination);
-      sources.push(src);
-
-      const when = Math.max(nextStartTime, audioCtx.currentTime + 0.01);
-      src.start(when);
-      nextStartTime = when + audioBuffer.duration;
+      const resampled = resampleState ? resampleInterleaved(floats) : floats;
+      if (resampled.length) pcmQueue.push(resampled);
+      ensureProcessor();
     };
 
     while (true) {
@@ -255,9 +402,12 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
         }
 
         if (wavInfo.audioFormatCode !== 1) throw new Error(`Unsupported WAV audioFormat: ${wavInfo.audioFormatCode}`);
+        await ensureAudioContext(wavInfo.sampleRate);
+        ensureResampler();
+        ensureProcessor();
 
         const dataStart = wavInfo.dataOffset;
-        if (headerBuffer.byteLength > dataStart) schedulePcmChunk(headerBuffer.slice(dataStart));
+        if (headerBuffer.byteLength > dataStart) enqueuePcmChunk(headerBuffer.slice(dataStart));
         headerBuffer = new Uint8Array(0);
         continue;
       }
@@ -273,7 +423,7 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
       const blockAlign = wavInfo.channels * 2;
       const usableBytes = chunk.byteLength - (chunk.byteLength % blockAlign);
       if (usableBytes > 0) {
-        schedulePcmChunk(chunk.slice(0, usableBytes));
+        enqueuePcmChunk(chunk.slice(0, usableBytes));
       }
       const leftover = chunk.byteLength - usableBytes;
       if (leftover > 0) {
@@ -281,8 +431,8 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
       }
     }
 
-    const remainingMs = Math.max(0, (nextStartTime - audioCtx.currentTime) * 1000);
-    await new Promise((resolve) => setTimeout(resolve, remainingMs + 50));
+    ended = true;
+    await drainedPromise;
   } catch (err) {
     stopAllSources();
     if (abortController.signal.aborted) return;
@@ -297,6 +447,7 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
     }
     throw err;
   } finally {
+    stopPlayback();
     stopAllSources();
   }
 }
@@ -323,6 +474,7 @@ function App() {
   const currentAudioRef = useRef(null);
   const receivedSegmentsRef = useRef(false);
   const audioContextRef = useRef(null);
+  const USE_SAVED_TTS = false;
 
   // TTS预生成配置
   const MAX_PRE_GENERATE_COUNT = 2; // 最多预生成2段音频
@@ -441,6 +593,16 @@ function App() {
       currentAudioRef.current = null;
     }
 
+    // Reset WebAudio between questions to avoid stale audio graph causing noise on subsequent runs.
+    if (audioContextRef.current) {
+      try {
+        await audioContextRef.current.close();
+      } catch (_) {
+        // ignore
+      }
+      audioContextRef.current = null;
+    }
+
     // 终止之前的工作线程
     if (ttsGeneratorPromiseRef.current) {
       ttsGeneratorPromiseRef.current = null;
@@ -457,7 +619,7 @@ function App() {
         console.log(`🎵 开始生成音频: "${segmentText.substring(0, 30)}..."`);
         const seg = String(segmentText || '').trim();
         if (!seg) return null;
-        const url = new URL('http://localhost:8000/api/text_to_speech_stream');
+        const url = new URL(USE_SAVED_TTS ? 'http://localhost:8000/api/text_to_speech_saved' : 'http://localhost:8000/api/text_to_speech_stream');
         url.searchParams.set('text', seg);
         url.searchParams.set('request_id', requestId);
         url.searchParams.set('segment_index', String(segmentIndex++));
@@ -562,12 +724,21 @@ function App() {
             continue;
           }
 
-          await playWavStreamViaWebAudio(
-            audioItem.url,
-            audioContextRef,
-            currentAudioRef,
-            () => playAudioUrl(audioItem.url, audioItem.text)
-          );
+          if (USE_SAVED_TTS) {
+            try {
+              await playWavViaDecodeAudioData(audioItem.url, audioContextRef, currentAudioRef);
+            } catch (err) {
+              console.warn('[TTS] saved playback failed, fallback to <audio>:', err);
+              await playAudioUrl(audioItem.url, audioItem.text);
+            }
+          } else {
+            await playWavStreamViaWebAudio(
+              audioItem.url,
+              audioContextRef,
+              currentAudioRef,
+              () => playAudioUrl(audioItem.url, audioItem.text)
+            );
+          }
         }
       })()
         .catch((err) => {
