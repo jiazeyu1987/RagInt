@@ -10,11 +10,17 @@
     "cleaning_level": "standard",
     "tts_buffer_enabled": true,
     "semantic_chunking": true,
-    "max_chunk_size": 200
+    "max_chunk_size": 260,
+    "start_tts_on_first_chunk": true,
+    "first_segment_min_chars": 120,
+    "segment_flush_interval_s": 1.2,
+    "segment_min_chars": 120
   },
   "tts": {
     "provider": "bailian",
     "mimetype": "audio/wav",
+    "debug_dump_dir": "Audio",
+    "debug_dump_max_bytes": 20000000,
     "local": {
       "enabled": false,
       "url": "http://127.0.0.1:9880/tts",
@@ -36,6 +42,8 @@
       "use_connection_pool": true,
       "pool_max_size": 3,
       "queue_max_chunks": 256,
+      "first_chunk_timeout_s": 12.0,
+      "pcm_probe_target_bytes": 32000,
       "volume": 50,
       "speech_rate": 1.0,
       "pitch_rate": 1.0,

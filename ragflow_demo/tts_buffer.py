@@ -49,9 +49,9 @@ class TTSBuffer:
         """Initialize patterns for semantic boundary detection"""
         if self.language == 'zh-CN':
             # Chinese sentence boundaries
-            self.sentence_boundaries = ['。', '！', '？', '；', '：', '\n\n']
-            self.clause_boundaries = ['，', '；', '：', '、', ' ']
-            self.pause_boundaries = ['。', '！', '？', '\n']
+            self.sentence_boundaries = ['。', '！', '？', '\n\n']
+            self.clause_boundaries = ['，', '、', '；', '：', ' ', '\n']
+            self.pause_boundaries = ['，', '、', '；', '：', '。', '！', '？', '\n']
         else:
             # English sentence boundaries
             self.sentence_boundaries = ['.', '!', '?', ';', ':', '\n\n']
@@ -115,24 +115,30 @@ class TTSBuffer:
 
     def _extract_sentence_chunks(self) -> List[str]:
         """Extract complete sentences from current buffer"""
-        chunks = []
+        chunks: List[str] = []
 
-        # Look for sentence boundaries in current sentence
-        for boundary in self.sentence_boundaries:
-            if boundary in self.current_sentence:
-                parts = self.current_sentence.split(boundary)
+        while True:
+            earliest_idx = None
+            chosen_boundary = None
+            for boundary in self.sentence_boundaries:
+                idx = self.current_sentence.find(boundary)
+                if idx >= 0 and (earliest_idx is None or idx < earliest_idx):
+                    earliest_idx = idx
+                    chosen_boundary = boundary
 
-                for i in range(len(parts) - 1):
-                    sentence_part = parts[i] + boundary
-
-                    # Check if this is a meaningful sentence
-                    if self._is_meaningful_chunk(sentence_part):
-                        chunks.append(sentence_part.strip())
-                        self.sentences.append(sentence_part.strip())
-
-                # Keep the remainder in current sentence
-                self.current_sentence = parts[-1]
+            if earliest_idx is None or chosen_boundary is None:
                 break
+
+            end = earliest_idx + len(chosen_boundary)
+            sentence_part = self.current_sentence[:end]
+            remainder = self.current_sentence[end:]
+
+            if self._is_meaningful_chunk(sentence_part):
+                chunk = sentence_part.strip()
+                chunks.append(chunk)
+                self.sentences.append(chunk)
+
+            self.current_sentence = remainder.lstrip()
 
         return chunks
 
@@ -154,18 +160,26 @@ class TTSBuffer:
 
     def _extract_pause_chunks(self) -> List[str]:
         """Extract chunks at natural pause points"""
-        chunks = []
+        chunks: List[str] = []
 
-        # Look for pause boundaries
+        earliest_idx = None
+        chosen_boundary = None
         for boundary in self.pause_boundaries:
-            if boundary in self.current_sentence:
-                parts = self.current_sentence.split(boundary, 1)
+            idx = self.current_sentence.find(boundary)
+            if idx >= 0 and (earliest_idx is None or idx < earliest_idx):
+                earliest_idx = idx
+                chosen_boundary = boundary
 
-                if len(parts) > 1 and self._is_meaningful_chunk(parts[0] + boundary):
-                    chunk = (parts[0] + boundary).strip()
-                    chunks.append(chunk)
-                    self.current_sentence = parts[1].lstrip()
-                    break
+        if earliest_idx is None or chosen_boundary is None:
+            return chunks
+
+        end = earliest_idx + len(chosen_boundary)
+        candidate = self.current_sentence[:end]
+        remainder = self.current_sentence[end:]
+
+        if len(candidate.strip()) >= 6 and self._is_meaningful_chunk(candidate):
+            chunks.append(candidate.strip())
+            self.current_sentence = remainder.lstrip()
 
         return chunks
 
@@ -174,14 +188,20 @@ class TTSBuffer:
         if len(text) <= self.max_chunk_size:
             return len(text)
 
-        # Prefer clause boundaries
-        for i in range(self.max_chunk_size - 10, min(len(text), self.max_chunk_size + 10)):
-            if i < len(text) and text[i] in self.clause_boundaries:
+        # Prefer clause boundaries near max_chunk_size (search backward first)
+        start = min(len(text) - 1, self.max_chunk_size - 1)
+        for i in range(start, max(0, start - 40), -1):
+            if text[i] in self.clause_boundaries:
                 return i + 1
+        # If none found behind, allow small forward scan
+        for i in range(self.max_chunk_size, min(len(text), self.max_chunk_size + 20)):
+            if text[i - 1] in self.clause_boundaries:
+                return i
 
         # Prefer spaces
-        for i in range(self.max_chunk_size, max(0, self.max_chunk_size - 20), -1):
-            if i < len(text) and text[i].isspace():
+        start = min(len(text) - 1, self.max_chunk_size - 1)
+        for i in range(start, max(0, start - 40), -1):
+            if text[i].isspace():
                 return i + 1
 
         # Fallback: split at max_chunk_size
@@ -300,8 +320,39 @@ class TTSBuffer:
         if not self._is_meaningful_chunk(text):
             return []
 
-        self.current_sentence = ""
-        return [text]
+        split_pos = self._find_force_emit_position(text, min_chars=min_chars)
+        if split_pos <= 0:
+            return []
+
+        chunk = text[:split_pos].strip()
+        remainder = text[split_pos:].lstrip()
+
+        if not self._is_meaningful_chunk(chunk):
+            return []
+
+        self.current_sentence = remainder
+        return [chunk]
+
+    def _find_force_emit_position(self, text: str, min_chars: int) -> int:
+        target_min = max(3, int(min_chars))
+        if len(text) <= target_min:
+            return len(text)
+
+        limit = min(len(text), self.max_chunk_size)
+
+        for i in range(limit, target_min - 1, -1):
+            if text[i - 1] in ['。', '！', '？', '.', '!', '?']:
+                return i
+
+        for i in range(limit, target_min - 1, -1):
+            if text[i - 1] in ['，', '、', '；', '：', ',', ';', ':']:
+                return i
+
+        for i in range(limit, target_min - 1, -1):
+            if text[i - 1].isspace():
+                return i
+
+        return min(len(text), self._find_best_split_position(text))
 
     def reset(self):
         """Reset buffer for new conversation"""
@@ -362,7 +413,7 @@ class SemanticChunker:
     def _get_semantic_boundaries(self) -> List[str]:
         """Get semantic boundary markers for the language"""
         if self.language == 'zh-CN':
-            return ['。', '！', '？', '\n\n', '；', '：']
+            return ['。', '！', '？', '\n\n', '；', '：', '，', '、']
         else:
             return ['.', '!', '?', '\n\n', ';', ':']
 
@@ -375,6 +426,12 @@ class SemanticChunker:
         # Check for semantic completeness indicators
         if self.language == 'zh-CN':
             complete_indicators = ['。', '！', '？']
+        else:
+            complete_indicators = ['.', '!', '?']
+
+        # Normalize Chinese punctuation indicators (avoid encoding issues in source literals)
+        if self.language == 'zh-CN':
+            complete_indicators = ['\u3002', '\uff01', '\uff1f']
         else:
             complete_indicators = ['.', '!', '?']
 

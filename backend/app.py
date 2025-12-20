@@ -17,9 +17,30 @@ import subprocess
 import logging
 import base64
 import contextlib
+from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+class _DashscopeByeNoiseFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        # DashScope websocket-client sometimes logs normal close (code 1000, "Bye") as ERROR.
+        if "opcode=8" in msg and "Bye" in msg and ("goodbye" in msg or "websocket closed" in msg):
+            return False
+        return True
+
+
+for _name in (
+    "dashscope.audio.tts_v2.speech_synthesizer",
+    "websocket",
+    "websocket._app",
+):
+    with contextlib.suppress(Exception):
+        logging.getLogger(_name).addFilter(_DashscopeByeNoiseFilter())
 
 sys.path.append(str(Path(__file__).parent))
 
@@ -184,6 +205,71 @@ def _get_nested(config: dict, path: list, default=None):
             return default
         cur = cur[key]
     return cur
+
+
+def _resolve_dump_dir(app_config: dict) -> str:
+    dump_dir = str(_get_nested(app_config, ["tts", "debug_dump_dir"], "") or "").strip()
+    if not dump_dir:
+        return ""
+    p = Path(dump_dir)
+    if p.is_absolute():
+        return str(p)
+    # Resolve relative paths against project root so runs from different cwd are consistent.
+    project_root = Path(__file__).parent.parent
+    return str((project_root / p).resolve())
+
+
+def _fix_wav_sizes_inplace(path: str) -> bool:
+    """
+    Fix RIFF/data chunk sizes for streamed WAV files where sizes are placeholders (e.g. 0x7FFFFFFF).
+
+    This makes saved analysis files playable in more tools; it does not affect the response stream.
+    """
+    try:
+        p = Path(path)
+        size = p.stat().st_size
+        if size < 44:
+            return False
+        with p.open("r+b") as f:
+            header = f.read(4096)
+            if len(header) < 44 or header[:4] != b"RIFF" or header[8:12] != b"WAVE":
+                return False
+
+            def u32(off: int) -> int:
+                return int.from_bytes(header[off:off + 4], "little", signed=False)
+
+            riff_size_field = u32(4)
+            offset = 12
+            data_size_off = None
+            data_payload_off = None
+            while offset + 8 <= len(header):
+                cid = header[offset:offset + 4]
+                csz = u32(offset + 4)
+                payload = offset + 8
+                if cid == b"data":
+                    data_size_off = offset + 4
+                    data_payload_off = payload
+                    break
+                offset = payload + csz
+                if offset % 2 == 1:
+                    offset += 1
+
+            if data_size_off is None or data_payload_off is None:
+                return False
+
+            new_riff_size = max(0, size - 8)
+            new_data_size = max(0, size - data_payload_off)
+            # Only patch when it looks like a placeholder or mismatch.
+            if riff_size_field == new_riff_size and u32(data_size_off) == new_data_size:
+                return True
+
+            f.seek(4)
+            f.write(int(new_riff_size).to_bytes(4, "little", signed=False))
+            f.seek(data_size_off)
+            f.write(int(new_data_size).to_bytes(4, "little", signed=False))
+        return True
+    except Exception:
+        return False
 
 
 def _stream_local_gpt_sovits(text: str, request_id: str, config: dict):
@@ -368,6 +454,7 @@ def _stream_bailian_tts_dashscope(text: str, request_id: str, config: dict):
     q = queue.Queue(maxsize=max(8, queue_max_chunks))
     complete_event = threading.Event()
     stop_event = threading.Event()
+    canceled = False
 
     additional_params = bailian_cfg.get("additional_params") or {}
     if not isinstance(additional_params, dict):
@@ -455,10 +542,69 @@ def _stream_bailian_tts_dashscope(text: str, request_id: str, config: dict):
         speech_synthesizer.call(text)
 
         first_chunk = True
+        wav_probe_done = False
+        wav_probe_buf = bytearray()
+        pcm_probe_done = False
+        pcm_probe_buf = bytearray()
+        pcm_probe_target_bytes = int(bailian_cfg.get("pcm_probe_target_bytes", 32000) or 32000)  # ~1s @ 16kHz mono PCM16
+        first_chunk_timeout_s = float(bailian_cfg.get("first_chunk_timeout_s", 12.0))
+
+        def _try_parse_wav_header(buf: bytes):
+            # Minimal RIFF/WAVE probe (PCM16 expected)
+            if len(buf) < 44:
+                return None
+            if not (buf.startswith(b"RIFF") and buf[8:12] == b"WAVE"):
+                return None
+
+            def u16(off):
+                return int.from_bytes(buf[off:off + 2], "little", signed=False)
+
+            def u32(off):
+                return int.from_bytes(buf[off:off + 4], "little", signed=False)
+
+            offset = 12
+            audio_format = None
+            channels = None
+            sample_rate = None
+            bits_per_sample = None
+            data_offset = None
+            while offset + 8 <= len(buf):
+                chunk_id = buf[offset:offset + 4]
+                chunk_size = u32(offset + 4)
+                payload = offset + 8
+                if chunk_id == b"fmt " and payload + 16 <= len(buf):
+                    audio_format = u16(payload + 0)
+                    channels = u16(payload + 2)
+                    sample_rate = u32(payload + 4)
+                    bits_per_sample = u16(payload + 14)
+                elif chunk_id == b"data":
+                    data_offset = payload
+                    break
+                offset = payload + chunk_size
+                if offset % 2 == 1:
+                    offset += 1
+            if data_offset is None:
+                return None
+            return {
+                "audio_format": audio_format,
+                "channels": channels,
+                "sample_rate": sample_rate,
+                "bits_per_sample": bits_per_sample,
+                "data_offset": data_offset,
+            }
+
         while True:
             try:
                 item = q.get(timeout=0.5)
             except queue.Empty:
+                if first_chunk and first_chunk_timeout_s > 0 and (time.perf_counter() - t_call) >= first_chunk_timeout_s:
+                    logger.error(
+                        f"[{request_id}] dashscope_tts_first_chunk_timeout timeout_s={first_chunk_timeout_s} (canceling)"
+                    )
+                    canceled = True
+                    with contextlib.suppress(Exception):
+                        speech_synthesizer.streaming_cancel()
+                    break
                 if not first_chunk and hasattr(q, "qsize"):
                     qs = q.qsize()
                     if qs >= 64:
@@ -475,14 +621,62 @@ def _stream_bailian_tts_dashscope(text: str, request_id: str, config: dict):
                 logger.info(
                     f"[{request_id}] dashscope_tts_first_chunk dt={time.perf_counter() - t_call:.3f}s bytes={len(item)} riff={is_riff}"
                 )
+                if not is_riff:
+                    logger.warning(f"[{request_id}] dashscope_tts_first_chunk_prefix hex={item[:16].hex()}")
                 ask_timing = _timings_get(request_id)
                 if ask_timing and isinstance(ask_timing.get("t_submit"), (int, float)):
                     since_submit = time.perf_counter() - float(ask_timing["t_submit"])
                     logger.info(f"[{request_id}] dashscope_tts_first_chunk_since_submit dt={since_submit:.3f}s")
+
+            if not wav_probe_done:
+                if len(wav_probe_buf) < 8192:
+                    wav_probe_buf.extend(item[: max(0, 8192 - len(wav_probe_buf))])
+                parsed = _try_parse_wav_header(wav_probe_buf)
+                if parsed:
+                    wav_probe_done = True
+                    logger.info(
+                        f"[{request_id}] wav_probe audio_format={parsed['audio_format']} channels={parsed['channels']} sample_rate={parsed['sample_rate']} bits={parsed['bits_per_sample']} data_offset={parsed['data_offset']}"
+                    )
+                    if parsed.get("audio_format") not in (1, None) or parsed.get("bits_per_sample") not in (16, None):
+                        logger.warning(f"[{request_id}] wav_probe_unexpected {parsed}")
+                elif len(wav_probe_buf) >= 8192:
+                    wav_probe_done = True
+                    logger.warning(f"[{request_id}] wav_probe_failed buffered=8192")
+
+            # PCM sanity probe (helps diagnose "white noise" cases)
+            if not pcm_probe_done:
+                if len(pcm_probe_buf) < pcm_probe_target_bytes and item:
+                    pcm_probe_buf.extend(item[: max(0, pcm_probe_target_bytes - len(pcm_probe_buf))])
+                if len(pcm_probe_buf) >= pcm_probe_target_bytes and pcm_probe_target_bytes > 0:
+                    pcm_probe_done = True
+                    try:
+                        # Try to skip WAV header if present at the start
+                        buf = bytes(pcm_probe_buf)
+                        header = _try_parse_wav_header(buf)
+                        if header and isinstance(header.get("data_offset"), int):
+                            buf = buf[int(header["data_offset"]):]
+                        if len(buf) >= 2000:
+                            arr = np.frombuffer(buf[: min(len(buf), 64000)], dtype="<i2").astype(np.float32)
+                            if arr.size:
+                                peak = float(np.max(np.abs(arr)) / 32768.0)
+                                rms = float(np.sqrt(np.mean((arr / 32768.0) ** 2)))
+                                zcr = float(np.mean(np.abs(np.diff(np.sign(arr))) > 0))
+                                mean = float(np.mean(arr / 32768.0))
+                                logger.info(
+                                    f"[{request_id}] pcm_probe peak={peak:.3f} rms={rms:.3f} zcr={zcr:.3f} mean={mean:.4f} samples={arr.size}"
+                                )
+                                if zcr > 0.35 and rms > 0.05:
+                                    logger.warning(f"[{request_id}] pcm_probe_suspect_white_noise zcr={zcr:.3f} rms={rms:.3f}")
+                    except Exception as e:
+                        logger.warning(f"[{request_id}] pcm_probe_failed {e}")
             yield item
     except GeneratorExit:
+        canceled = True
         stop_event.set()
         logger.info(f"[{request_id}] dashscope_tts_generator_exit (client_disconnect?)")
+        if speech_synthesizer is not None:
+            with contextlib.suppress(Exception):
+                speech_synthesizer.streaming_cancel()
         raise
     except Exception as e:
         logger.error(f"[{request_id}] dashscope_tts_exception {e}", exc_info=True)
@@ -494,7 +688,7 @@ def _stream_bailian_tts_dashscope(text: str, request_id: str, config: dict):
                 first_pkg_ms = speech_synthesizer.get_first_package_delay()
                 logger.info(f"[{request_id}] dashscope_tts_metrics requestId={sdk_rid} first_pkg_delay_ms={first_pkg_ms}")
         if speech_synthesizer is not None:
-            if use_connection_pool:
+            if use_connection_pool and not canceled and complete_event.is_set():
                 with contextlib.suppress(Exception):
                     pool = _dashscope_get_pool(pool_max_size)
                     pool.return_synthesizer(speech_synthesizer)
@@ -762,6 +956,7 @@ def ask_question():
             first_ragflow_chunk_at = None
             first_ragflow_text_at = None
             first_segment_at = None
+            carry_segment_text = ""
 
             for chunk in response:
                 chunk_count += 1
@@ -771,7 +966,7 @@ def ask_question():
                         f"[{request_id}] ragflow_first_chunk dt={first_ragflow_chunk_at - t_submit:.3f}s chunk_type={type(chunk)}"
                     )
                     _timings_set(request_id, t_ragflow_first_chunk=first_ragflow_chunk_at)
-                logger.info(f"收到chunk #{chunk_count}: {type(chunk)} - {chunk}")
+                #logger.info(f"收到chunk #{chunk_count}: {type(chunk)} - {chunk}")
 
                 if chunk and hasattr(chunk, 'content'):
                     content = chunk.content
@@ -818,6 +1013,21 @@ def ask_question():
                                 ready_segments = ready_segments + forced
                             for seg in ready_segments:
                                 seg = seg.strip()
+                                if carry_segment_text:
+                                    seg = (carry_segment_text + seg).strip()
+                                    carry_segment_text = ""
+                                # Avoid very short segments (likely to increase TTS calls and cause artifacts).
+                                # If it does not end with a strong sentence boundary, merge into next segment.
+                                if (
+                                    segment_min_chars > 0
+                                    and len(seg) < int(segment_min_chars)
+                                    and not seg.endswith(("。", "！", "？", ".", "!", "?"))
+                                ):
+                                    carry_segment_text = seg
+                                    logger.info(
+                                        f"[{request_id}] hold_short_segment chars={len(seg)} min_chars={segment_min_chars}"
+                                    )
+                                    continue
                                 if not seg or seg in emitted_segments:
                                     continue
                                 emitted_segments.add(seg)
@@ -845,6 +1055,9 @@ def ask_question():
             )
 
             if text_cleaner and tts_buffer:
+                if carry_segment_text:
+                    tts_buffer.current_sentence = (carry_segment_text + " " + (tts_buffer.current_sentence or "")).strip()
+                    carry_segment_text = ""
                 for seg in tts_buffer.finalize():
                     seg = seg.strip()
                     if not seg or seg in emitted_segments:
@@ -902,14 +1115,47 @@ def text_to_speech():
     logger.info(f"[{request_id}] tts_provider={provider} response_mimetype={_get_nested(app_config, ['tts', 'mimetype'], 'audio/wav')}")
 
     def generate_audio():
+        dump_dir = _resolve_dump_dir(app_config)
+        dump_max_bytes = int(_get_nested(app_config, ["tts", "debug_dump_max_bytes"], 0) or 0)
+        dump_file = None
+        dumped = 0
+        dump_path = None
         try:
             logger.info(f"[{request_id}] 开始TTS音频生成 provider={provider}")
-            yield from _stream_tts_provider(text=text, request_id=request_id, provider=provider, config=app_config)
+            for chunk in _stream_tts_provider(text=text, request_id=request_id, provider=provider, config=app_config):
+                if chunk and dump_dir and dump_max_bytes > 0 and dump_file is None:
+                    try:
+                        Path(dump_dir).mkdir(parents=True, exist_ok=True)
+                        ts = time.strftime("%Y%m%d_%H%M%S")
+                        dump_path = Path(dump_dir) / f"{request_id}_segna_{provider}_{ts}.wav"
+                        dump_file = open(dump_path, "wb")
+                        logger.info(
+                            f"[{request_id}] tts_dump_open endpoint=/api/text_to_speech path={dump_path} max_bytes={dump_max_bytes}"
+                        )
+                    except Exception as e:
+                        logger.warning(f"[{request_id}] tts_dump_open_failed {e}")
+                        dump_file = None
+
+                if chunk and dump_file and dumped < dump_max_bytes:
+                    to_write = chunk[: max(0, dump_max_bytes - dumped)]
+                    if to_write:
+                        dump_file.write(to_write)
+                        dumped += len(to_write)
+                yield chunk
         except GeneratorExit:
             logger.info(f"[{request_id}] tts_generator_exit endpoint=/api/text_to_speech (client_disconnect?)")
             raise
         except Exception as e:
             logger.error(f"[{request_id}] TTS音频生成异常: {e}", exc_info=True)
+        finally:
+            with contextlib.suppress(Exception):
+                if dump_file:
+                    dump_file.flush()
+                    dump_file.close()
+                    fixed = _fix_wav_sizes_inplace(str(dump_path)) if dump_path else False
+                    logger.info(
+                        f"[{request_id}] tts_dump_close endpoint=/api/text_to_speech path={dump_path} bytes={dumped} wav_fix={fixed}"
+                    )
 
     return Response(
         generate_audio(),
@@ -962,6 +1208,11 @@ def text_to_speech_stream():
     )
 
     def generate_streaming_audio():
+        dump_dir = _resolve_dump_dir(app_config)
+        dump_max_bytes = int(_get_nested(app_config, ["tts", "debug_dump_max_bytes"], 0) or 0)
+        dump_file = None
+        dumped = 0
+        dump_path = None
         try:
             logger.info(f"[{request_id}] 开始流式TTS音频生成 provider={provider}")
 
@@ -972,6 +1223,25 @@ def text_to_speech_stream():
             for chunk in _stream_tts_provider(text=text, request_id=request_id, provider=provider, config=app_config):
                 if not chunk:
                     continue
+                if chunk and dump_dir and dump_max_bytes > 0 and dump_file is None:
+                    try:
+                        Path(dump_dir).mkdir(parents=True, exist_ok=True)
+                        ts = time.strftime("%Y%m%d_%H%M%S")
+                        seg = str(segment_index) if segment_index is not None else "na"
+                        dump_path = Path(dump_dir) / f"{request_id}_seg{seg}_{provider}_{ts}.wav"
+                        dump_file = open(dump_path, "wb")
+                        logger.info(
+                            f"[{request_id}] tts_dump_open endpoint=/api/text_to_speech_stream path={dump_path} max_bytes={dump_max_bytes}"
+                        )
+                    except Exception as e:
+                        logger.warning(f"[{request_id}] tts_dump_open_failed {e}")
+                        dump_file = None
+
+                if dump_file and dumped < dump_max_bytes:
+                    to_write = chunk[: max(0, dump_max_bytes - dumped)]
+                    if to_write:
+                        dump_file.write(to_write)
+                        dumped += len(to_write)
                 chunk_count += 1
                 total_size += len(chunk)
                 if first_audio_chunk_at is None:
@@ -1056,6 +1326,15 @@ def text_to_speech_stream():
             raise
         except Exception as e:
             logger.error(f"[{request_id}] tts_stream_exception {e} provider={provider}", exc_info=True)
+        finally:
+            with contextlib.suppress(Exception):
+                if dump_file:
+                    dump_file.flush()
+                    dump_file.close()
+                    fixed = _fix_wav_sizes_inplace(str(dump_path)) if dump_path else False
+                    logger.info(
+                        f"[{request_id}] tts_dump_close endpoint=/api/text_to_speech_stream path={dump_path} bytes={dumped} wav_fix={fixed}"
+                    )
 
     return Response(
         generate_streaming_audio(),

@@ -80,21 +80,21 @@ class TTSTextCleaner:
     def _init_punctuation_mappings(self):
         """Initialize Chinese punctuation to TTS-friendly mappings"""
         self.punctuation_mappings = {
-            # Full-width to half-width
-            '：': ':',  # Colon
-            '，': ',',  # Comma
-            '。': '.',  # Period
-            '！': '!',  # Exclamation mark
-            '？': '?',  # Question mark
-            '；': ';',  # Semicolon
+            # Keep Chinese punctuation for better segmentation/TTS prosody
+            '：': '：',  # Colon
+            '，': '，',  # Comma
+            '。': '。',  # Period
+            '！': '！',  # Exclamation mark
+            '？': '？',  # Question mark
+            '；': '；',  # Semicolon
             '（': '(',  # Left parenthesis
             '）': ')',  # Right parenthesis
             '【': '[',  # Left square bracket
             '】': ']',  # Right square bracket
-            '"': '"',   # Left double quote
-            '"': '"',   # Right double quote
-            ''': "'",   # Left single quote
-            ''': "'",   # Right single quote
+            '“': '"',   # Left double quote
+            '”': '"',   # Right double quote
+            '‘': "'",   # Left single quote
+            '’': "'",   # Right single quote
             '《': '<',  # Left angle bracket (book title)
             '》': '>',  # Right angle bracket (book title)
         }
@@ -105,7 +105,7 @@ class TTSTextCleaner:
             'multiple_spaces': re.compile(r'[　\s]{2,}'),
 
             # Mixed punctuation cleanup
-            'mixed_punctuation': re.compile(r'([,.!?;:])\s*([,.!?;:])'),
+            'mixed_punctuation': re.compile(r'([，。！？；：,.!?;:])\s*([，。！？；：,.!?;:])'),
 
             # Number patterns in Chinese context
             'chinese_numbers': re.compile(r'[一二三四五六七八九十百千万亿]+'),
@@ -256,8 +256,9 @@ class TTSTextCleaner:
         # Clean up mixed punctuation
         text = self.chinese_patterns['mixed_punctuation'].sub(r'\1', text)
 
-        # Add spaces after Chinese punctuation for better TTS flow
-        text = re.sub(r'([,.!?;:])', r'\1 ', text)
+        # Add spaces after punctuation for better TTS flow
+        text = re.sub(r'([，。！？；：,.!?;:])', r'\1 ', text)
+        text = re.sub(r'\s+', ' ', text)
 
         return text
 

@@ -1,6 +1,91 @@
 import React, { useState, useRef } from 'react';
 import './App.css';
 
+async function playWavViaDecodeAudioData(url, audioContextRef, currentAudioRef) {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) throw new Error('WebAudio is not supported');
+
+  if (!audioContextRef.current) {
+    audioContextRef.current = new AudioContextClass();
+  }
+  const audioCtx = audioContextRef.current;
+  if (audioCtx.state === 'suspended') {
+    try {
+      await audioCtx.resume();
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  const abortController = new AbortController();
+  let sourceNode = null;
+  currentAudioRef.current = {
+    stop: () => {
+      try {
+        abortController.abort();
+      } catch (_) {
+        // ignore
+      }
+      try {
+        if (sourceNode) sourceNode.stop(0);
+      } catch (_) {
+        // ignore
+      }
+    }
+  };
+
+  const response = await fetch(url, { signal: abortController.signal });
+  if (!response.ok) throw new Error(`TTS HTTP error: ${response.status}`);
+  const buf = new Uint8Array(await response.arrayBuffer());
+
+  // Patch RIFF/data sizes for streamed WAVs (some servers use placeholders).
+  const patchWavSizes = (bytes) => {
+    if (bytes.byteLength < 44) return bytes;
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const fourcc = (off) =>
+      String.fromCharCode(view.getUint8(off), view.getUint8(off + 1), view.getUint8(off + 2), view.getUint8(off + 3));
+    if (fourcc(0) !== 'RIFF' || fourcc(8) !== 'WAVE') return bytes;
+
+    let offset = 12;
+    let dataOffset = null;
+    let dataSizeOffset = null;
+    while (offset + 8 <= bytes.byteLength) {
+      const id = fourcc(offset);
+      const size = view.getUint32(offset + 4, true);
+      const payload = offset + 8;
+      if (id === 'data') {
+        dataOffset = payload;
+        dataSizeOffset = offset + 4;
+        break;
+      }
+      offset = payload + size;
+      if (offset % 2 === 1) offset += 1;
+    }
+    if (dataOffset == null || dataSizeOffset == null) return bytes;
+
+    const riffSize = bytes.byteLength - 8;
+    const dataSize = bytes.byteLength - dataOffset;
+    view.setUint32(4, riffSize >>> 0, true);
+    view.setUint32(dataSizeOffset, dataSize >>> 0, true);
+    return bytes;
+  };
+
+  const patched = patchWavSizes(buf);
+  const audioBuffer = await audioCtx.decodeAudioData(patched.buffer.slice(patched.byteOffset, patched.byteOffset + patched.byteLength));
+
+  await new Promise((resolve, reject) => {
+    sourceNode = audioCtx.createBufferSource();
+    sourceNode.buffer = audioBuffer;
+    sourceNode.connect(audioCtx.destination);
+    sourceNode.onended = () => resolve();
+    try {
+      sourceNode.start(0);
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
 async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, fallbackPlay) {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) {
@@ -46,7 +131,8 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
     let channels = 1;
     let sampleRate = 32000;
     let bitsPerSample = 16;
-    let dataOffset = 44;
+    let audioFormatCode = 1;
+    let dataOffset = null;
 
     let offset = 12;
     while (offset + 8 <= headerBytes.byteLength) {
@@ -55,6 +141,7 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
       const payloadOffset = offset + 8;
 
       if (chunkId === 'fmt ' && payloadOffset + 16 <= headerBytes.byteLength) {
+        audioFormatCode = view.getUint16(payloadOffset + 0, true);
         channels = view.getUint16(payloadOffset + 2, true);
         sampleRate = view.getUint32(payloadOffset + 4, true);
         bitsPerSample = view.getUint16(payloadOffset + 14, true);
@@ -67,7 +154,8 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
       if (offset % 2 === 1) offset += 1;
     }
 
-    return { channels, sampleRate, bitsPerSample, dataOffset };
+    if (dataOffset == null) throw new Error('WAV header incomplete (no data chunk yet)');
+    return { channels, sampleRate, bitsPerSample, audioFormatCode, dataOffset };
   };
 
   try {
@@ -79,6 +167,8 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
     let wavInfo = null;
     let pcmRemainder = new Uint8Array(0);
     let nextStartTime = audioCtx.currentTime + 0.05;
+    let sanitySamples = [];
+    let sanityDone = false;
 
     const schedulePcmChunk = (pcmBytes) => {
       if (!wavInfo) return;
@@ -93,6 +183,35 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
 
       const aligned = pcmBytes.slice(0, usableBytes);
       const int16 = new Int16Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 2);
+
+      if (!sanityDone && int16.length >= 4096) {
+        // Probe first ~0.25s audio to detect obvious "white noise" decoding issues.
+        const probeCount = Math.min(int16.length, wavInfo.sampleRate / 2);
+        let peak = 0;
+        let sumSq = 0;
+        let zc = 0;
+        let prev = int16[0];
+        for (let i = 0; i < probeCount; i += wavInfo.channels) {
+          const v = int16[i] / 32768;
+          peak = Math.max(peak, Math.abs(v));
+          sumSq += v * v;
+          const cur = int16[i];
+          if ((cur ^ prev) < 0) zc += 1;
+          prev = cur;
+        }
+        const rms = Math.sqrt(sumSq / (probeCount / wavInfo.channels));
+        const zcr = zc / (probeCount / wavInfo.channels);
+        sanitySamples.push({ peak, rms, zcr });
+        if (sanitySamples.length >= 2) {
+          sanityDone = true;
+          const avgRms = sanitySamples.reduce((a, b) => a + b.rms, 0) / sanitySamples.length;
+          const avgZcr = sanitySamples.reduce((a, b) => a + b.zcr, 0) / sanitySamples.length;
+          console.log(`[TTS][Sanity] rms=${avgRms.toFixed(3)} zcr=${avgZcr.toFixed(3)} sr=${wavInfo.sampleRate}`);
+          if (avgZcr > 0.35 && avgRms > 0.05) {
+            throw new Error(`PCM sanity check failed (white-noise suspected): rms=${avgRms.toFixed(3)} zcr=${avgZcr.toFixed(3)}`);
+          }
+        }
+      }
 
       for (let ch = 0; ch < wavInfo.channels; ch++) {
         const channelData = audioBuffer.getChannelData(ch);
@@ -125,15 +244,20 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
         headerBuffer = merged;
 
         if (headerBuffer.byteLength < 44) continue;
+        if (headerBuffer.byteLength > 65536) throw new Error('WAV header too large');
 
-        const headerForParse = headerBuffer.byteLength > 4096 ? headerBuffer.slice(0, 4096) : headerBuffer;
-        wavInfo = parseWavHeader(headerForParse);
-
-        const dataStart = wavInfo.dataOffset;
-        if (headerBuffer.byteLength > dataStart) {
-          schedulePcmChunk(headerBuffer.slice(dataStart));
+        try {
+          wavInfo = parseWavHeader(headerBuffer);
+        } catch (e) {
+          // Keep buffering until "data" chunk is present.
+          if (String(e && e.message).includes('no data chunk yet')) continue;
+          throw e;
         }
 
+        if (wavInfo.audioFormatCode !== 1) throw new Error(`Unsupported WAV audioFormat: ${wavInfo.audioFormatCode}`);
+
+        const dataStart = wavInfo.dataOffset;
+        if (headerBuffer.byteLength > dataStart) schedulePcmChunk(headerBuffer.slice(dataStart));
         headerBuffer = new Uint8Array(0);
         continue;
       }
@@ -162,7 +286,15 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
   } catch (err) {
     stopAllSources();
     if (abortController.signal.aborted) return;
-    if (fallbackPlay) return fallbackPlay();
+    console.warn('[TTS] WebAudio streaming failed, trying decodeAudioData fallback:', err);
+    try {
+      await playWavViaDecodeAudioData(url, audioContextRef, currentAudioRef);
+      return;
+    } catch (decodeErr) {
+      console.warn('[TTS] decodeAudioData fallback failed, trying <audio> fallback:', decodeErr);
+      if (fallbackPlay) return fallbackPlay();
+      throw decodeErr;
+    }
     throw err;
   } finally {
     stopAllSources();
