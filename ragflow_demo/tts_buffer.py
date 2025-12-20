@@ -281,6 +281,28 @@ class TTSBuffer:
 
         return final_chunks
 
+    def force_emit(self, min_chars: int = 10) -> List[str]:
+        """
+        Force emit current buffered sentence for low-latency TTS.
+
+        This is useful when you want to start TTS as early as possible in streaming mode,
+        even if there is no sentence boundary yet.
+        """
+        try:
+            min_chars = int(min_chars)
+        except Exception:
+            min_chars = 10
+
+        text = self.current_sentence.strip()
+        if len(text) < max(3, min_chars):
+            return []
+
+        if not self._is_meaningful_chunk(text):
+            return []
+
+        self.current_sentence = ""
+        return [text]
+
     def reset(self):
         """Reset buffer for new conversation"""
         self.accumulated_text = ""

@@ -1,6 +1,174 @@
 import React, { useState, useRef } from 'react';
 import './App.css';
 
+async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, fallbackPlay) {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) {
+    if (fallbackPlay) return fallbackPlay();
+    throw new Error('WebAudio is not supported');
+  }
+
+  if (!audioContextRef.current) {
+    audioContextRef.current = new AudioContextClass();
+  }
+  const audioCtx = audioContextRef.current;
+  if (audioCtx.state === 'suspended') {
+    try {
+      await audioCtx.resume();
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  const abortController = new AbortController();
+  currentAudioRef.current = { stop: () => abortController.abort() };
+
+  const sources = [];
+  const stopAllSources = () => {
+    while (sources.length) {
+      const src = sources.pop();
+      try {
+        src.stop(0);
+      } catch (_) {
+        // ignore
+      }
+    }
+  };
+
+  const parseWavHeader = (headerBytes) => {
+    const view = new DataView(headerBytes.buffer, headerBytes.byteOffset, headerBytes.byteLength);
+    const readFourCC = (offset) =>
+      String.fromCharCode(view.getUint8(offset), view.getUint8(offset + 1), view.getUint8(offset + 2), view.getUint8(offset + 3));
+
+    if (headerBytes.byteLength < 44) throw new Error('WAV header too short');
+    if (readFourCC(0) !== 'RIFF' || readFourCC(8) !== 'WAVE') throw new Error('Not a RIFF/WAVE stream');
+
+    let channels = 1;
+    let sampleRate = 32000;
+    let bitsPerSample = 16;
+    let dataOffset = 44;
+
+    let offset = 12;
+    while (offset + 8 <= headerBytes.byteLength) {
+      const chunkId = readFourCC(offset);
+      const chunkSize = view.getUint32(offset + 4, true);
+      const payloadOffset = offset + 8;
+
+      if (chunkId === 'fmt ' && payloadOffset + 16 <= headerBytes.byteLength) {
+        channels = view.getUint16(payloadOffset + 2, true);
+        sampleRate = view.getUint32(payloadOffset + 4, true);
+        bitsPerSample = view.getUint16(payloadOffset + 14, true);
+      } else if (chunkId === 'data') {
+        dataOffset = payloadOffset;
+        break;
+      }
+
+      offset = payloadOffset + chunkSize;
+      if (offset % 2 === 1) offset += 1;
+    }
+
+    return { channels, sampleRate, bitsPerSample, dataOffset };
+  };
+
+  try {
+    const response = await fetch(url, { signal: abortController.signal });
+    if (!response.ok || !response.body) throw new Error(`TTS stream HTTP error: ${response.status}`);
+
+    const reader = response.body.getReader();
+    let headerBuffer = new Uint8Array(0);
+    let wavInfo = null;
+    let pcmRemainder = new Uint8Array(0);
+    let nextStartTime = audioCtx.currentTime + 0.05;
+
+    const schedulePcmChunk = (pcmBytes) => {
+      if (!wavInfo) return;
+      if (wavInfo.bitsPerSample !== 16) throw new Error(`Unsupported bitsPerSample: ${wavInfo.bitsPerSample}`);
+
+      const blockAlign = wavInfo.channels * 2;
+      const usableBytes = pcmBytes.byteLength - (pcmBytes.byteLength % blockAlign);
+      if (usableBytes <= 0) return;
+
+      const frames = usableBytes / blockAlign;
+      const audioBuffer = audioCtx.createBuffer(wavInfo.channels, frames, wavInfo.sampleRate);
+
+      const aligned = pcmBytes.slice(0, usableBytes);
+      const int16 = new Int16Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 2);
+
+      for (let ch = 0; ch < wavInfo.channels; ch++) {
+        const channelData = audioBuffer.getChannelData(ch);
+        for (let i = 0; i < frames; i++) {
+          channelData[i] = int16[i * wavInfo.channels + ch] / 32768;
+        }
+      }
+
+      const src = audioCtx.createBufferSource();
+      src.buffer = audioBuffer;
+      src.connect(audioCtx.destination);
+      sources.push(src);
+
+      const when = Math.max(nextStartTime, audioCtx.currentTime + 0.01);
+      src.start(when);
+      nextStartTime = when + audioBuffer.duration;
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+
+      let chunk = value;
+
+      if (!wavInfo) {
+        const merged = new Uint8Array(headerBuffer.byteLength + chunk.byteLength);
+        merged.set(headerBuffer, 0);
+        merged.set(chunk, headerBuffer.byteLength);
+        headerBuffer = merged;
+
+        if (headerBuffer.byteLength < 44) continue;
+
+        const headerForParse = headerBuffer.byteLength > 4096 ? headerBuffer.slice(0, 4096) : headerBuffer;
+        wavInfo = parseWavHeader(headerForParse);
+
+        const dataStart = wavInfo.dataOffset;
+        if (headerBuffer.byteLength > dataStart) {
+          schedulePcmChunk(headerBuffer.slice(dataStart));
+        }
+
+        headerBuffer = new Uint8Array(0);
+        continue;
+      }
+
+      if (pcmRemainder.byteLength) {
+        const merged = new Uint8Array(pcmRemainder.byteLength + chunk.byteLength);
+        merged.set(pcmRemainder, 0);
+        merged.set(chunk, pcmRemainder.byteLength);
+        pcmRemainder = new Uint8Array(0);
+        chunk = merged;
+      }
+
+      const blockAlign = wavInfo.channels * 2;
+      const usableBytes = chunk.byteLength - (chunk.byteLength % blockAlign);
+      if (usableBytes > 0) {
+        schedulePcmChunk(chunk.slice(0, usableBytes));
+      }
+      const leftover = chunk.byteLength - usableBytes;
+      if (leftover > 0) {
+        pcmRemainder = chunk.slice(usableBytes);
+      }
+    }
+
+    const remainingMs = Math.max(0, (nextStartTime - audioCtx.currentTime) * 1000);
+    await new Promise((resolve) => setTimeout(resolve, remainingMs + 50));
+  } catch (err) {
+    stopAllSources();
+    if (abortController.signal.aborted) return;
+    if (fallbackPlay) return fallbackPlay();
+    throw err;
+  } finally {
+    stopAllSources();
+  }
+}
+
 function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [question, setQuestion] = useState('');
@@ -22,6 +190,7 @@ function App() {
   const runIdRef = useRef(0);
   const currentAudioRef = useRef(null);
   const receivedSegmentsRef = useRef(false);
+  const audioContextRef = useRef(null);
 
   // TTS预生成配置
   const MAX_PRE_GENERATE_COUNT = 2; // 最多预生成2段音频
@@ -110,6 +279,8 @@ function App() {
 
   const askQuestion = async (text) => {
     const runId = ++runIdRef.current;
+    const requestId = `ask_${runId}_${Date.now()}`;
+    let segmentIndex = 0;
     setQuestion(text);
     setAnswer('');
     setIsLoading(true);
@@ -126,8 +297,12 @@ function App() {
     // 停止当前播放的音频
     if (currentAudioRef.current) {
       try {
-        currentAudioRef.current.pause();
-        currentAudioRef.current.src = '';
+        if (typeof currentAudioRef.current.stop === 'function') {
+          currentAudioRef.current.stop();
+        } else if (typeof currentAudioRef.current.pause === 'function') {
+          currentAudioRef.current.pause();
+          currentAudioRef.current.src = '';
+        }
       } catch (_) {
         // ignore
       }
@@ -145,24 +320,19 @@ function App() {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     // TTS音频生成函数
-    const generateAudioSegment = async (segmentText) => {
+    const generateAudioSegmentUrl = (segmentText) => {
       try {
         console.log(`🎵 开始生成音频: "${segmentText.substring(0, 30)}..."`);
-        const response = await fetch('http://localhost:8000/api/text_to_speech_stream', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ text: segmentText })
-        });
+        const seg = String(segmentText || '').trim();
+        if (!seg) return null;
+        const url = new URL('http://localhost:8000/api/text_to_speech_stream');
+        url.searchParams.set('text', seg);
+        url.searchParams.set('request_id', requestId);
+        url.searchParams.set('segment_index', String(segmentIndex++));
+        return url.toString();
 
-        if (!response.ok) {
-          throw new Error(`TTS HTTP error! status: ${response.status}`);
-        }
 
-        const audioBlob = await response.blob();
         console.log(`✅ 音频生成完成: ${audioBlob.size} bytes`);
-        return audioBlob;
       } catch (err) {
         console.error(`❌ 音频生成失败: "${segmentText}"`, err);
         return null;
@@ -170,10 +340,8 @@ function App() {
     };
 
     // TTS音频播放函数
-    const playAudioBlob = async (audioBlob, segmentText) => {
-      if (!audioBlob) return;
-
-      const audioUrl = URL.createObjectURL(audioBlob);
+    const playAudioUrl = async (audioUrl, segmentText) => {
+      if (!audioUrl) return;
       try {
         console.log(`🔊 开始播放: "${segmentText.substring(0, 30)}..."`);
         await new Promise((resolve, reject) => {
@@ -191,7 +359,6 @@ function App() {
       } catch (err) {
         console.error(`❌ 播放失败: "${segmentText}"`, err);
       } finally {
-        URL.revokeObjectURL(audioUrl);
         if (currentAudioRef.current) {
           currentAudioRef.current = null;
         }
@@ -223,12 +390,12 @@ function App() {
 
           // 移除文本并生成音频
           ttsTextQueueRef.current.shift();
-          const audioBlob = await generateAudioSegment(nextSegment);
+          const audioUrl = generateAudioSegmentUrl(nextSegment);
 
-          if (audioBlob) {
+          if (audioUrl) {
             ttsAudioQueueRef.current.push({
               text: nextSegment,
-              blob: audioBlob
+              url: audioUrl
             });
           }
 
@@ -263,7 +430,12 @@ function App() {
             continue;
           }
 
-          await playAudioBlob(audioItem.blob, audioItem.text);
+          await playWavStreamViaWebAudio(
+            audioItem.url,
+            audioContextRef,
+            currentAudioRef,
+            () => playAudioUrl(audioItem.url, audioItem.text)
+          );
         }
       })()
         .catch((err) => {
@@ -283,7 +455,7 @@ function App() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ question: text })
+        body: JSON.stringify({ question: text, request_id: requestId })
       });
 
       const reader = response.body.getReader();

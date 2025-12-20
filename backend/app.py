@@ -8,6 +8,7 @@ import json
 import threading
 import queue 
 import time
+import uuid
 import numpy as np
 import pyaudio
 import webrtcvad
@@ -67,6 +68,44 @@ MAX_UTTER_MS = 15000
 
 ragflow_client = None
 session = None
+
+ASK_TIMINGS = {}
+ASK_TIMINGS_LOCK = threading.Lock()
+
+
+def _timings_prune(now_perf: float, ttl_s: float = 300.0, max_items: int = 500):
+    with ASK_TIMINGS_LOCK:
+        if len(ASK_TIMINGS) <= max_items:
+            items = list(ASK_TIMINGS.items())
+        else:
+            items = list(ASK_TIMINGS.items())
+        for key, value in items:
+            t_submit = value.get("t_submit")
+            if isinstance(t_submit, (int, float)) and (now_perf - float(t_submit)) > ttl_s:
+                ASK_TIMINGS.pop(key, None)
+        if len(ASK_TIMINGS) > max_items:
+            # best-effort: drop oldest by t_submit
+            ordered = sorted(
+                ASK_TIMINGS.items(),
+                key=lambda kv: float(kv[1].get("t_submit", now_perf)),
+            )
+            for key, _ in ordered[: max(0, len(ASK_TIMINGS) - max_items)]:
+                ASK_TIMINGS.pop(key, None)
+
+
+def _timings_set(request_id: str, **fields):
+    now_perf = time.perf_counter()
+    _timings_prune(now_perf)
+    with ASK_TIMINGS_LOCK:
+        entry = ASK_TIMINGS.get(request_id) or {}
+        entry.update(fields)
+        ASK_TIMINGS[request_id] = entry
+
+
+def _timings_get(request_id: str):
+    with ASK_TIMINGS_LOCK:
+        entry = ASK_TIMINGS.get(request_id)
+        return dict(entry) if isinstance(entry, dict) else None
 
 def find_dataset_by_name(client, dataset_name):
     if not dataset_name:
@@ -213,6 +252,7 @@ def speech_to_text():
 
 @app.route('/api/ask', methods=['POST'])
 def ask_question():
+    t_submit = time.perf_counter()
     logger.info("收到问答请求")
     data = request.get_json()
     logger.info(f"请求数据: {data}")
@@ -222,10 +262,18 @@ def ask_question():
         return jsonify({"error": "No question"}), 400
 
     question = data.get('question', '')
-    logger.info(f"问题: {question}")
+    request_id = (
+        data.get("request_id")
+        or request.headers.get("X-Request-ID")
+        or f"ask_{uuid.uuid4().hex[:12]}"
+    )
+    logger.info(f"[{request_id}] 问题: {question}")
+    _timings_set(request_id, t_submit=t_submit)
 
     def generate_response():
         def sse_event(payload: dict) -> str:
+            payload.setdefault("request_id", request_id)
+            payload.setdefault("t_ms", int((time.perf_counter() - t_submit) * 1000))
             return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
         try:
@@ -237,10 +285,16 @@ def ask_question():
             language = text_cleaning.get("language", "zh-CN")
             tts_buffer_enabled = bool(text_cleaning.get("tts_buffer_enabled", True))
             max_chunk_size = int(text_cleaning.get("max_chunk_size", 200))
+            start_tts_on_first_chunk = bool(text_cleaning.get("start_tts_on_first_chunk", True))
+            first_segment_min_chars = int(text_cleaning.get("first_segment_min_chars", 10))
+            segment_flush_interval_s = float(text_cleaning.get("segment_flush_interval_s", 0.8))
+            segment_min_chars = int(text_cleaning.get("segment_min_chars", first_segment_min_chars))
 
             text_cleaner = None
             tts_buffer = None
             emitted_segments = set()
+            last_segment_emit_at = t_submit
+            segment_seq = 0
 
             if enable_cleaning:
                 try:
@@ -282,15 +336,27 @@ def ask_question():
                 yield sse_event({"chunk": "", "done": True})
                 return
 
-            logger.info("开始RAGFlow流式响应")
+            t_ragflow_request = time.perf_counter()
+            logger.info(f"[{request_id}] 开始RAGFlow流式响应")
             response = session.ask(question, stream=True)
-            logger.info("RAGFlow响应对象创建成功")
+            logger.info(
+                f"[{request_id}] RAGFlow响应对象创建成功 dt={time.perf_counter() - t_ragflow_request:.3f}s"
+            )
 
             last_complete_content = ""
             chunk_count = 0
+            first_ragflow_chunk_at = None
+            first_ragflow_text_at = None
+            first_segment_at = None
 
             for chunk in response:
                 chunk_count += 1
+                if first_ragflow_chunk_at is None:
+                    first_ragflow_chunk_at = time.perf_counter()
+                    logger.info(
+                        f"[{request_id}] ragflow_first_chunk dt={first_ragflow_chunk_at - t_submit:.3f}s chunk_type={type(chunk)}"
+                    )
+                    _timings_set(request_id, t_ragflow_first_chunk=first_ragflow_chunk_at)
                 logger.info(f"收到chunk #{chunk_count}: {type(chunk)} - {chunk}")
 
                 if chunk and hasattr(chunk, 'content'):
@@ -301,17 +367,57 @@ def ask_question():
                     if len(content) > len(last_complete_content):
                         new_part = content[len(last_complete_content):]
                         logger.info(f"增量内容: {new_part[:50]}...")
+                        if first_ragflow_text_at is None and new_part.strip():
+                            first_ragflow_text_at = time.perf_counter()
+                            logger.info(
+                                f"[{request_id}] ragflow_first_text dt={first_ragflow_text_at - t_submit:.3f}s chars={len(new_part)}"
+                            )
+                            _timings_set(request_id, t_ragflow_first_text=first_ragflow_text_at)
 
                         yield sse_event({"chunk": new_part, "done": False})
 
                         if text_cleaner and tts_buffer:
                             cleaned = text_cleaner.clean_streaming_chunk(new_part, is_partial=True)
                             ready_segments = tts_buffer.add_cleaned_chunk(cleaned)
+                            if (
+                                start_tts_on_first_chunk
+                                and not ready_segments
+                                and first_segment_at is None
+                                and first_ragflow_chunk_at is not None
+                            ):
+                                forced = tts_buffer.force_emit(min_chars=first_segment_min_chars)
+                                if forced:
+                                    logger.info(
+                                        f"[{request_id}] force_emit_first_segment chars={len(forced[0])} min_chars={first_segment_min_chars}"
+                                    )
+                                ready_segments = ready_segments + forced
+                            if (
+                                segment_flush_interval_s > 0
+                                and not ready_segments
+                                and (time.perf_counter() - last_segment_emit_at) >= segment_flush_interval_s
+                            ):
+                                forced = tts_buffer.force_emit(min_chars=segment_min_chars)
+                                if forced:
+                                    logger.info(
+                                        f"[{request_id}] force_emit_segment chars={len(forced[0])} min_chars={segment_min_chars} flush_interval_s={segment_flush_interval_s}"
+                                    )
+                                ready_segments = ready_segments + forced
                             for seg in ready_segments:
                                 seg = seg.strip()
                                 if not seg or seg in emitted_segments:
                                     continue
                                 emitted_segments.add(seg)
+                                segment_seq += 1
+                                last_segment_emit_at = time.perf_counter()
+                                logger.info(
+                                    f"[{request_id}] emit_segment seq={segment_seq} dt={last_segment_emit_at - t_submit:.3f}s chars={len(seg)}"
+                                )
+                                if first_segment_at is None:
+                                    first_segment_at = time.perf_counter()
+                                    logger.info(
+                                        f"[{request_id}] first_tts_segment dt={first_segment_at - t_submit:.3f}s chars={len(seg)}"
+                                    )
+                                    _timings_set(request_id, t_first_tts_segment=first_segment_at)
                                 yield sse_event({"segment": seg, "done": False})
 
                         last_complete_content = content
@@ -320,7 +426,9 @@ def ask_question():
                 else:
                     logger.warning(f"Chunk没有content属性: {chunk}")
 
-            logger.info("流式响应结束")
+            logger.info(
+                f"[{request_id}] 流式响应结束 total_dt={time.perf_counter() - t_submit:.3f}s total_chunks={chunk_count}"
+            )
 
             if text_cleaner and tts_buffer:
                 for seg in tts_buffer.finalize():
@@ -328,12 +436,18 @@ def ask_question():
                     if not seg or seg in emitted_segments:
                         continue
                     emitted_segments.add(seg)
+                    if first_segment_at is None:
+                        first_segment_at = time.perf_counter()
+                        logger.info(
+                            f"[{request_id}] first_tts_segment_finalize dt={first_segment_at - t_submit:.3f}s chars={len(seg)}"
+                        )
+                        _timings_set(request_id, t_first_tts_segment=first_segment_at)
                     yield sse_event({"segment": seg, "done": False})
 
             yield sse_event({"chunk": "", "done": True})
 
         except Exception as e:
-            logger.error(f"流式响应异常: {e}", exc_info=True)
+            logger.error(f"[{request_id}] 流式响应异常: {e}", exc_info=True)
             yield sse_event({"chunk": f"错误: {str(e)}", "done": True})
 
     logger.info("返回流式响应")
@@ -408,22 +522,37 @@ def text_to_speech():
 
     return Response(generate_audio(), mimetype='audio/wav')
 
-@app.route('/api/text_to_speech_stream', methods=['POST'])
+@app.route('/api/text_to_speech_stream', methods=['GET', 'POST'])
 def text_to_speech_stream():
+    t_received = time.perf_counter()
     logger.info("收到流式TTS请求")
-    data = request.get_json()
-    logger.info(f"流式TTS请求数据: {data}")
+    if request.method == "GET":
+        data = dict(request.args) if request.args else {}
+        logger.info(f"流式TTS请求数据(GET): {data}")
+    else:
+        data = request.get_json()
+        logger.info(f"流式TTS请求数据(POST): {data}")
 
     if not data or not data.get('text'):
         logger.error("流式TTS请求缺少文本")
         return jsonify({"error": "No text"}), 400
 
     text = data.get('text', '')
-    logger.info(f"流式TTS文本长度: {len(text)}")
+    request_id = (
+        data.get("request_id")
+        or request.headers.get("X-Request-ID")
+        or f"tts_{uuid.uuid4().hex[:12]}"
+    )
+    segment_index = data.get("segment_index", None)
+    logger.info(f"[{request_id}] 流式TTS文本长度: {len(text)} segment_index={segment_index}")
+    ask_timing = _timings_get(request_id)
+    if ask_timing and isinstance(ask_timing.get("t_submit"), (int, float)):
+        dt_since_submit = time.perf_counter() - float(ask_timing["t_submit"])
+        logger.info(f"[{request_id}] tts_request_received_since_submit dt={dt_since_submit:.3f}s")
 
     def generate_streaming_audio():
         try:
-            logger.info("开始流式TTS音频生成")
+            logger.info(f"[{request_id}] 开始流式TTS音频生成")
             url = "http://127.0.0.1:9880/tts"
             payload = {
                 "text": text,
@@ -431,41 +560,68 @@ def text_to_speech_stream():
                 "ref_audio_path": "Liang/converted_temp_first_90s.wav_0000000000_0000182720.wav",
                 "prompt_lang": "zh",
                 "prompt_text": "平台呢因为从我们的初创团队的理解的角度呢，我们觉得一个初创公司。",
-                "streaming_mode": True,
-                "media_type": "wav"
+                "low_latency": True,
+                "media_type": "wav",
             }
 
-            logger.info(f"发送流式TTS请求到: {url}")
+            headers = {"X-Request-ID": request_id}
+            logger.info(f"[{request_id}] 发送流式TTS请求到: {url}")
 
-            with requests.post(url, json=payload, stream=True, timeout=30) as r:
-                logger.info(f"流式TTS响应状态: {r.status_code}")
+            with requests.post(url, json=payload, headers=headers, stream=True, timeout=30) as r:
+                logger.info(
+                    f"[{request_id}] 流式TTS响应状态: {r.status_code} dt={time.perf_counter() - t_received:.3f}s"
+                )
 
                 if r.status_code != 200:
-                    logger.error(f"流式TTS服务返回错误: {r.status_code}")
+                    logger.error(f"[{request_id}] 流式TTS服务返回错误: {r.status_code}")
                     return
 
                 total_size = 0
                 chunk_count = 0
+                first_audio_chunk_at = None
 
                 for chunk in r.iter_content(chunk_size=4096):
                     if chunk:
                         chunk_count += 1
                         total_size += len(chunk)
+                        if first_audio_chunk_at is None:
+                            first_audio_chunk_at = time.perf_counter()
+                            logger.info(
+                                f"[{request_id}] tts_first_audio_chunk dt={first_audio_chunk_at - t_received:.3f}s bytes={len(chunk)}"
+                            )
+                            ask_timing = _timings_get(request_id)
+                            if ask_timing and isinstance(ask_timing.get("t_submit"), (int, float)):
+                                since_submit = first_audio_chunk_at - float(ask_timing["t_submit"])
+                                logger.info(f"[{request_id}] tts_first_audio_chunk_since_submit dt={since_submit:.3f}s")
+                                if isinstance(ask_timing.get("t_first_tts_segment"), (int, float)):
+                                    since_first_segment = first_audio_chunk_at - float(ask_timing["t_first_tts_segment"])
+                                    logger.info(
+                                        f"[{request_id}] tts_first_audio_chunk_since_first_segment dt={since_first_segment:.3f}s"
+                                    )
                         yield chunk
 
                         if chunk_count <= 3:  # 只记录前几个chunk
-                            logger.info(f"流式音频chunk #{chunk_count}, 大小: {len(chunk)}")
+                            logger.info(f"[{request_id}] 流式音频chunk #{chunk_count}, 大小: {len(chunk)}")
 
-                logger.info(f"流式TTS音频生成完成，总大小: {total_size} bytes, chunk数量: {chunk_count}")
+                logger.info(
+                    f"[{request_id}] 流式TTS音频生成完成 total_dt={time.perf_counter() - t_received:.3f}s 总大小: {total_size} bytes, chunk数量: {chunk_count}"
+                )
 
         except requests.exceptions.ConnectionError as e:
-            logger.error(f"流式TTS服务连接失败: {e}")
+            logger.error(f"[{request_id}] 流式TTS服务连接失败: {e}")
         except requests.exceptions.Timeout as e:
-            logger.error(f"流式TTS服务请求超时: {e}")
+            logger.error(f"[{request_id}] 流式TTS服务请求超时: {e}")
         except Exception as e:
-            logger.error(f"流式TTS音频生成异常: {e}", exc_info=True)
+            logger.error(f"[{request_id}] 流式TTS音频生成异常: {e}", exc_info=True)
 
-    return Response(generate_streaming_audio(), mimetype='audio/wav')
+    return Response(
+        generate_streaming_audio(),
+        mimetype="audio/wav",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 if __name__ == '__main__':
     logger.info("启动语音问答后端服务")
