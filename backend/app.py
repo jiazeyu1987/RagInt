@@ -225,21 +225,61 @@ def ask_question():
     logger.info(f"问题: {question}")
 
     def generate_response():
+        def sse_event(payload: dict) -> str:
+            return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
         try:
+            ragflow_config = load_ragflow_config() or {}
+            text_cleaning = ragflow_config.get("text_cleaning", {}) or {}
+
+            enable_cleaning = bool(text_cleaning.get("enabled", False))
+            cleaning_level = text_cleaning.get("cleaning_level", "standard")
+            language = text_cleaning.get("language", "zh-CN")
+            tts_buffer_enabled = bool(text_cleaning.get("tts_buffer_enabled", True))
+            max_chunk_size = int(text_cleaning.get("max_chunk_size", 200))
+
+            text_cleaner = None
+            tts_buffer = None
+            emitted_segments = set()
+
+            if enable_cleaning:
+                try:
+                    from text_cleaner import TTSTextCleaner
+                    from tts_buffer import TTSBuffer
+
+                    text_cleaner = TTSTextCleaner(language=language, cleaning_level=cleaning_level)
+                    tts_buffer = TTSBuffer(max_chunk_size=max_chunk_size, language=language) if tts_buffer_enabled else None
+                except Exception as e:
+                    logger.warning(f"文本清洗/分段模块不可用，降级为整段TTS: {e}")
+                    enable_cleaning = False
+
             if not session:
                 logger.warning("RAGFlow不可用，使用固定回答")
                 fallback_answer = f"我收到了你的问题：{question}。由于RAGFlow服务暂时不可用，我现在只能给你一个固定的回答。请确保RAGFlow服务正在运行。"
 
                 for char in fallback_answer:
-                    chunk_data = {
-                        "chunk": char,
-                        "done": False
-                    }
-                    yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
+                    yield sse_event({"chunk": char, "done": False})
+
+                    if text_cleaner and tts_buffer:
+                        cleaned = text_cleaner.clean_streaming_chunk(char, is_partial=True)
+                        for seg in tts_buffer.add_cleaned_chunk(cleaned):
+                            seg = seg.strip()
+                            if not seg or seg in emitted_segments:
+                                continue
+                            emitted_segments.add(seg)
+                            yield sse_event({"segment": seg, "done": False})
+
                     time.sleep(0.05)  # 模拟流式输出
 
-                final_data = {"chunk": "", "done": True}
-                yield f"data: {json.dumps(final_data, ensure_ascii=False)}\n\n"
+                if text_cleaner and tts_buffer:
+                    for seg in tts_buffer.finalize():
+                        seg = seg.strip()
+                        if not seg or seg in emitted_segments:
+                            continue
+                        emitted_segments.add(seg)
+                        yield sse_event({"segment": seg, "done": False})
+
+                yield sse_event({"chunk": "", "done": True})
                 return
 
             logger.info("开始RAGFlow流式响应")
@@ -262,11 +302,18 @@ def ask_question():
                         new_part = content[len(last_complete_content):]
                         logger.info(f"增量内容: {new_part[:50]}...")
 
-                        chunk_data = {
-                            "chunk": new_part,
-                            "done": False
-                        }
-                        yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
+                        yield sse_event({"chunk": new_part, "done": False})
+
+                        if text_cleaner and tts_buffer:
+                            cleaned = text_cleaner.clean_streaming_chunk(new_part, is_partial=True)
+                            ready_segments = tts_buffer.add_cleaned_chunk(cleaned)
+                            for seg in ready_segments:
+                                seg = seg.strip()
+                                if not seg or seg in emitted_segments:
+                                    continue
+                                emitted_segments.add(seg)
+                                yield sse_event({"segment": seg, "done": False})
+
                         last_complete_content = content
                     else:
                         logger.info("跳过重复或较短的内容")
@@ -274,16 +321,30 @@ def ask_question():
                     logger.warning(f"Chunk没有content属性: {chunk}")
 
             logger.info("流式响应结束")
-            final_data = {"chunk": "", "done": True}
-            yield f"data: {json.dumps(final_data, ensure_ascii=False)}\n\n"
+
+            if text_cleaner and tts_buffer:
+                for seg in tts_buffer.finalize():
+                    seg = seg.strip()
+                    if not seg or seg in emitted_segments:
+                        continue
+                    emitted_segments.add(seg)
+                    yield sse_event({"segment": seg, "done": False})
+
+            yield sse_event({"chunk": "", "done": True})
 
         except Exception as e:
             logger.error(f"流式响应异常: {e}", exc_info=True)
-            error_data = {"chunk": f"错误: {str(e)}", "done": True}
-            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+            yield sse_event({"chunk": f"错误: {str(e)}", "done": True})
 
     logger.info("返回流式响应")
-    return Response(generate_response(), mimetype='text/plain')
+    return Response(
+        generate_response(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 @app.route('/api/text_to_speech', methods=['POST'])
 def text_to_speech():

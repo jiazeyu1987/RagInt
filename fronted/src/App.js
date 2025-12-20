@@ -8,6 +8,12 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+  const ttsQueueRef = useRef([]);
+  const ttsWorkerPromiseRef = useRef(null);
+  const ragflowDoneRef = useRef(false);
+  const runIdRef = useRef(0);
+  const currentAudioRef = useRef(null);
+  const receivedSegmentsRef = useRef(false);
 
   const startRecording = async () => {
     try {
@@ -66,9 +72,88 @@ function App() {
   };
 
   const askQuestion = async (text) => {
+    const runId = ++runIdRef.current;
     setQuestion(text);
     setAnswer('');
     setIsLoading(true);
+    ttsQueueRef.current = [];
+    ragflowDoneRef.current = false;
+    receivedSegmentsRef.current = false;
+
+    if (currentAudioRef.current) {
+      try {
+        currentAudioRef.current.pause();
+        currentAudioRef.current.src = '';
+      } catch (_) {
+        // ignore
+      }
+      currentAudioRef.current = null;
+    }
+
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    const playAudioBlob = async (audioBlob) => {
+      const audioUrl = URL.createObjectURL(audioBlob);
+      try {
+        await new Promise((resolve, reject) => {
+          const audio = new Audio(audioUrl);
+          currentAudioRef.current = audio;
+
+          audio.onended = () => resolve();
+          audio.onerror = () => reject(new Error('Audio playback failed'));
+
+          audio.play().catch(reject);
+        });
+      } finally {
+        URL.revokeObjectURL(audioUrl);
+        if (currentAudioRef.current) {
+          currentAudioRef.current = null;
+        }
+      }
+    };
+
+    const synthesizeAndPlaySegment = async (segmentText) => {
+      const response = await fetch('http://localhost:8000/api/text_to_speech_stream', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text: segmentText })
+      });
+
+      if (!response.ok) {
+        throw new Error(`TTS HTTP error! status: ${response.status}`);
+      }
+
+      const audioBlob = await response.blob();
+      await playAudioBlob(audioBlob);
+    };
+
+    const startTTSWorkerIfNeeded = () => {
+      if (ttsWorkerPromiseRef.current) return;
+
+      ttsWorkerPromiseRef.current = (async () => {
+        while (runIdRef.current === runId) {
+          const nextSegment = ttsQueueRef.current.shift();
+          if (!nextSegment) {
+            if (ragflowDoneRef.current) return;
+            await sleep(50);
+            continue;
+          }
+
+          await synthesizeAndPlaySegment(nextSegment);
+        }
+      })()
+        .catch((err) => {
+          console.error('TTS分段播放出错:', err);
+        })
+        .finally(() => {
+          if (runIdRef.current === runId) {
+            setIsLoading(false);
+          }
+          ttsWorkerPromiseRef.current = null;
+        });
+    };
 
     try {
       const response = await fetch('http://localhost:8000/api/ask', {
@@ -82,26 +167,42 @@ function App() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let fullAnswer = '';
+      let sseBuffer = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
+        sseBuffer += decoder.decode(value, { stream: true });
+        const lines = sseBuffer.split('\n');
+        sseBuffer = lines.pop() || '';
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('data: ')) {
             try {
-              const data = JSON.parse(line.slice(6));
+              const data = JSON.parse(trimmed.slice(6));
               if (data.chunk && !data.done) {
                 fullAnswer += data.chunk;
                 setAnswer(fullAnswer);
               }
+
+              if (data.segment && !data.done) {
+                const seg = String(data.segment).trim();
+                if (seg) {
+                  receivedSegmentsRef.current = true;
+                  ttsQueueRef.current.push(seg);
+                  startTTSWorkerIfNeeded();
+                }
+              }
+
               if (data.done) {
-                console.log('RAGFlow响应完成，开始TTS播放');
-                console.log('完整回答文本:', fullAnswer);
-                await playTTS(fullAnswer);
+                if (!receivedSegmentsRef.current && fullAnswer.trim()) {
+                  ttsQueueRef.current.push(fullAnswer.trim());
+                }
+                ragflowDoneRef.current = true;
+                startTTSWorkerIfNeeded();
+                await ttsWorkerPromiseRef.current;
                 return;
               }
             } catch (err) {
@@ -112,95 +213,6 @@ function App() {
       }
     } catch (err) {
       console.error('Error asking question:', err);
-      setIsLoading(false);
-    }
-  };
-
-  const playTTS = async (text) => {
-    try {
-      console.log('开始流式TTS语音合成，文本长度:', text.length);
-      console.log('TTS文本内容:', text);
-
-      const response = await fetch('http://localhost:8000/api/text_to_speech_stream', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ text: text })
-      });
-
-      console.log('TTS流式响应状态:', response.status);
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      // 创建音频上下文进行流式播放
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      let chunks = [];
-      let totalBytes = 0;
-
-      const reader = response.body.getReader();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        chunks.push(value);
-        totalBytes += value.length;
-        console.log('收到音频chunk，大小:', value.length);
-      }
-
-      console.log('音频流接收完成，总大小:', totalBytes);
-
-      // 合并所有chunk
-      const audioData = new Uint8Array(totalBytes);
-      let offset = 0;
-      for (const chunk of chunks) {
-        audioData.set(chunk, offset);
-        offset += chunk.length;
-      }
-
-      // 解码音频并播放
-      try {
-        console.log('开始解码音频...');
-        const audioBuffer = await audioContext.decodeAudioData(audioData.buffer);
-        console.log('音频解码成功，时长:', audioBuffer.duration);
-
-        const source = audioContext.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(audioContext.destination);
-
-        source.onended = () => {
-          console.log('流式音频播放结束');
-          setIsLoading(false);
-          audioContext.close();
-        };
-
-        source.start(0);
-        console.log('流式音频播放开始');
-
-      } catch (decodeError) {
-        console.error('音频解码失败:', decodeError);
-
-        // 如果解码失败，尝试作为blob播放
-        const audioBlob = new Blob([audioData], { type: 'audio/wav' });
-        const audioUrl = URL.createObjectURL(audioBlob);
-        const audio = new Audio(audioUrl);
-
-        audio.onended = () => {
-          console.log('备用音频播放结束');
-          URL.revokeObjectURL(audioUrl);
-          setIsLoading(false);
-          audioContext.close();
-        };
-
-        await audio.play();
-        console.log('备用音频播放开始');
-      }
-
-    } catch (err) {
-      console.error('流式TTS过程中发生错误:', err);
       setIsLoading(false);
     }
   };
