@@ -15,6 +15,8 @@ import webrtcvad
 import requests
 import subprocess
 import logging
+import base64
+import contextlib
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -72,6 +74,9 @@ session = None
 ASK_TIMINGS = {}
 ASK_TIMINGS_LOCK = threading.Lock()
 
+TTS_STREAM_STATE = {}
+TTS_STREAM_STATE_LOCK = threading.Lock()
+
 
 def _timings_prune(now_perf: float, ttl_s: float = 300.0, max_items: int = 500):
     with ASK_TIMINGS_LOCK:
@@ -106,6 +111,415 @@ def _timings_get(request_id: str):
     with ASK_TIMINGS_LOCK:
         entry = ASK_TIMINGS.get(request_id)
         return dict(entry) if isinstance(entry, dict) else None
+
+
+def _tts_state_prune(now_perf: float, ttl_s: float = 600.0, max_items: int = 500):
+    with TTS_STREAM_STATE_LOCK:
+        items = list(TTS_STREAM_STATE.items())
+        for key, value in items:
+            t_last = value.get("t_last")
+            if isinstance(t_last, (int, float)) and (now_perf - float(t_last)) > ttl_s:
+                TTS_STREAM_STATE.pop(key, None)
+        if len(TTS_STREAM_STATE) > max_items:
+            ordered = sorted(
+                TTS_STREAM_STATE.items(),
+                key=lambda kv: float(kv[1].get("t_last", now_perf)),
+            )
+            for key, _ in ordered[: max(0, len(TTS_STREAM_STATE) - max_items)]:
+                TTS_STREAM_STATE.pop(key, None)
+
+
+def _tts_state_update(request_id: str, segment_index, provider: str, endpoint: str):
+    now_perf = time.perf_counter()
+    _tts_state_prune(now_perf)
+    try:
+        seg_int = int(segment_index) if segment_index is not None and str(segment_index).strip() != "" else None
+    except Exception:
+        seg_int = None
+
+    with TTS_STREAM_STATE_LOCK:
+        state = TTS_STREAM_STATE.get(request_id) or {
+            "t_first": now_perf,
+            "t_last": now_perf,
+            "count": 0,
+            "last_segment_index": None,
+            "last_provider": None,
+        }
+        state["t_last"] = now_perf
+        state["count"] = int(state.get("count", 0) or 0) + 1
+        last_seg = state.get("last_segment_index", None)
+        state["last_provider"] = provider
+
+        warn = None
+        if seg_int is not None and last_seg is not None:
+            if seg_int == last_seg:
+                warn = "duplicate_segment_index"
+            elif seg_int < last_seg:
+                warn = "out_of_order_segment_index"
+            elif seg_int > last_seg + 1:
+                warn = "segment_index_gap"
+        if seg_int is not None:
+            state["last_segment_index"] = seg_int
+
+        TTS_STREAM_STATE[request_id] = state
+
+    if warn:
+        logger.warning(
+            f"[{request_id}] tts_order_warning type={warn} endpoint={endpoint} provider={provider} seg={seg_int} last={last_seg}"
+        )
+    else:
+        logger.info(
+            f"[{request_id}] tts_request_seen endpoint={endpoint} provider={provider} seg={seg_int} count={state['count']}"
+        )
+
+
+def load_app_config():
+    return load_ragflow_config() or {}
+
+
+def _get_nested(config: dict, path: list, default=None):
+    cur = config
+    for key in path:
+        if not isinstance(cur, dict) or key not in cur:
+            return default
+        cur = cur[key]
+    return cur
+
+
+def _stream_local_gpt_sovits(text: str, request_id: str, config: dict):
+    tts_cfg = _get_nested(config, ["tts", "local"], {}) or {}
+    if tts_cfg.get("enabled") is False:
+        raise ValueError("local TTS is disabled by config: tts.local.enabled=false")
+    url = tts_cfg.get("url", "http://127.0.0.1:9880/tts")
+    timeout_s = float(tts_cfg.get("timeout_s", 30))
+
+    payload = {
+        "text": text,
+        "text_lang": tts_cfg.get("text_lang", "zh"),
+        "ref_audio_path": tts_cfg.get(
+            "ref_audio_path",
+            "Liang/converted_temp_first_90s.wav_0000000000_0000182720.wav",
+        ),
+        "prompt_lang": tts_cfg.get("prompt_lang", "zh"),
+        "prompt_text": tts_cfg.get(
+            "prompt_text",
+            "平台呢因为从我们的初创团队的理解的角度呢，我们觉得一个初创公司。",
+        ),
+        "low_latency": bool(tts_cfg.get("low_latency", True)),
+        "media_type": tts_cfg.get("media_type", "wav"),
+    }
+
+    headers = {"X-Request-ID": request_id}
+    logger.info(
+        f"[{request_id}] local_tts_request url={url} timeout_s={timeout_s} media_type={payload.get('media_type')} chars={len(text)}"
+    )
+    r = requests.post(url, json=payload, headers=headers, stream=True, timeout=timeout_s)
+    try:
+        logger.info(f"[{request_id}] local_tts status={r.status_code} ct={r.headers.get('Content-Type')}")
+        if r.status_code != 200:
+            logger.error(f"[{request_id}] local_tts_failed status={r.status_code} body={r.text[:200]}")
+            return
+        for chunk in r.iter_content(chunk_size=4096):
+            if chunk:
+                yield chunk
+    finally:
+        try:
+            r.close()
+        except Exception:
+            pass
+
+
+def _stream_bailian_tts(text: str, request_id: str, config: dict):
+    bailian_cfg = _get_nested(config, ["tts", "bailian"], {}) or {}
+    mode = str(bailian_cfg.get("mode", "dashscope")).strip().lower() or "dashscope"
+    if mode == "http":
+        yield from _stream_bailian_tts_http(text=text, request_id=request_id, config=config)
+        return
+    yield from _stream_bailian_tts_dashscope(text=text, request_id=request_id, config=config)
+
+
+def _stream_bailian_tts_http(text: str, request_id: str, config: dict):
+    bailian_cfg = _get_nested(config, ["tts", "bailian"], {}) or {}
+    url = str(bailian_cfg.get("url", "")).strip()
+    if not url:
+        raise ValueError("tts.bailian.url is required for bailian http mode")
+
+    api_key = str(bailian_cfg.get("api_key", "")).strip()
+    if not api_key:
+        raise ValueError("tts.bailian.api_key is required for bailian http mode")
+
+    method = str(bailian_cfg.get("method", "POST")).strip().upper()
+    timeout_s = float(bailian_cfg.get("timeout_s", 30))
+    text_field = str(bailian_cfg.get("text_field", "text")).strip() or "text"
+
+    headers = {"X-Request-ID": request_id}
+    auth_header = str(bailian_cfg.get("auth_header", "Authorization")).strip() or "Authorization"
+    auth_prefix = str(bailian_cfg.get("auth_prefix", "Bearer "))
+    headers[auth_header] = f"{auth_prefix}{api_key}"
+
+    payload = bailian_cfg.get("extra_json", {}) or {}
+    if not isinstance(payload, dict):
+        payload = {}
+    payload[text_field] = text
+
+    logger.info(
+        f"[{request_id}] bailian_http_tts_request method={method} url={url} timeout_s={timeout_s} text_field={text_field} chars={len(text)}"
+    )
+    r = requests.request(method, url, json=payload, headers=headers, stream=True, timeout=timeout_s)
+    try:
+        logger.info(f"[{request_id}] bailian_http_tts status={r.status_code} ct={r.headers.get('Content-Type')}")
+        if r.status_code != 200:
+            logger.error(f"[{request_id}] bailian_http_tts_failed status={r.status_code} body={r.text[:200]}")
+            return
+
+        content_type = (r.headers.get("Content-Type") or "").lower()
+        if "application/json" in content_type:
+            audio_field = str(bailian_cfg.get("json_audio_field", "")).strip()
+            if not audio_field:
+                raise ValueError("tts.bailian.json_audio_field is required when bailian response is JSON")
+            data = r.json()
+            audio_val = data
+            for part in audio_field.split("."):
+                if isinstance(audio_val, dict):
+                    audio_val = audio_val.get(part)
+                else:
+                    audio_val = None
+            if not audio_val:
+                raise ValueError(f"JSON audio field not found: {audio_field}")
+            is_b64 = bool(bailian_cfg.get("json_audio_b64", True))
+            audio_bytes = base64.b64decode(audio_val) if is_b64 else audio_val.encode("utf-8")
+            yield audio_bytes
+            return
+
+        for chunk in r.iter_content(chunk_size=4096):
+            if chunk:
+                yield chunk
+    finally:
+        with contextlib.suppress(Exception):
+            r.close()
+
+
+_DASHSCOPE_POOL = None
+_DASHSCOPE_POOL_LOCK = threading.Lock()
+
+
+def _dashscope_get_pool(max_size: int):
+    global _DASHSCOPE_POOL
+    with _DASHSCOPE_POOL_LOCK:
+        if _DASHSCOPE_POOL is None:
+            from dashscope.audio.tts_v2 import SpeechSynthesizerObjectPool
+
+            _DASHSCOPE_POOL = SpeechSynthesizerObjectPool(max_size=max(1, int(max_size)))
+        return _DASHSCOPE_POOL
+
+
+def _stream_bailian_tts_dashscope(text: str, request_id: str, config: dict):
+    """
+    Bailian/DashScope streaming TTS via SDK (CosyVoice), based on `tts_demo/cv_streeam.py`.
+
+    Config source:
+    - `ragflow_demo/ragflow_config.json` -> `tts.bailian`
+    """
+    bailian_cfg = _get_nested(config, ["tts", "bailian"], {}) or {}
+    api_key = str(bailian_cfg.get("api_key", "")).strip()
+    if not api_key:
+        raise ValueError("tts.bailian.api_key is required for bailian dashscope mode")
+
+    try:
+        import dashscope
+        from dashscope.audio.tts_v2 import AudioFormat, ResultCallback, SpeechSynthesizer
+    except Exception as e:
+        raise RuntimeError(f"dashscope SDK not available: {e}")
+
+    dashscope.api_key = api_key
+
+    model = str(bailian_cfg.get("model", "cosyvoice-v3-plus")).strip() or "cosyvoice-v3-plus"
+    voice = str(bailian_cfg.get("voice", "")).strip()
+    if not voice:
+        raise ValueError("tts.bailian.voice is required for bailian dashscope mode")
+
+    seed = int(bailian_cfg.get("seed", 0) or 0)
+
+    sample_rate = bailian_cfg.get("sample_rate", None)
+    sample_rate = int(sample_rate) if sample_rate is not None and str(sample_rate).strip() != "" else None
+    fmt = str(bailian_cfg.get("format", "wav")).strip().lower() or "wav"
+
+    def pick_audio_format():
+        sr = sample_rate or 16000
+        if fmt == "wav":
+            candidate = f"WAV_{sr}HZ_MONO_16BIT"
+            return getattr(AudioFormat, candidate, None) or getattr(AudioFormat, "WAV_16000HZ_MONO_16BIT", None)
+        if fmt == "pcm":
+            candidate = f"PCM_{sr}HZ_MONO_16BIT"
+            return getattr(AudioFormat, candidate, None) or getattr(AudioFormat, "PCM_16000HZ_MONO_16BIT", None)
+        if fmt == "mp3":
+            candidate = f"MP3_{sr}HZ_MONO_256KBPS"
+            return getattr(AudioFormat, candidate, None) or getattr(AudioFormat, "MP3_24000HZ_MONO_256KBPS", None)
+        return None
+
+    audio_format = pick_audio_format() or getattr(AudioFormat, "DEFAULT", None)
+    if audio_format is None:
+        raise RuntimeError("dashscope AudioFormat not available")
+
+    use_connection_pool = bool(bailian_cfg.get("use_connection_pool", True))
+    pool_max_size = int(bailian_cfg.get("pool_max_size", 3))
+
+    queue_max_chunks = int(bailian_cfg.get("queue_max_chunks", 256))
+    q = queue.Queue(maxsize=max(8, queue_max_chunks))
+    complete_event = threading.Event()
+    stop_event = threading.Event()
+
+    additional_params = bailian_cfg.get("additional_params") or {}
+    if not isinstance(additional_params, dict):
+        additional_params = {}
+    if sample_rate is not None:
+        additional_params["sample_rate"] = sample_rate
+
+    volume = bailian_cfg.get("volume", None)
+    volume = int(volume) if volume is not None and str(volume).strip() != "" else 50
+    speech_rate = bailian_cfg.get("speech_rate", None)
+    speech_rate = float(speech_rate) if speech_rate is not None and str(speech_rate).strip() != "" else 1.0
+    pitch_rate = bailian_cfg.get("pitch_rate", None)
+    pitch_rate = float(pitch_rate) if pitch_rate is not None and str(pitch_rate).strip() != "" else 1.0
+
+    class Callback(ResultCallback):
+        def on_open(self):
+            logger.info(
+                f"[{request_id}] dashscope_tts_open model={model} voice={voice} format={fmt} sample_rate={sample_rate} pool={use_connection_pool}"
+            )
+
+        def on_complete(self):
+            logger.info(f"[{request_id}] dashscope_tts_complete")
+            complete_event.set()
+            with contextlib.suppress(Exception):
+                q.put_nowait(None)
+
+        def on_error(self, message: str):
+            logger.error(f"[{request_id}] dashscope_tts_error {message}")
+            complete_event.set()
+            with contextlib.suppress(Exception):
+                q.put_nowait(None)
+
+        def on_close(self):
+            logger.info(f"[{request_id}] dashscope_tts_close")
+
+        def on_event(self, message):
+            # noisy; keep for future debugging
+            return
+
+        def on_data(self, data: bytes) -> None:
+            if stop_event.is_set():
+                return
+            if data:
+                try:
+                    q.put(data, timeout=2.0)
+                except Exception:
+                    logger.warning(
+                        f"[{request_id}] dashscope_tts_backpressure drop_bytes={len(data)} qsize={getattr(q, 'qsize', lambda: -1)()}"
+                    )
+
+    synthesizer_callback = Callback()
+
+    speech_synthesizer = None
+    try:
+        if use_connection_pool:
+            pool = _dashscope_get_pool(pool_max_size)
+            speech_synthesizer = pool.borrow_synthesizer(
+                model=model,
+                voice=voice,
+                format=audio_format,
+                volume=volume,
+                speech_rate=speech_rate,
+                pitch_rate=pitch_rate,
+                seed=seed,
+                additional_params=additional_params,
+                callback=synthesizer_callback,
+            )
+        else:
+            speech_synthesizer = SpeechSynthesizer(
+                model=model,
+                voice=voice,
+                format=audio_format,
+                volume=volume,
+                speech_rate=speech_rate,
+                pitch_rate=pitch_rate,
+                seed=seed,
+                additional_params=additional_params,
+                callback=synthesizer_callback,
+            )
+
+        t_call = time.perf_counter()
+        logger.info(
+            f"[{request_id}] dashscope_tts_call start chars={len(text)} volume={volume} speech_rate={speech_rate} pitch_rate={pitch_rate} additional_params={list(additional_params.keys())}"
+        )
+        speech_synthesizer.call(text)
+
+        first_chunk = True
+        while True:
+            try:
+                item = q.get(timeout=0.5)
+            except queue.Empty:
+                if not first_chunk and hasattr(q, "qsize"):
+                    qs = q.qsize()
+                    if qs >= 64:
+                        logger.info(f"[{request_id}] dashscope_tts_queue qsize={qs}")
+                if complete_event.is_set():
+                    break
+                continue
+            if item is None:
+                break
+            if first_chunk:
+                first_chunk = False
+                prefix = item[:12]
+                is_riff = prefix.startswith(b"RIFF")
+                logger.info(
+                    f"[{request_id}] dashscope_tts_first_chunk dt={time.perf_counter() - t_call:.3f}s bytes={len(item)} riff={is_riff}"
+                )
+                ask_timing = _timings_get(request_id)
+                if ask_timing and isinstance(ask_timing.get("t_submit"), (int, float)):
+                    since_submit = time.perf_counter() - float(ask_timing["t_submit"])
+                    logger.info(f"[{request_id}] dashscope_tts_first_chunk_since_submit dt={since_submit:.3f}s")
+            yield item
+    except GeneratorExit:
+        stop_event.set()
+        logger.info(f"[{request_id}] dashscope_tts_generator_exit (client_disconnect?)")
+        raise
+    except Exception as e:
+        logger.error(f"[{request_id}] dashscope_tts_exception {e}", exc_info=True)
+    finally:
+        stop_event.set()
+        if speech_synthesizer is not None:
+            with contextlib.suppress(Exception):
+                sdk_rid = speech_synthesizer.get_last_request_id()
+                first_pkg_ms = speech_synthesizer.get_first_package_delay()
+                logger.info(f"[{request_id}] dashscope_tts_metrics requestId={sdk_rid} first_pkg_delay_ms={first_pkg_ms}")
+        if speech_synthesizer is not None:
+            if use_connection_pool:
+                with contextlib.suppress(Exception):
+                    pool = _dashscope_get_pool(pool_max_size)
+                    pool.return_synthesizer(speech_synthesizer)
+            else:
+                with contextlib.suppress(Exception):
+                    speech_synthesizer.close()
+
+
+def _stream_tts_provider(text: str, request_id: str, provider: str, config: dict):
+    provider_norm = (provider or "").strip().lower() or "local"
+    if provider_norm == "bailian":
+        logger.info(f"[{request_id}] tts_provider_select provider=bailian")
+        yield from _stream_bailian_tts(text=text, request_id=request_id, config=config)
+        return
+    local_enabled = _get_nested(config, ["tts", "local", "enabled"], True)
+    if local_enabled is False:
+        bailian_cfg = _get_nested(config, ["tts", "bailian"], {}) or {}
+        if str(bailian_cfg.get("api_key", "")).strip() and str(bailian_cfg.get("voice", "")).strip():
+            logger.info(f"[{request_id}] local_tts_disabled -> fallback_to_bailian")
+            yield from _stream_bailian_tts(text=text, request_id=request_id, config=config)
+            return
+        raise ValueError("local TTS is disabled and bailian is not configured")
+
+    logger.info(f"[{request_id}] tts_provider_select provider=local")
+    yield from _stream_local_gpt_sovits(text=text, request_id=request_id, config=config)
 
 def find_dataset_by_name(client, dataset_name):
     if not dataset_name:
@@ -471,56 +885,40 @@ def text_to_speech():
         return jsonify({"error": "No text"}), 400
 
     text = data.get('text', '')
-    logger.info(f"TTS文本长度: {len(text)}")
-    logger.info(f"TTS文本内容: {text[:100]}...")
+    request_id = (
+        data.get("request_id")
+        or request.headers.get("X-Request-ID")
+        or f"tts_{uuid.uuid4().hex[:12]}"
+    )
+    logger.info(f"[{request_id}] tts_request_received endpoint=/api/text_to_speech chars={len(text)} preview={text[:60]!r}")
+
+    app_config = load_app_config()
+    provider = (
+        data.get("tts_provider")
+        or request.headers.get("X-TTS-Provider")
+        or _get_nested(app_config, ["tts", "provider"], "local")
+    )
+    _tts_state_update(request_id, data.get("segment_index", None), provider=provider, endpoint="/api/text_to_speech")
+    logger.info(f"[{request_id}] tts_provider={provider} response_mimetype={_get_nested(app_config, ['tts', 'mimetype'], 'audio/wav')}")
 
     def generate_audio():
         try:
-            logger.info("开始TTS音频生成")
-            url = "http://127.0.0.1:9880/tts"
-            payload = {
-                "text": text,
-                "text_lang": "zh",
-                "ref_audio_path": "Liang/converted_temp_first_90s.wav_0000000000_0000182720.wav",
-                "prompt_lang": "zh",
-                "prompt_text": "平台呢因为从我们的初创团队的理解的角度呢，我们觉得一个初创公司。",
-                "streaming_mode": True,
-                "media_type": "wav"
-            }
-
-            logger.info(f"发送TTS请求到: {url}")
-            logger.info(f"TTS payload: {payload}")
-
-            with requests.post(url, json=payload, stream=True) as r:
-                logger.info(f"TTS响应状态: {r.status_code}")
-                logger.info(f"TTS响应头: {dict(r.headers)}")
-
-                if r.status_code != 200:
-                    logger.error(f"TTS服务返回错误: {r.status_code}")
-                    return
-
-                total_size = 0
-                chunk_count = 0
-
-                for chunk in r.iter_content(chunk_size=4096):
-                    if chunk:
-                        chunk_count += 1
-                        total_size += len(chunk)
-                        yield chunk
-
-                        if chunk_count <= 5:  # 只记录前几个chunk的日志
-                            logger.info(f"音频chunk #{chunk_count}, 大小: {len(chunk)}")
-
-                logger.info(f"TTS音频生成完成，总大小: {total_size} bytes, chunk数量: {chunk_count}")
-
-        except requests.exceptions.ConnectionError as e:
-            logger.error(f"TTS服务连接失败: {e}")
-        except requests.exceptions.Timeout as e:
-            logger.error(f"TTS服务请求超时: {e}")
+            logger.info(f"[{request_id}] 开始TTS音频生成 provider={provider}")
+            yield from _stream_tts_provider(text=text, request_id=request_id, provider=provider, config=app_config)
+        except GeneratorExit:
+            logger.info(f"[{request_id}] tts_generator_exit endpoint=/api/text_to_speech (client_disconnect?)")
+            raise
         except Exception as e:
-            logger.error(f"TTS音频生成异常: {e}", exc_info=True)
+            logger.error(f"[{request_id}] TTS音频生成异常: {e}", exc_info=True)
 
-    return Response(generate_audio(), mimetype='audio/wav')
+    return Response(
+        generate_audio(),
+        mimetype=_get_nested(app_config, ["tts", "mimetype"], "audio/wav"),
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 @app.route('/api/text_to_speech_stream', methods=['GET', 'POST'])
 def text_to_speech_stream():
@@ -544,15 +942,61 @@ def text_to_speech_stream():
         or f"tts_{uuid.uuid4().hex[:12]}"
     )
     segment_index = data.get("segment_index", None)
-    logger.info(f"[{request_id}] 流式TTS文本长度: {len(text)} segment_index={segment_index}")
+    logger.info(
+        f"[{request_id}] tts_request_received endpoint=/api/text_to_speech_stream method={request.method} chars={len(text)} seg={segment_index} preview={text[:60]!r}"
+    )
     ask_timing = _timings_get(request_id)
     if ask_timing and isinstance(ask_timing.get("t_submit"), (int, float)):
         dt_since_submit = time.perf_counter() - float(ask_timing["t_submit"])
         logger.info(f"[{request_id}] tts_request_received_since_submit dt={dt_since_submit:.3f}s")
 
+    app_config = load_app_config()
+    provider = (
+        data.get("tts_provider")
+        or request.headers.get("X-TTS-Provider")
+        or _get_nested(app_config, ["tts", "provider"], "local")
+    )
+    _tts_state_update(request_id, segment_index, provider=provider, endpoint="/api/text_to_speech_stream")
+    logger.info(
+        f"[{request_id}] tts_provider={provider} response_mimetype={_get_nested(app_config, ['tts', 'mimetype'], 'audio/wav')} remote={request.remote_addr} ua={(request.headers.get('User-Agent') or '')[:60]!r}"
+    )
+
     def generate_streaming_audio():
         try:
-            logger.info(f"[{request_id}] 开始流式TTS音频生成")
+            logger.info(f"[{request_id}] 开始流式TTS音频生成 provider={provider}")
+
+            total_size = 0
+            chunk_count = 0
+            first_audio_chunk_at = None
+
+            for chunk in _stream_tts_provider(text=text, request_id=request_id, provider=provider, config=app_config):
+                if not chunk:
+                    continue
+                chunk_count += 1
+                total_size += len(chunk)
+                if first_audio_chunk_at is None:
+                    first_audio_chunk_at = time.perf_counter()
+                    logger.info(
+                        f"[{request_id}] tts_first_audio_chunk dt={first_audio_chunk_at - t_received:.3f}s bytes={len(chunk)}"
+                    )
+                    ask_timing = _timings_get(request_id)
+                    if ask_timing and isinstance(ask_timing.get('t_submit'), (int, float)):
+                        since_submit = first_audio_chunk_at - float(ask_timing['t_submit'])
+                        logger.info(f"[{request_id}] tts_first_audio_chunk_since_submit dt={since_submit:.3f}s")
+                        if isinstance(ask_timing.get('t_first_tts_segment'), (int, float)):
+                            since_first_segment = first_audio_chunk_at - float(ask_timing['t_first_tts_segment'])
+                            logger.info(
+                                f"[{request_id}] tts_first_audio_chunk_since_first_segment dt={since_first_segment:.3f}s"
+                            )
+                yield chunk
+
+                if chunk_count <= 3:  # 只记录前几个chunk
+                    logger.info(f"[{request_id}] 流式音频chunk #{chunk_count}, 大小: {len(chunk)}")
+
+            logger.info(
+                f"[{request_id}] 流式TTS音频生成完成 total_dt={time.perf_counter() - t_received:.3f}s 总大小: {total_size} bytes, chunk数量: {chunk_count}"
+            )
+            return
             url = "http://127.0.0.1:9880/tts"
             payload = {
                 "text": text,
@@ -607,16 +1051,15 @@ def text_to_speech_stream():
                     f"[{request_id}] 流式TTS音频生成完成 total_dt={time.perf_counter() - t_received:.3f}s 总大小: {total_size} bytes, chunk数量: {chunk_count}"
                 )
 
-        except requests.exceptions.ConnectionError as e:
-            logger.error(f"[{request_id}] 流式TTS服务连接失败: {e}")
-        except requests.exceptions.Timeout as e:
-            logger.error(f"[{request_id}] 流式TTS服务请求超时: {e}")
+        except GeneratorExit:
+            logger.info(f"[{request_id}] tts_stream_generator_exit endpoint=/api/text_to_speech_stream (client_disconnect?)")
+            raise
         except Exception as e:
-            logger.error(f"[{request_id}] 流式TTS音频生成异常: {e}", exc_info=True)
+            logger.error(f"[{request_id}] tts_stream_exception {e} provider={provider}", exc_info=True)
 
     return Response(
         generate_streaming_audio(),
-        mimetype="audio/wav",
+        mimetype=_get_nested(app_config, ["tts", "mimetype"], "audio/wav"),
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
