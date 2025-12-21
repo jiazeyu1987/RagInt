@@ -86,7 +86,7 @@ async function playWavViaDecodeAudioData(url, audioContextRef, currentAudioRef) 
   });
 }
 
-async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, fallbackPlay) {
+async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, fallbackPlay, onFirstAudioChunk) {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) {
     if (fallbackPlay) return fallbackPlay();
@@ -185,6 +185,7 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
     let sanityDone = false;
     let warnedRateMismatch = false;
     let resampleState = null;
+    let firstAudioEmitted = false;
 
     const ensureAudioContext = async (targetSampleRate) => {
       if (!audioContextRef.current) {
@@ -327,6 +328,17 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
       const usableBytes = pcmBytes.byteLength - (pcmBytes.byteLength % blockAlign);
       if (usableBytes <= 0) return;
 
+      if (!firstAudioEmitted) {
+        firstAudioEmitted = true;
+        try {
+          if (typeof onFirstAudioChunk === 'function') {
+            onFirstAudioChunk({ bytes: usableBytes, sampleRate: wavInfo.sampleRate, channels: wavInfo.channels });
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
       const aligned = pcmBytes.slice(0, usableBytes);
       const int16 = new Int16Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 2);
 
@@ -452,14 +464,18 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [queueStatus, setQueueStatus] = useState('');
   const [ttsEnabled, setTtsEnabled] = useState(true);
+  const [debugInfo, setDebugInfo] = useState(null);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const messagesEndRef = useRef(null);
   const PREFERRED_TTS_SAMPLE_RATE = 16000;
   const ttsEnabledRef = useRef(true);
+  const debugRef = useRef(null);
+  const segmentSeqRef = useRef(0);
 
   // 原始文本队列和预生成音频队列
   const ttsTextQueueRef = useRef([]);
+  const ttsMetaQueueRef = useRef([]);
   const ttsAudioQueueRef = useRef([]);
 
   // 工作线程引用
@@ -530,6 +546,39 @@ function App() {
       setQueueStatus('');
     }
   }, [ttsEnabled]);
+
+  const nowMs = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
+
+  const beginDebugRun = (trigger) => {
+    const t0 = nowMs();
+    const next = {
+      trigger,
+      submitAt: t0,
+      ragflowFirstChunkAt: null,
+      ragflowFirstSegmentAt: null,
+      ragflowDoneAt: null,
+      ttsFirstRequestAt: null,
+      ttsFirstAudioAt: null,
+      ttsAllDoneAt: null,
+      segments: [],
+    };
+    debugRef.current = next;
+    setDebugInfo(next);
+  };
+
+  const debugMark = (key, t) => {
+    const cur = debugRef.current;
+    if (!cur) return;
+    if (cur[key] != null) return;
+    cur[key] = t != null ? t : nowMs();
+    setDebugInfo({ ...cur, segments: [...cur.segments] });
+  };
+
+  const debugRefresh = () => {
+    const cur = debugRef.current;
+    if (!cur) return;
+    setDebugInfo({ ...cur, segments: [...cur.segments] });
+  };
 
   // TTS预生成配置
   const MAX_PRE_GENERATE_COUNT = 2; // 最多预生成2段音频
@@ -617,6 +666,7 @@ function App() {
 
       if (text) {
         setInputText('');
+        beginDebugRun('voice');
         await askQuestion(text);
       } else {
         setIsLoading(false);
@@ -631,12 +681,15 @@ function App() {
     const runId = ++runIdRef.current;
     const requestId = `ask_${runId}_${Date.now()}`;
     let segmentIndex = 0;
+    segmentSeqRef.current = 0;
+    if (!debugRef.current) beginDebugRun('unknown');
     setLastQuestion(text);
     setAnswer('');
     setIsLoading(true);
 
     // 清空所有队列
     ttsTextQueueRef.current = [];
+    ttsMetaQueueRef.current = [];
     ttsAudioQueueRef.current = [];
     ragflowDoneRef.current = false;
     receivedSegmentsRef.current = false;
@@ -746,10 +799,12 @@ function App() {
 
           // 移除文本并生成音频
           ttsTextQueueRef.current.shift();
+          const nextSeq = ttsMetaQueueRef.current.shift();
           const audioUrl = generateAudioSegmentUrl(nextSegment);
 
           if (audioUrl) {
             ttsAudioQueueRef.current.push({
+              seq: typeof nextSeq === 'number' ? nextSeq : null,
               text: nextSegment,
               url: audioUrl
             });
@@ -786,6 +841,19 @@ function App() {
             continue;
           }
 
+          const segSeq = typeof audioItem.seq === 'number' ? audioItem.seq : null;
+          const segDebug =
+            debugRef.current && segSeq != null
+              ? (debugRef.current.segments || []).find((s) => s.seq === segSeq)
+              : null;
+
+          if (debugRef.current) {
+            const tReq = nowMs();
+            if (!debugRef.current.ttsFirstRequestAt) debugRef.current.ttsFirstRequestAt = tReq;
+            if (segDebug && segDebug.ttsRequestAt == null) segDebug.ttsRequestAt = tReq;
+            debugRefresh();
+          }
+
           if (USE_SAVED_TTS) {
             try {
               await playWavViaDecodeAudioData(audioItem.url, audioContextRef, currentAudioRef);
@@ -798,8 +866,21 @@ function App() {
               audioItem.url,
               audioContextRef,
               currentAudioRef,
-              () => playAudioUrl(audioItem.url, audioItem.text)
+              () => playAudioUrl(audioItem.url, audioItem.text),
+              () => {
+                const tFirst = nowMs();
+                debugMark('ttsFirstAudioAt', tFirst);
+                if (segDebug && segDebug.ttsFirstAudioAt == null) {
+                  segDebug.ttsFirstAudioAt = tFirst;
+                  debugRefresh();
+                }
+              }
             );
+          }
+
+          if (segDebug && segDebug.ttsDoneAt == null) {
+            segDebug.ttsDoneAt = nowMs();
+            debugRefresh();
           }
         }
       })()
@@ -809,6 +890,7 @@ function App() {
         .finally(() => {
           if (runIdRef.current === runId) {
             setIsLoading(false);
+            debugMark('ttsAllDoneAt');
           }
           ttsPlayerPromiseRef.current = null;
         });
@@ -842,6 +924,8 @@ function App() {
             try {
               const data = JSON.parse(trimmed.slice(6));
               if (data.chunk && !data.done) {
+                if (!debugRef.current) beginDebugRun('unknown');
+                debugMark('ragflowFirstChunkAt');
                 fullAnswer += data.chunk;
                 setAnswer(fullAnswer);
               }
@@ -849,16 +933,42 @@ function App() {
               if (data.segment && !data.done) {
                 const seg = String(data.segment).trim();
                 if (seg && ttsEnabledRef.current) {
+                  debugMark('ragflowFirstSegmentAt');
                   receivedSegmentsRef.current = true;
+                  const seq = segmentSeqRef.current++;
                   ttsTextQueueRef.current.push(seg);
+                  ttsMetaQueueRef.current.push(seq);
+                  if (debugRef.current) {
+                    debugRef.current.segments.push({
+                      seq,
+                      chars: seg.length,
+                      ttsRequestAt: null,
+                      ttsFirstAudioAt: null,
+                      ttsDoneAt: null,
+                    });
+                    debugRefresh();
+                  }
                   console.log(`📝 收到文本段落: "${seg.substring(0, 30)}..."`);
                   startTTSGenerator();
                 }
               }
 
               if (data.done) {
+                debugMark('ragflowDoneAt');
                 if (ttsEnabledRef.current && !receivedSegmentsRef.current && fullAnswer.trim()) {
+                  const seq = segmentSeqRef.current++;
                   ttsTextQueueRef.current.push(fullAnswer.trim());
+                  ttsMetaQueueRef.current.push(seq);
+                  if (debugRef.current) {
+                    debugRef.current.segments.push({
+                      seq,
+                      chars: fullAnswer.trim().length,
+                      ttsRequestAt: null,
+                      ttsFirstAudioAt: null,
+                      ttsDoneAt: null,
+                    });
+                    debugRefresh();
+                  }
                   console.log(`📝 收到完整文本: "${fullAnswer.substring(0, 30)}..."`);
                 }
                 ragflowDoneRef.current = true;
@@ -895,6 +1005,7 @@ function App() {
 
   const handleTextSubmit = async (e) => {
     e.preventDefault();
+    beginDebugRun('text');
     if (ttsEnabledRef.current) {
       if (audioContextRef.current) {
         try {
@@ -968,6 +1079,8 @@ function App() {
           </form>
         </div>
 
+        <div className="layout">
+          <div className="main">
         {lastQuestion && (
           <div className="question-section">
             <h3>问题: {lastQuestion}</h3>
@@ -993,6 +1106,69 @@ function App() {
           </div>
         )}
         <div ref={messagesEndRef} />
+          </div>
+
+          <aside className="debug-panel">
+            <div className="debug-title">调试面板</div>
+            {!debugInfo ? (
+              <div className="debug-muted">点击发送后显示耗时</div>
+            ) : (
+              <>
+                <div className="debug-row">
+                  <div className="debug-k">触发</div>
+                  <div className="debug-v">{debugInfo.trigger}</div>
+                </div>
+                <div className="debug-row">
+                  <div className="debug-k">提交 → 首字</div>
+                  <div className="debug-v">
+                    {debugInfo.ragflowFirstChunkAt ? `${(debugInfo.ragflowFirstChunkAt - debugInfo.submitAt).toFixed(0)} ms` : '—'}
+                  </div>
+                </div>
+                <div className="debug-row">
+                  <div className="debug-k">提交 → 首段</div>
+                  <div className="debug-v">
+                    {debugInfo.ragflowFirstSegmentAt ? `${(debugInfo.ragflowFirstSegmentAt - debugInfo.submitAt).toFixed(0)} ms` : '—'}
+                  </div>
+                </div>
+                <div className="debug-row">
+                  <div className="debug-k">提交 → TTS首包</div>
+                  <div className="debug-v">
+                    {debugInfo.ttsFirstAudioAt ? `${(debugInfo.ttsFirstAudioAt - debugInfo.submitAt).toFixed(0)} ms` : (ttsEnabled ? '—' : '已关闭')}
+                  </div>
+                </div>
+                <div className="debug-row">
+                  <div className="debug-k">提交 → RAG结束</div>
+                  <div className="debug-v">
+                    {debugInfo.ragflowDoneAt ? `${(debugInfo.ragflowDoneAt - debugInfo.submitAt).toFixed(0)} ms` : '—'}
+                  </div>
+                </div>
+                <div className="debug-row">
+                  <div className="debug-k">提交 → TTS结束</div>
+                  <div className="debug-v">
+                    {debugInfo.ttsAllDoneAt ? `${(debugInfo.ttsAllDoneAt - debugInfo.submitAt).toFixed(0)} ms` : (ttsEnabled ? '—' : '已关闭')}
+                  </div>
+                </div>
+
+                <div className="debug-subtitle">分段</div>
+                <div className="debug-list">
+                  {(debugInfo.segments || []).slice(-12).map((s) => (
+                    <div key={s.seq} className="debug-item">
+                      <div className="debug-item-h">
+                        <span>#{s.seq}</span>
+                        <span>{s.chars}字</span>
+                      </div>
+                      <div className="debug-item-b">
+                        <div>请求: {s.ttsRequestAt ? `${(s.ttsRequestAt - debugInfo.submitAt).toFixed(0)}ms` : '—'}</div>
+                        <div>首包: {s.ttsFirstAudioAt ? `${(s.ttsFirstAudioAt - debugInfo.submitAt).toFixed(0)}ms` : '—'}</div>
+                        <div>结束: {s.ttsDoneAt ? `${(s.ttsDoneAt - debugInfo.submitAt).toFixed(0)}ms` : '—'}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </aside>
+        </div>
       </div>
     </div>
   );

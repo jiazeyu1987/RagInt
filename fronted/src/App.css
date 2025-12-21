@@ -42,6 +42,102 @@ body {
   padding: 18px 16px 130px;
 }
 
+.layout {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.debug-panel {
+  flex: 0 0 320px;
+  width: 320px;
+  position: sticky;
+  top: 56px;
+  align-self: flex-start;
+  max-height: calc(100vh - 170px);
+  overflow: auto;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 12px 12px 10px;
+}
+
+.debug-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+
+.debug-muted {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.debug-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.debug-k {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.debug-v {
+  color: var(--text);
+  font-size: 12px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.debug-subtitle {
+  margin-top: 10px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.debug-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.debug-item {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.16);
+  padding: 8px 10px;
+}
+
+.debug-item-h {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text);
+  opacity: 0.92;
+  margin-bottom: 6px;
+}
+
+.debug-item-b {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 h1 {
   position: sticky;
   top: 0;
@@ -260,5 +356,9 @@ h1 {
   .text-input button {
     min-width: 56px;
     padding: 0 12px;
+  }
+
+  .debug-panel {
+    display: none;
   }
 }
