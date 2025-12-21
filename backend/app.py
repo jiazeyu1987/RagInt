@@ -44,12 +44,27 @@ for _name in (
     "dashscope.audio.tts_v2.speech_synthesizer",
     "dashscope",
     "websocket",
+    "websocket._logging",
     "websocket._app",
 ):
     with contextlib.suppress(Exception):
         logging.getLogger(_name).addFilter(_DashscopeByeNoiseFilter())
         # Keep our app logs at INFO; reduce third-party log spam.
         logging.getLogger(_name).setLevel(logging.WARNING)
+
+# Ensure the filter applies even if third-party libs attach their own handlers.
+with contextlib.suppress(Exception):
+    _root_logger = logging.getLogger()
+    for _h in list(getattr(_root_logger, "handlers", []) or []):
+        _h.addFilter(_DashscopeByeNoiseFilter())
+
+# websocket-client may add its own StreamHandler (no timestamp) when trace is enabled; remove non-null handlers.
+with contextlib.suppress(Exception):
+    from logging import NullHandler as _NullHandler  # type: ignore
+    _ws_logger = logging.getLogger("websocket")
+    for _h in list(_ws_logger.handlers):
+        if not isinstance(_h, _NullHandler):
+            _ws_logger.removeHandler(_h)
 
 sys.path.append(str(Path(__file__).parent))
 
