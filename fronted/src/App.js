@@ -451,10 +451,12 @@ function App() {
   const [answer, setAnswer] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [queueStatus, setQueueStatus] = useState('');
+  const [ttsEnabled, setTtsEnabled] = useState(true);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const messagesEndRef = useRef(null);
   const PREFERRED_TTS_SAMPLE_RATE = 16000;
+  const ttsEnabledRef = useRef(true);
 
   // 原始文本队列和预生成音频队列
   const ttsTextQueueRef = useRef([]);
@@ -501,6 +503,33 @@ function App() {
       console.warn('[audio] unlock failed:', err);
     }
   };
+
+  useEffect(() => {
+    ttsEnabledRef.current = !!ttsEnabled;
+
+    if (!ttsEnabled) {
+      try {
+        if (currentAudioRef.current) {
+          if (typeof currentAudioRef.current.stop === 'function') {
+            currentAudioRef.current.stop();
+          } else if (typeof currentAudioRef.current.pause === 'function') {
+            currentAudioRef.current.pause();
+            currentAudioRef.current.src = '';
+          }
+        }
+      } catch (_) {
+        // ignore
+      } finally {
+        currentAudioRef.current = null;
+      }
+
+      ttsTextQueueRef.current = [];
+      ttsAudioQueueRef.current = [];
+      ttsGeneratorPromiseRef.current = null;
+      ttsPlayerPromiseRef.current = null;
+      setQueueStatus('');
+    }
+  }, [ttsEnabled]);
 
   // TTS预生成配置
   const MAX_PRE_GENERATE_COUNT = 2; // 最多预生成2段音频
@@ -613,7 +642,11 @@ function App() {
     receivedSegmentsRef.current = false;
 
     // 启动状态监控
-    startStatusMonitor(runId);
+    if (ttsEnabledRef.current) {
+      startStatusMonitor(runId);
+    } else {
+      setQueueStatus('');
+    }
 
     // 停止当前播放的音频
     if (currentAudioRef.current) {
@@ -815,7 +848,7 @@ function App() {
 
               if (data.segment && !data.done) {
                 const seg = String(data.segment).trim();
-                if (seg) {
+                if (seg && ttsEnabledRef.current) {
                   receivedSegmentsRef.current = true;
                   ttsTextQueueRef.current.push(seg);
                   console.log(`📝 收到文本段落: "${seg.substring(0, 30)}..."`);
@@ -824,11 +857,16 @@ function App() {
               }
 
               if (data.done) {
-                if (!receivedSegmentsRef.current && fullAnswer.trim()) {
+                if (ttsEnabledRef.current && !receivedSegmentsRef.current && fullAnswer.trim()) {
                   ttsTextQueueRef.current.push(fullAnswer.trim());
                   console.log(`📝 收到完整文本: "${fullAnswer.substring(0, 30)}..."`);
                 }
                 ragflowDoneRef.current = true;
+
+                if (!ttsEnabledRef.current) {
+                  setIsLoading(false);
+                  return;
+                }
                 console.log('📚 RAGFlow响应完成，等待TTS处理完毕');
                 startTTSGenerator();
 
@@ -857,15 +895,17 @@ function App() {
 
   const handleTextSubmit = async (e) => {
     e.preventDefault();
-    if (audioContextRef.current) {
-      try {
-        audioContextRef.current.close().catch(() => {});
-      } catch (_) {
-        // ignore
+    if (ttsEnabledRef.current) {
+      if (audioContextRef.current) {
+        try {
+          audioContextRef.current.close().catch(() => {});
+        } catch (_) {
+          // ignore
+        }
+        audioContextRef.current = null;
       }
-      audioContextRef.current = null;
+      unlockAudio();
     }
-    unlockAudio();
     const text = String(inputText || '').trim();
     if (text && !isLoading) {
       setInputText('');
@@ -886,6 +926,17 @@ function App() {
     <div className="app">
       <div className="container">
         <h1>AI语音问答</h1>
+
+        <div className="controls">
+          <label className="tts-toggle">
+            <input
+              type="checkbox"
+              checked={ttsEnabled}
+              onChange={(e) => setTtsEnabled(e.target.checked)}
+            />
+            <span>语音播报</span>
+          </label>
+        </div>
 
         <div className="input-section">
           <div className="voice-input">
