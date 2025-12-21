@@ -472,6 +472,7 @@ function App() {
   const ttsEnabledRef = useRef(true);
   const debugRef = useRef(null);
   const segmentSeqRef = useRef(0);
+  const askAbortRef = useRef(null);
 
   // 原始文本队列和预生成音频队列
   const ttsTextQueueRef = useRef([]);
@@ -536,11 +537,13 @@ function App() {
       } catch (_) {
         // ignore
       } finally {
-        currentAudioRef.current = null;
+      currentAudioRef.current = null;
       }
 
       ttsTextQueueRef.current = [];
+      ttsMetaQueueRef.current = [];
       ttsAudioQueueRef.current = [];
+      ragflowDoneRef.current = true;
       ttsGeneratorPromiseRef.current = null;
       ttsPlayerPromiseRef.current = null;
       setQueueStatus('');
@@ -611,6 +614,7 @@ function App() {
 
   const startRecording = async () => {
     try {
+      if (isRecording) return;
       unlockAudio();
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
@@ -635,7 +639,8 @@ function App() {
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
+    if (!isRecording) return;
+    if (mediaRecorderRef.current) {
       if (audioContextRef.current) {
         try {
           audioContextRef.current.close().catch(() => {});
@@ -678,8 +683,17 @@ function App() {
   };
 
   const askQuestion = async (text) => {
+    // Interrupt any previous in-flight /api/ask stream.
+    try {
+      if (askAbortRef.current) askAbortRef.current.abort();
+    } catch (_) {
+      // ignore
+    }
+
     const runId = ++runIdRef.current;
     const requestId = `ask_${runId}_${Date.now()}`;
+    const abortController = new AbortController();
+    askAbortRef.current = abortController;
     let segmentIndex = 0;
     segmentSeqRef.current = 0;
     if (!debugRef.current) beginDebugRun('unknown');
@@ -902,8 +916,13 @@ function App() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ question: text, request_id: requestId })
+        body: JSON.stringify({ question: text, request_id: requestId }),
+        signal: abortController.signal
       });
+
+      if (!response.ok || !response.body) {
+        throw new Error(`RAGFlow HTTP error: ${response.status}`);
+      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -911,6 +930,14 @@ function App() {
       let sseBuffer = '';
 
       while (true) {
+        if (runIdRef.current !== runId) {
+          try {
+            abortController.abort();
+          } catch (_) {
+            // ignore
+          }
+          break;
+        }
         const { done, value } = await reader.read();
         if (done) break;
 
@@ -974,7 +1001,7 @@ function App() {
                 ragflowDoneRef.current = true;
 
                 if (!ttsEnabledRef.current) {
-                  setIsLoading(false);
+                  if (runIdRef.current === runId) setIsLoading(false);
                   return;
                 }
                 console.log('📚 RAGFlow响应完成，等待TTS处理完毕');
@@ -998,14 +1025,20 @@ function App() {
         }
       }
     } catch (err) {
+      if (abortController.signal.aborted || String(err && err.name) === 'AbortError') {
+        return;
+      }
       console.error('Error asking question:', err);
-      setIsLoading(false);
+      if (runIdRef.current === runId) setIsLoading(false);
+    } finally {
+      if (askAbortRef.current === abortController) {
+        askAbortRef.current = null;
+      }
     }
   };
 
   const handleTextSubmit = async (e) => {
     e.preventDefault();
-    beginDebugRun('text');
     if (ttsEnabledRef.current) {
       if (audioContextRef.current) {
         try {
@@ -1018,7 +1051,8 @@ function App() {
       unlockAudio();
     }
     const text = String(inputText || '').trim();
-    if (text && !isLoading) {
+    if (text) {
+      beginDebugRun('text');
       setInputText('');
       await askQuestion(text);
     }
@@ -1057,7 +1091,7 @@ function App() {
               onMouseUp={stopRecording}
               onTouchStart={startRecording}
               onTouchEnd={stopRecording}
-              disabled={isLoading}
+              disabled={false}
               aria-label={isRecording ? '录音中（松开结束）' : '按住说话'}
               title={isRecording ? '录音中（松开结束）' : '按住说话'}
             >
@@ -1071,9 +1105,9 @@ function App() {
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               placeholder="输入问题…"
-              disabled={isLoading}
+              disabled={false}
             />
-            <button type="submit" disabled={isLoading}>
+            <button type="submit" disabled={!String(inputText || '').trim()}>
               发送
             </button>
           </form>
