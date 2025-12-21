@@ -17,7 +17,8 @@ import subprocess
 import logging
 import base64
 import contextlib
-from pathlib import Path
+import tempfile
+import wave
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -29,18 +30,26 @@ class _DashscopeByeNoiseFilter(logging.Filter):
         except Exception:
             return True
         # DashScope websocket-client sometimes logs normal close (code 1000, "Bye") as ERROR.
-        if "opcode=8" in msg and "Bye" in msg and ("goodbye" in msg or "websocket closed" in msg):
+        if "opcode=8" in msg and "Bye" in msg and ("goodbye" in msg.lower() or "websocket closed" in msg.lower()):
+            return False
+        # Noisy but expected connection churn from the SDK/pool.
+        if "Websocket connected" in msg:
+            return False
+        if "SpeechSynthesizerObjectPool" in msg and "renew synthesizer after" in msg:
             return False
         return True
 
 
 for _name in (
     "dashscope.audio.tts_v2.speech_synthesizer",
+    "dashscope",
     "websocket",
     "websocket._app",
 ):
     with contextlib.suppress(Exception):
         logging.getLogger(_name).addFilter(_DashscopeByeNoiseFilter())
+        # Keep our app logs at INFO; reduce third-party log spam.
+        logging.getLogger(_name).setLevel(logging.WARNING)
 
 sys.path.append(str(Path(__file__).parent))
 
@@ -205,6 +214,85 @@ def _get_nested(config: dict, path: list, default=None):
             return default
         cur = cur[key]
     return cur
+
+
+def _run_ffmpeg_convert_to_wav16k_mono(input_path: str, output_path: str, *, trim_silence: bool = True) -> None:
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        input_path,
+        "-vn",
+    ]
+    if trim_silence:
+        cmd += [
+            "-af",
+            "silenceremove=start_periods=1:start_silence=0.2:start_threshold=-35dB:"
+            "stop_periods=1:stop_silence=0.5:stop_threshold=-35dB",
+        ]
+    cmd += [
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-c:a",
+        "pcm_s16le",
+        "-f",
+        "wav",
+        output_path,
+    ]
+    subprocess.run(cmd, check=True)
+
+
+def _read_wav_pcm16_mono_16k(path: str) -> np.ndarray:
+    with wave.open(path, "rb") as wf:
+        channels = wf.getnchannels()
+        sample_rate = wf.getframerate()
+        sample_width = wf.getsampwidth()
+        frames = wf.getnframes()
+        raw = wf.readframes(frames)
+    if channels != 1 or sample_rate != 16000 or sample_width != 2:
+        raise ValueError(f"unexpected wav format ch={channels} sr={sample_rate} sw={sample_width}")
+    return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+
+
+def _dashscope_asr_recognize(wav_path: str, *, api_key: str, model: str, sample_rate: int = 16000, kwargs: dict | None = None) -> str:
+    import dashscope
+    from dashscope.audio.asr import Recognition
+
+    dashscope.api_key = api_key
+    recognizer = Recognition(model=model, callback=None, format="wav", sample_rate=sample_rate)
+    result = recognizer.call(wav_path, **(kwargs or {}))
+
+    texts = []
+    try:
+        sentences = result.get_sentence()
+    except Exception:
+        sentences = None
+
+    if isinstance(sentences, list):
+        for s in sentences:
+            if isinstance(s, dict):
+                t = s.get("text") or s.get("sentence") or s.get("transcript")
+                if t:
+                    texts.append(str(t))
+    elif isinstance(sentences, dict):
+        t = sentences.get("text") or sentences.get("sentence") or sentences.get("transcript")
+        if t:
+            texts.append(str(t))
+
+    if texts:
+        return "".join(texts).strip()
+
+    output = getattr(result, "output", None)
+    if isinstance(output, dict) and isinstance(output.get("sentence"), list):
+        for s in output["sentence"]:
+            if isinstance(s, dict) and s.get("text"):
+                texts.append(str(s["text"]))
+    return "".join(texts).strip()
 
 
 def _stream_local_gpt_sovits(text: str, request_id: str, config: dict):
@@ -775,22 +863,65 @@ def speech_to_text():
         return jsonify({"error": "No audio file"}), 400
 
     audio_file = request.files['audio']
-    audio_data = audio_file.read()
+    raw_bytes = audio_file.read()
 
-    if not asr_model_loaded:
-        return jsonify({"text": ""})
+    app_config = load_app_config()
+    asr_cfg = _get_nested(app_config, ["asr"], {}) or {}
+    provider = str(asr_cfg.get("provider", "dashscope")).strip().lower() or "dashscope"
 
+    # DashScope ASR config (preferred for accuracy on Chinese)
+    dashscope_model = str(_get_nested(app_config, ["asr", "dashscope", "model"], "paraformer-realtime-v2") or "").strip()
+    dashscope_api_key = str(_get_nested(app_config, ["asr", "dashscope", "api_key"], "") or "").strip()
+    if not dashscope_api_key:
+        dashscope_api_key = str(_get_nested(app_config, ["tts", "bailian", "api_key"], "") or "").strip()
+    dashscope_kwargs = _get_nested(app_config, ["asr", "dashscope", "kwargs"], {}) or {}
+    if not isinstance(dashscope_kwargs, dict):
+        dashscope_kwargs = {}
+
+    trim_silence = bool(_get_nested(app_config, ["asr", "preprocess", "trim_silence"], True))
+
+    t0 = time.perf_counter()
     try:
-        x = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
-        with SuppressOutput():
-            result = asr_model.generate(input=x, is_final=True)
+        with tempfile.TemporaryDirectory(prefix="asr_") as td:
+            src_path = str(Path(td) / "input.bin")
+            wav_path = str(Path(td) / "audio_16k_mono.wav")
+            Path(src_path).write_bytes(raw_bytes)
 
-        text = ""
-        if result and isinstance(result, list) and result[0].get("text"):
-            text = result[0]["text"].strip()
+            _run_ffmpeg_convert_to_wav16k_mono(src_path, wav_path, trim_silence=trim_silence)
 
-        return jsonify({"text": text})
-    except:
+            if provider == "funasr":
+                if not asr_model_loaded:
+                    logger.warning("asr_provider=funasr but funasr not available, fallback_to_dashscope")
+                else:
+                    x = _read_wav_pcm16_mono_16k(wav_path)
+                    with SuppressOutput():
+                        result = asr_model.generate(input=x, is_final=True)
+                    text = ""
+                    if result and isinstance(result, list) and isinstance(result[0], dict) and result[0].get("text"):
+                        text = str(result[0]["text"]).strip()
+                    logger.info(f"asr_done provider=funasr dt={time.perf_counter()-t0:.3f}s chars={len(text)}")
+                    return jsonify({"text": text})
+
+            if provider == "dashscope" or not asr_model_loaded:
+                if not dashscope_api_key:
+                    logger.error("asr_missing_api_key (set asr.dashscope.api_key or tts.bailian.api_key)")
+                    return jsonify({"text": ""})
+                text = _dashscope_asr_recognize(
+                    wav_path,
+                    api_key=dashscope_api_key,
+                    model=dashscope_model,
+                    sample_rate=16000,
+                    kwargs=dashscope_kwargs,
+                )
+                logger.info(
+                    f"asr_done provider=dashscope model={dashscope_model} dt={time.perf_counter()-t0:.3f}s chars={len(text)}"
+                )
+                return jsonify({"text": text})
+
+            logger.warning(f"asr_provider_unknown provider={provider}")
+            return jsonify({"text": ""})
+    except Exception as e:
+        logger.error(f"asr_failed provider={provider} err={e}", exc_info=True)
         return jsonify({"text": ""})
 
 @app.route('/api/ask', methods=['POST'])

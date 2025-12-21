@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import './App.css';
 
 async function playWavViaDecodeAudioData(url, audioContextRef, currentAudioRef) {
@@ -187,14 +187,6 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
     let resampleState = null;
 
     const ensureAudioContext = async (targetSampleRate) => {
-      if (audioContextRef.current && audioContextRef.current.sampleRate !== targetSampleRate) {
-        try {
-          await audioContextRef.current.close();
-        } catch (_) {
-          // ignore
-        }
-        audioContextRef.current = null;
-      }
       if (!audioContextRef.current) {
         try {
           audioContextRef.current = new AudioContextClass({ sampleRate: targetSampleRate });
@@ -207,8 +199,8 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
       if (audioCtx.state === 'suspended') {
         try {
           await audioCtx.resume();
-        } catch (_) {
-          // ignore
+        } catch (err) {
+          console.warn('[audio] resume blocked:', err);
         }
       }
     };
@@ -454,12 +446,15 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
 
 function App() {
   const [isRecording, setIsRecording] = useState(false);
-  const [question, setQuestion] = useState('');
+  const [inputText, setInputText] = useState('');
+  const [lastQuestion, setLastQuestion] = useState('');
   const [answer, setAnswer] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [queueStatus, setQueueStatus] = useState('');
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+  const messagesEndRef = useRef(null);
+  const PREFERRED_TTS_SAMPLE_RATE = 16000;
 
   // 原始文本队列和预生成音频队列
   const ttsTextQueueRef = useRef([]);
@@ -475,6 +470,37 @@ function App() {
   const receivedSegmentsRef = useRef(false);
   const audioContextRef = useRef(null);
   const USE_SAVED_TTS = false;
+
+  const unlockAudio = () => {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    try {
+      if (!audioContextRef.current) {
+        try {
+          audioContextRef.current = new AudioContextClass({ sampleRate: PREFERRED_TTS_SAMPLE_RATE });
+        } catch (_) {
+          audioContextRef.current = new AudioContextClass();
+        }
+      }
+      const audioCtx = audioContextRef.current;
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume().catch((err) => console.warn('[audio] resume blocked:', err));
+      }
+
+      try {
+        const buffer = audioCtx.createBuffer(1, 1, audioCtx.sampleRate);
+        const src = audioCtx.createBufferSource();
+        src.buffer = buffer;
+        src.connect(audioCtx.destination);
+        src.start(0);
+        src.stop(0);
+      } catch (_) {
+        // ignore
+      }
+    } catch (err) {
+      console.warn('[audio] unlock failed:', err);
+    }
+  };
 
   // TTS预生成配置
   const MAX_PRE_GENERATE_COUNT = 2; // 最多预生成2段音频
@@ -507,6 +533,7 @@ function App() {
 
   const startRecording = async () => {
     try {
+      unlockAudio();
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
@@ -531,6 +558,15 @@ function App() {
 
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
+      if (audioContextRef.current) {
+        try {
+          audioContextRef.current.close().catch(() => {});
+        } catch (_) {
+          // ignore
+        }
+        audioContextRef.current = null;
+      }
+      unlockAudio();
       mediaRecorderRef.current.stop();
       setIsRecording(false);
     }
@@ -551,6 +587,7 @@ function App() {
       const text = result.text || '';
 
       if (text) {
+        setInputText('');
         await askQuestion(text);
       } else {
         setIsLoading(false);
@@ -565,7 +602,7 @@ function App() {
     const runId = ++runIdRef.current;
     const requestId = `ask_${runId}_${Date.now()}`;
     let segmentIndex = 0;
-    setQuestion(text);
+    setLastQuestion(text);
     setAnswer('');
     setIsLoading(true);
 
@@ -593,15 +630,7 @@ function App() {
       currentAudioRef.current = null;
     }
 
-    // Reset WebAudio between questions to avoid stale audio graph causing noise on subsequent runs.
-    if (audioContextRef.current) {
-      try {
-        await audioContextRef.current.close();
-      } catch (_) {
-        // ignore
-      }
-      audioContextRef.current = null;
-    }
+
 
     // 终止之前的工作线程
     if (ttsGeneratorPromiseRef.current) {
@@ -828,10 +857,30 @@ function App() {
 
   const handleTextSubmit = async (e) => {
     e.preventDefault();
-    if (question.trim() && !isLoading) {
-      await askQuestion(question);
+    if (audioContextRef.current) {
+      try {
+        audioContextRef.current.close().catch(() => {});
+      } catch (_) {
+        // ignore
+      }
+      audioContextRef.current = null;
+    }
+    unlockAudio();
+    const text = String(inputText || '').trim();
+    if (text && !isLoading) {
+      setInputText('');
+      await askQuestion(text);
     }
   };
+
+  useEffect(() => {
+    if (!messagesEndRef.current) return;
+    try {
+      messagesEndRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
+    } catch (_) {
+      // ignore
+    }
+  }, [lastQuestion, answer, isLoading, queueStatus]);
 
   return (
     <div className="app">
@@ -847,17 +896,19 @@ function App() {
               onTouchStart={startRecording}
               onTouchEnd={stopRecording}
               disabled={isLoading}
+              aria-label={isRecording ? '录音中（松开结束）' : '按住说话'}
+              title={isRecording ? '录音中（松开结束）' : '按住说话'}
             >
-              {isRecording ? '🔴 录音中...' : '🎤 按住说话'}
+              {isRecording ? '●' : '🎙'}
             </button>
           </div>
 
           <form className="text-input" onSubmit={handleTextSubmit}>
             <input
               type="text"
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              placeholder="或者输入文字问题..."
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              placeholder="输入问题…"
               disabled={isLoading}
             />
             <button type="submit" disabled={isLoading}>
@@ -866,9 +917,9 @@ function App() {
           </form>
         </div>
 
-        {question && (
+        {lastQuestion && (
           <div className="question-section">
-            <h3>问题: {question}</h3>
+            <h3>问题: {lastQuestion}</h3>
           </div>
         )}
 
@@ -890,6 +941,7 @@ function App() {
             <small>{queueStatus}</small>
           </div>
         )}
+        <div ref={messagesEndRef} />
       </div>
     </div>
   );
