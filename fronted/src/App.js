@@ -465,6 +465,8 @@ function App() {
   const [queueStatus, setQueueStatus] = useState('');
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const [debugInfo, setDebugInfo] = useState(null);
+  const [chatOptions, setChatOptions] = useState([]);
+  const [selectedChat, setSelectedChat] = useState('展厅聊天');
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const messagesEndRef = useRef(null);
@@ -549,6 +551,34 @@ function App() {
       setQueueStatus('');
     }
   }, [ttsEnabled]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch('http://localhost:8000/api/ragflow/chats');
+        const data = await resp.json();
+        if (cancelled) return;
+        const chats = Array.isArray(data && data.chats) ? data.chats : [];
+        const names = chats.map((c) => (c && c.name ? String(c.name) : '')).filter(Boolean);
+        setChatOptions(names);
+        const defName = (data && data.default ? String(data.default) : '').trim();
+        if (defName && names.includes(defName)) {
+          setSelectedChat(defName);
+        } else if (names.includes('展厅聊天')) {
+          setSelectedChat('展厅聊天');
+        } else if (names.length > 0) {
+          setSelectedChat(names[0]);
+        }
+      } catch (e) {
+        // fallback to default
+        if (!cancelled) setChatOptions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const nowMs = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
 
@@ -916,7 +946,7 @@ function App() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ question: text, request_id: requestId }),
+        body: JSON.stringify({ question: text, request_id: requestId, conversation_name: selectedChat }),
         signal: abortController.signal
       });
 
@@ -1073,6 +1103,16 @@ function App() {
         <h1>AI语音问答</h1>
 
         <div className="controls">
+          <label className="kb-select">
+            <span>知识库</span>
+            <select value={selectedChat} onChange={(e) => setSelectedChat(e.target.value)}>
+              {(chatOptions && chatOptions.length ? chatOptions : [selectedChat]).map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="tts-toggle">
             <input
               type="checkbox"

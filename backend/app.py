@@ -100,6 +100,10 @@ MAX_UTTER_MS = 15000
 
 ragflow_client = None
 session = None
+ragflow_dataset_id = None
+ragflow_default_chat_name = None
+RAGFLOW_SESSIONS = {}
+RAGFLOW_SESSIONS_LOCK = threading.Lock()
 
 ASK_TIMINGS = {}
 ASK_TIMINGS_LOCK = threading.Lock()
@@ -778,7 +782,7 @@ def find_chat_by_name(client, chat_name):
     return None
 
 def init_ragflow():
-    global ragflow_client, session
+    global ragflow_client, session, ragflow_dataset_id, ragflow_default_chat_name
     try:
         ragflow_config_path = Path(__file__).parent.parent / "ragflow_demo" / "ragflow_config.json"
 
@@ -794,6 +798,7 @@ def init_ragflow():
         base_url = ragflow_config.get('base_url', 'http://127.0.0.1')
         dataset_name = ragflow_config.get('dataset_name', '')
         conversation_name = ragflow_config.get('default_conversation_name', '语音问答')
+        ragflow_default_chat_name = conversation_name
 
         if not api_key or api_key in ['YOUR_RAGFLOW_API_KEY_HERE', 'your_api_key_here']:
             logger.error("RAGFlow API key无效")
@@ -815,6 +820,8 @@ def init_ragflow():
             else:
                 logger.warning(f"dataset '{dataset_name}' 未找到，使用通用聊天")
 
+        ragflow_dataset_id = dataset_id
+
         # Find or create chat
         logger.info(f"正在查找chat: {conversation_name}")
         chat = find_chat_by_name(ragflow_client, conversation_name)
@@ -832,6 +839,8 @@ def init_ragflow():
         # Create session
         logger.info("正在创建session...")
         session = chat.create_session("Chat Session")
+        with RAGFLOW_SESSIONS_LOCK:
+            RAGFLOW_SESSIONS[conversation_name] = session
         logger.info("RAGFlow初始化成功")
         return True
 
@@ -849,6 +858,67 @@ def load_ragflow_config():
         with open(config_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     return None
+
+
+def _ragflow_chat_to_dict(chat):
+    if chat is None:
+        return None
+    if hasattr(chat, "name"):
+        return {"id": getattr(chat, "id", None), "name": getattr(chat, "name", None)}
+    if isinstance(chat, dict):
+        return {"id": chat.get("id"), "name": chat.get("name")}
+    return {"id": None, "name": str(chat)}
+
+
+def get_ragflow_session(chat_name: str):
+    global session
+    if not ragflow_client:
+        return None
+    name = str(chat_name or ragflow_default_chat_name or "").strip()
+    if not name:
+        return None
+
+    with RAGFLOW_SESSIONS_LOCK:
+        cached = RAGFLOW_SESSIONS.get(name)
+        if cached is not None:
+            return cached
+
+    try:
+        logger.info(f"RAGFlow get_session chat={name}")
+        chat = find_chat_by_name(ragflow_client, name)
+        if not chat:
+            logger.info(f"RAGFlow create_chat name={name}")
+            chat = ragflow_client.create_chat(
+                name=name,
+                dataset_ids=[ragflow_dataset_id] if ragflow_dataset_id else []
+            )
+        sess = chat.create_session("Chat Session")
+        with RAGFLOW_SESSIONS_LOCK:
+            RAGFLOW_SESSIONS[name] = sess
+        if name == ragflow_default_chat_name:
+            session = sess
+        return sess
+    except Exception as e:
+        logger.error(f"RAGFlow get_session failed chat={name} err={e}", exc_info=True)
+        return None
+
+
+@app.route('/api/ragflow/chats', methods=['GET'])
+def ragflow_list_chats():
+    if not ragflow_client:
+        return jsonify({"chats": [], "default": ragflow_default_chat_name, "error": "ragflow_not_initialized"})
+    try:
+        chats = ragflow_client.list_chats() or []
+        items = []
+        for chat in chats:
+            d = _ragflow_chat_to_dict(chat)
+            if d and d.get("name"):
+                items.append(d)
+        items.sort(key=lambda x: (0 if x.get("name") == ragflow_default_chat_name else 1, x.get("name") or ""))
+        return jsonify({"chats": items, "default": ragflow_default_chat_name})
+    except Exception as e:
+        logger.error(f"ragflow_list_chats_failed err={e}", exc_info=True)
+        return jsonify({"chats": [], "default": ragflow_default_chat_name, "error": str(e)})
 
 @app.route('/health')
 def health():
@@ -936,12 +1006,13 @@ def ask_question():
         return jsonify({"error": "No question"}), 400
 
     question = data.get('question', '')
+    conversation_name = (data.get("conversation_name") or data.get("chat_name") or ragflow_default_chat_name or "").strip()
     request_id = (
         data.get("request_id")
         or request.headers.get("X-Request-ID")
         or f"ask_{uuid.uuid4().hex[:12]}"
     )
-    logger.info(f"[{request_id}] 问题: {question}")
+    logger.info(f"[{request_id}] 问题: {question} chat={conversation_name or 'default'}")
     _timings_set(request_id, t_submit=t_submit)
 
     def generate_response():
@@ -981,7 +1052,9 @@ def ask_question():
                     logger.warning(f"文本清洗/分段模块不可用，降级为整段TTS: {e}")
                     enable_cleaning = False
 
-            if not session:
+            rag_session = get_ragflow_session(conversation_name) if conversation_name else session
+
+            if not rag_session:
                 logger.warning("RAGFlow不可用，使用固定回答")
                 fallback_answer = f"我收到了你的问题：{question}。由于RAGFlow服务暂时不可用，我现在只能给你一个固定的回答。请确保RAGFlow服务正在运行。"
 
@@ -1012,7 +1085,7 @@ def ask_question():
 
             t_ragflow_request = time.perf_counter()
             logger.info(f"[{request_id}] 开始RAGFlow流式响应")
-            response = session.ask(question, stream=True)
+            response = rag_session.ask(question, stream=True)
             logger.info(
                 f"[{request_id}] RAGFlow响应对象创建成功 dt={time.perf_counter() - t_ragflow_request:.3f}s"
             )

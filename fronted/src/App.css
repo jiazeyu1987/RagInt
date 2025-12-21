@@ -154,7 +154,39 @@ h1 {
 .controls {
   display: flex;
   justify-content: flex-end;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
   padding: 10px 0 2px;
+}
+
+.kb-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font-size: 13px;
+  user-select: none;
+}
+
+.kb-select select {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.18);
+  color: var(--text);
+  outline: none;
+  max-width: 220px;
+}
+
+.kb-select select:focus {
+  border-color: rgba(255, 255, 255, 0.24);
+  box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.18);
 }
 
 .tts-toggle {
