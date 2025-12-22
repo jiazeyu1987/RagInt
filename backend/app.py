@@ -896,20 +896,30 @@ def ask_question():
     if not isinstance(guide, dict):
         guide = {}
     client_id = str((data.get("client_id") or request.headers.get("X-Client-ID") or request.remote_addr or "-")).strip() or "-"
+    kind = str((data.get("kind") or "ask")).strip() or "ask"
+    save_history = kind not in ("ask_prefetch", "prefetch", "prefetch_ask")
     request_id = (
         data.get("request_id")
         or request.headers.get("X-Request-ID")
         or f"ask_{uuid.uuid4().hex[:12]}"
     )
-    # Rate limit to avoid jitter (best-effort, per client).
-    if not request_registry.rate_allow(client_id, "ask", limit=3, window_s=2.5):
-        logger.warning(f"[{request_id}] ask_rate_limited client_id={client_id}")
+    # Rate limit to avoid jitter (best-effort, per client). Prefetch is stricter.
+    rl_limit = 3
+    rl_window_s = 2.5
+    if kind in ("ask_prefetch", "prefetch", "prefetch_ask"):
+        rl_limit = 1
+        rl_window_s = 2.5
+    if not request_registry.rate_allow(client_id, kind, limit=rl_limit, window_s=rl_window_s):
+        logger.warning(f"[{request_id}] ask_rate_limited client_id={client_id} kind={kind}")
         def _rl():
             payload = {"chunk": "请求过于频繁，请稍等 1-2 秒再提问。", "done": True, "request_id": request_id}
             return Response(f"data: {json.dumps(payload, ensure_ascii=False)}\n\n", mimetype="text/event-stream")
         return _rl()
 
-    cancel_event = request_registry.register(client_id=client_id, request_id=request_id, kind="ask", cancel_previous=True)
+    cancel_previous = kind in ("ask", "chat", "agent")
+    cancel_event = request_registry.register(
+        client_id=client_id, request_id=request_id, kind=kind, cancel_previous=cancel_previous
+    )
     intent = intent_service.classify(question)
     logger.info(
         f"[{request_id}] intent_detected intent={intent.intent} conf={intent.confidence:.2f} matched={list(intent.matched)} reason={intent.reason}"
@@ -969,6 +979,7 @@ def ask_question():
                         "intent_matched": list(intent.matched),
                         "intent_reason": intent.reason,
                         "client_id": client_id,
+                        "kind": kind,
                     },
                     "done": False,
                 }
@@ -1026,17 +1037,18 @@ def ask_question():
 
                 yield sse_event({"chunk": fast_answer, "done": False})
                 yield sse_event({"chunk": "", "done": True})
-                try:
-                    history_store.add_entry(
-                        request_id=request_id,
-                        question=question,
-                        answer=fast_answer,
-                        mode="agent" if agent_id else "chat",
-                        chat_name=conversation_name,
-                        agent_id=agent_id,
-                    )
-                except Exception:
-                    logger.warning(f"[{request_id}] history_store_save_failed", exc_info=True)
+                if save_history:
+                    try:
+                        history_store.add_entry(
+                            request_id=request_id,
+                            question=question,
+                            answer=fast_answer,
+                            mode="agent" if agent_id else "chat",
+                            chat_name=conversation_name,
+                            agent_id=agent_id,
+                        )
+                    except Exception:
+                        logger.warning(f"[{request_id}] history_store_save_failed", exc_info=True)
                 return
 
             if (not agent_id) and (not rag_session):
@@ -1072,17 +1084,18 @@ def ask_question():
                         yield sse_event({"segment": seg, "done": False})
 
                 yield sse_event({"chunk": "", "done": True})
-                try:
-                    history_store.add_entry(
-                        request_id=request_id,
-                        question=question,
-                        answer=fallback_answer,
-                        mode="agent" if agent_id else "chat",
-                        chat_name=conversation_name,
-                        agent_id=agent_id,
-                    )
-                except Exception:
-                    logger.warning(f"[{request_id}] history_store_fallback_save_failed", exc_info=True)
+                if save_history:
+                    try:
+                        history_store.add_entry(
+                            request_id=request_id,
+                            question=question,
+                            answer=fallback_answer,
+                            mode="agent" if agent_id else "chat",
+                            chat_name=conversation_name,
+                            agent_id=agent_id,
+                        )
+                    except Exception:
+                        logger.warning(f"[{request_id}] history_store_fallback_save_failed", exc_info=True)
                 return
 
             t_ragflow_request = time.perf_counter()
@@ -1245,17 +1258,18 @@ def ask_question():
 
             if not cancel_event.is_set():
                 yield sse_event({"chunk": "", "done": True})
-            try:
-                history_store.add_entry(
-                    request_id=request_id,
-                    question=question,
-                    answer=last_complete_content,
-                    mode="agent" if agent_id else "chat",
-                    chat_name=conversation_name,
-                    agent_id=agent_id,
-                )
-            except Exception:
-                logger.warning(f"[{request_id}] history_store_save_failed", exc_info=True)
+            if save_history:
+                try:
+                    history_store.add_entry(
+                        request_id=request_id,
+                        question=question,
+                        answer=last_complete_content,
+                        mode="agent" if agent_id else "chat",
+                        chat_name=conversation_name,
+                        agent_id=agent_id,
+                    )
+                except Exception:
+                    logger.warning(f"[{request_id}] history_store_save_failed", exc_info=True)
 
         except GeneratorExit:
             logger.info(f"[{request_id}] ask_stream_generator_exit (client_disconnect?)")
@@ -1272,7 +1286,7 @@ def ask_question():
             else:
                 yield sse_event({"chunk": f"错误: {str(e)}", "done": True})
         finally:
-            request_registry.clear_active(client_id=client_id, kind="ask", request_id=request_id)
+            request_registry.clear_active(client_id=client_id, kind=kind, request_id=request_id)
 
     logger.info("返回流式响应")
     return Response(
