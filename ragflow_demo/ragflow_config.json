@@ -46,6 +46,22 @@
     "segment_flush_interval_s": 1.2,
     "segment_min_chars": 120
   },
+  "tour_planner": {
+    "zones": ["默认路线"],
+    "profiles": ["大众", "儿童", "专业"],
+    "default_zone": "默认路线",
+    "default_profile": "大众",
+    "routes": {
+      "默认路线": [
+        "公司总体介绍",
+        "核心产品概览",
+        "骨科产品",
+        "泌尿产品",
+        "其他产品与应用场景",
+        "总结与提问引导"
+      ]
+    }
+  },
   "tts": {
     "provider": "bailian",
     "mimetype": "audio/wav",

@@ -74,8 +74,10 @@ sys.path.append(str(Path(__file__).parent.parent / "tts_demo"))
 from services.asr_service import ASRService
 from services.config_utils import get_nested
 from services.history_store import HistoryStore
+from services.intent_service import IntentService
 from services.ragflow_agent_service import RagflowAgentService
 from services.ragflow_service import RagflowService
+from services.tour_planner import TourPlanner
 from services.tts_service import TTSSvc
 
 ragflow_service = RagflowService(Path(__file__).parent.parent / "ragflow_demo" / "ragflow_config.json", logger=logger)
@@ -83,6 +85,8 @@ ragflow_agent_service = RagflowAgentService(Path(__file__).parent.parent / "ragf
 history_store = HistoryStore(Path(__file__).parent / "data" / "qa_history.db", logger=logger)
 asr_service = ASRService(logger=logger)
 tts_service = TTSSvc(logger=logger)
+intent_service = IntentService()
+tour_planner = TourPlanner()
 asr_model_loaded = asr_service.funasr_loaded
 
 class SuppressOutput:
@@ -777,6 +781,30 @@ def api_tour_stops():
     stops = [str(s).strip() for s in stops if str(s).strip()]
     return jsonify({"stops": stops, "source": source})
 
+@app.route('/api/tour/meta', methods=['GET'])
+def api_tour_meta():
+    cfg = load_ragflow_config() or {}
+    meta = tour_planner.get_meta(cfg if isinstance(cfg, dict) else {})
+    return jsonify(meta)
+
+@app.route('/api/tour/plan', methods=['POST'])
+def api_tour_plan():
+    cfg = load_ragflow_config() or {}
+    data = request.get_json() or {}
+    zone = str((data.get("zone") or "")).strip()
+    profile = str((data.get("profile") or "")).strip()
+    duration_s = data.get("duration_s") or 60
+    plan = tour_planner.make_plan(cfg if isinstance(cfg, dict) else {}, zone=zone, profile=profile, duration_s=duration_s)
+    return jsonify(
+        {
+            "zone": plan.zone,
+            "profile": plan.profile,
+            "duration_s": plan.duration_s,
+            "stops": list(plan.stops),
+            "source": plan.source,
+        }
+    )
+
 @app.route('/health')
 def health():
     return jsonify({
@@ -829,6 +857,10 @@ def ask_question():
         or request.headers.get("X-Request-ID")
         or f"ask_{uuid.uuid4().hex[:12]}"
     )
+    intent = intent_service.classify(question)
+    logger.info(
+        f"[{request_id}] intent_detected intent={intent.intent} conf={intent.confidence:.2f} matched={list(intent.matched)} reason={intent.reason}"
+    )
     if agent_id:
         conversation_name = ""
         logger.info(f"[{request_id}] 问题: {question} agent_id={agent_id}")
@@ -873,6 +905,17 @@ def ask_question():
             return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
         try:
+            yield sse_event(
+                {
+                    "meta": {
+                        "intent": intent.intent,
+                        "intent_confidence": round(float(intent.confidence), 3),
+                        "intent_matched": list(intent.matched),
+                        "intent_reason": intent.reason,
+                    },
+                    "done": False,
+                }
+            )
             last_complete_content = ""
             ragflow_config = load_ragflow_config() or {}
             text_cleaning = ragflow_config.get("text_cleaning", {}) or {}
@@ -907,6 +950,37 @@ def ask_question():
             rag_session = None
             if not agent_id:
                 rag_session = ragflow_service.get_session(conversation_name) if conversation_name else session
+
+            if intent.intent in ("direction", "complaint", "chitchat") and float(intent.confidence) >= 0.78:
+                if intent.intent == "direction":
+                    fast_answer = (
+                        "我可以帮你指路～\n"
+                        "请告诉我你要去的目标位置（例如：某展位/厕所/出口/前台），以及你现在大概在什么位置（例如：入口/某展区）。\n"
+                        "我会给你最短路线，并提示沿途的明显标识。"
+                    )
+                elif intent.intent == "complaint":
+                    fast_answer = (
+                        "非常抱歉给你带来不好的体验。\n"
+                        "为了尽快帮你解决，请告诉我：发生了什么、在什么位置/哪个环节、以及你希望的处理方式。\n"
+                        "如果需要，我也可以引导你到服务台或联系现场工作人员。"
+                    )
+                else:
+                    fast_answer = "你好！我在～你可以直接问我展厅/产品相关问题，或说“开始讲解”。"
+
+                yield sse_event({"chunk": fast_answer, "done": False})
+                yield sse_event({"chunk": "", "done": True})
+                try:
+                    history_store.add_entry(
+                        request_id=request_id,
+                        question=question,
+                        answer=fast_answer,
+                        mode="agent" if agent_id else "chat",
+                        chat_name=conversation_name,
+                        agent_id=agent_id,
+                    )
+                except Exception:
+                    logger.warning(f"[{request_id}] history_store_save_failed", exc_info=True)
+                return
 
             if (not agent_id) and (not rag_session):
                 logger.warning("RAGFlow不可用，使用固定回答")

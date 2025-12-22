@@ -528,6 +528,43 @@ function App() {
     lastAnswerTail: '',
     lastAction: null, // 'start' | 'continue' | 'next' | 'user_question' | 'interrupt'
   });
+  const [tourMeta, setTourMeta] = useState({
+    zones: ['默认路线'],
+    profiles: ['大众', '儿童', '专业'],
+    default_zone: '默认路线',
+    default_profile: '大众',
+  });
+  const [tourZone, setTourZone] = useState(() => {
+    try {
+      return localStorage.getItem('tourZone') || '';
+    } catch (_) {
+      return '';
+    }
+  });
+  const [audienceProfile, setAudienceProfile] = useState(() => {
+    try {
+      return localStorage.getItem('audienceProfile') || '';
+    } catch (_) {
+      return '';
+    }
+  });
+  const [groupMode, setGroupMode] = useState(() => {
+    try {
+      return localStorage.getItem('groupMode') === '1';
+    } catch (_) {
+      return false;
+    }
+  });
+  const [speakerName, setSpeakerName] = useState(() => {
+    try {
+      return localStorage.getItem('speakerName') || '观众A';
+    } catch (_) {
+      return '观众A';
+    }
+  });
+  const [questionPriority, setQuestionPriority] = useState('normal'); // 'normal' | 'high'
+  const [questionQueue, setQuestionQueue] = useState([]);
+  const [currentIntent, setCurrentIntent] = useState(null);
   const [tourSelectedStopIndex, setTourSelectedStopIndex] = useState(() => {
     try {
       const raw = localStorage.getItem('tourSelectedStopIndex');
@@ -546,6 +583,9 @@ function App() {
   const segmentSeqRef = useRef(0);
   const askAbortRef = useRef(null);
   const tourStateRef = useRef(tourState);
+  const groupModeRef = useRef(groupMode);
+  const queueRef = useRef([]);
+  const lastSpeakerRef = useRef('');
 
   // 原始文本队列和预生成音频队列
   const ttsTextQueueRef = useRef([]);
@@ -758,6 +798,36 @@ function App() {
   }, [tourState]);
 
   useEffect(() => {
+    groupModeRef.current = !!groupMode;
+    try {
+      localStorage.setItem('groupMode', groupMode ? '1' : '0');
+    } catch (_) {
+      // ignore
+    }
+  }, [groupMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('speakerName', String(speakerName || '观众A'));
+    } catch (_) {
+      // ignore
+    }
+  }, [speakerName]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('tourZone', String(tourZone || ''));
+      localStorage.setItem('audienceProfile', String(audienceProfile || ''));
+    } catch (_) {
+      // ignore
+    }
+  }, [tourZone, audienceProfile]);
+
+  useEffect(() => {
+    queueRef.current = Array.isArray(questionQueue) ? questionQueue : [];
+  }, [questionQueue]);
+
+  useEffect(() => {
     try {
       localStorage.setItem('tourSelectedStopIndex', String(tourSelectedStopIndex));
     } catch (_) {
@@ -807,6 +877,17 @@ function App() {
     let cancelled = false;
     (async () => {
       try {
+        const metaResp = await fetch('http://localhost:8000/api/tour/meta');
+        const meta = await metaResp.json();
+        if (cancelled) return;
+        if (meta && typeof meta === 'object') {
+          setTourMeta(meta);
+          const zones = Array.isArray(meta.zones) ? meta.zones : [];
+          const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
+          setTourZone((prev) => (prev ? prev : String(meta.default_zone || zones[0] || '默认路线')));
+          setAudienceProfile((prev) => (prev ? prev : String(meta.default_profile || profiles[0] || '大众')));
+        }
+
         const resp = await fetch('http://localhost:8000/api/tour/stops');
         const data = await resp.json();
         if (cancelled) return;
@@ -843,16 +924,82 @@ function App() {
     const suffix = n ? `（共${n}站）` : '';
     const tail = String((tourStateRef.current && tourStateRef.current.lastAnswerTail) || '').trim();
     const tailHint = tail ? `\n\n【上一段结束语（供承接）】${tail}` : '';
+    const profile = String(audienceProfile || '').trim();
+    const profileHint = profile ? `\n\n【人群画像】${profile}` : '';
     if (action === 'start') {
-      return `请开始展厅讲解：从${title}${suffix}开始，先给出1-2句开场白，再分点讲解本站重点。`;
+      return `请开始展厅讲解：从${title}${suffix}开始，先给出1-2句开场白，再分点讲解本站重点。${profileHint}`;
     }
     if (action === 'continue') {
-      return `继续讲解${title}${suffix}：承接上一段内容，补充关键细节与示例，保持短句分段。${tailHint}`;
+      return `继续讲解${title}${suffix}：承接上一段内容，补充关键细节与示例，保持短句分段。${tailHint}${profileHint}`;
     }
     if (action === 'next') {
-      return `现在进入${title}${suffix}：请开始讲解，先概括本站主题，再分点说明。${tailHint}`;
+      return `现在进入${title}${suffix}：请开始讲解，先概括本站主题，再分点说明。${tailHint}${profileHint}`;
     }
     return '继续讲解';
+  };
+
+  const enqueueQuestion = ({ speaker, text, priority }) => {
+    const item = {
+      id: `q_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+      speaker: String(speaker || '观众').trim() || '观众',
+      text: String(text || '').trim(),
+      priority: priority === 'high' ? 'high' : 'normal',
+      ts: Date.now(),
+    };
+    if (!item.text) return null;
+    const next = [...(queueRef.current || []), item];
+    queueRef.current = next;
+    setQuestionQueue(next);
+    return item;
+  };
+
+  const removeQueuedQuestion = (id) => {
+    const next = (queueRef.current || []).filter((q) => q && q.id !== id);
+    queueRef.current = next;
+    setQuestionQueue(next);
+  };
+
+  const pickNextQueuedQuestion = () => {
+    const q = queueRef.current || [];
+    if (!q.length) return null;
+    const highs = q.filter((x) => x && x.priority === 'high');
+    const pool = highs.length ? highs : q;
+    const last = String(lastSpeakerRef.current || '');
+    const diff = pool.find((x) => String(x.speaker || '') !== last) || pool[0];
+    if (!diff) return null;
+    return diff;
+  };
+
+  const maybeStartNextQueuedQuestion = async () => {
+    if (!groupModeRef.current) return;
+    if (isLoading || askAbortRef.current || ttsGeneratorPromiseRef.current || ttsPlayerPromiseRef.current) return;
+    const next = pickNextQueuedQuestion();
+    if (!next) return;
+    removeQueuedQuestion(next.id);
+    lastSpeakerRef.current = String(next.speaker || '');
+    const prefixed = `【提问人：${String(next.speaker || '').trim() || '观众'}】${next.text}`;
+    try {
+      beginDebugRun(next.priority === 'high' ? 'group_high' : 'group_next');
+      await askQuestion(prefixed, { fromQueue: true });
+    } catch (e) {
+      console.error('[QUEUE] auto ask failed', e);
+    }
+  };
+
+  const answerQueuedNow = async (item) => {
+    if (!item || !item.id) return;
+    try {
+      removeQueuedQuestion(item.id);
+      lastSpeakerRef.current = String(item.speaker || '');
+      const prefixed = `【提问人：${String(item.speaker || '').trim() || '观众'}】${String(item.text || '').trim()}`;
+      const active =
+        !!askAbortRef.current || isLoading || !!ttsGeneratorPromiseRef.current || !!ttsPlayerPromiseRef.current || !!currentAudioRef.current;
+      if (active) interruptCurrentRun('queue_takeover');
+      beginDebugRun(item.priority === 'high' ? 'group_high' : 'group_takeover');
+      await askQuestion(prefixed, { fromQueue: true });
+    } catch (e) {
+      console.error('[QUEUE] takeover failed', e);
+    }
   };
 
   useEffect(() => {
@@ -1262,7 +1409,9 @@ function App() {
 
   const askQuestion = async (text, opts) => {
     // Interrupt any previous in-flight /api/ask stream.
-    interruptCurrentRun('new_question');
+    const hasActiveRun =
+      !!askAbortRef.current || isLoading || !!ttsGeneratorPromiseRef.current || !!ttsPlayerPromiseRef.current || !!currentAudioRef.current;
+    if (hasActiveRun) interruptCurrentRun('new_question');
     try {
       if (askAbortRef.current) askAbortRef.current.abort();
     } catch (_) {
@@ -1552,15 +1701,20 @@ function App() {
 
         for (const line of lines) {
           const trimmed = line.trim();
-          if (trimmed.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(trimmed.slice(6));
-              if (data.chunk && !data.done) {
-                if (!debugRef.current) beginDebugRun('unknown');
-                debugMark('ragflowFirstChunkAt');
-                fullAnswer += data.chunk;
-                setAnswer(fullAnswer);
-              }
+            if (trimmed.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(trimmed.slice(6));
+                if (data && data.meta && typeof data.meta === 'object') {
+                  const intent = data.meta.intent ? String(data.meta.intent) : '';
+                  const conf = data.meta.intent_confidence != null ? Number(data.meta.intent_confidence) : null;
+                  if (intent) setCurrentIntent({ intent, confidence: conf });
+                }
+                if (data.chunk && !data.done) {
+                  if (!debugRef.current) beginDebugRun('unknown');
+                  debugMark('ragflowFirstChunkAt');
+                  fullAnswer += data.chunk;
+                  setAnswer(fullAnswer);
+                }
 
               if (data.segment && !data.done) {
                 const seg = String(data.segment).trim();
@@ -1663,6 +1817,15 @@ function App() {
       } catch (_) {
         // ignore
       }
+      try {
+        if (runIdRef.current === runId) {
+          setTimeout(() => {
+            maybeStartNextQueuedQuestion();
+          }, 0);
+        }
+      } catch (_) {
+        // ignore
+      }
     }
   };
 
@@ -1683,6 +1846,26 @@ function App() {
     if (text && (!useAgentMode || !!selectedAgentId)) {
       beginDebugRun('text');
       setInputText('');
+      const active =
+        !!askAbortRef.current || isLoading || !!ttsGeneratorPromiseRef.current || !!ttsPlayerPromiseRef.current || !!currentAudioRef.current;
+      if (groupMode) {
+        const item = enqueueQuestion({ speaker: speakerName, text, priority: questionPriority });
+        if (item && item.priority === 'high' && active) {
+          try {
+            interruptCurrentRun('high_priority');
+          } catch (_) {
+            // ignore
+          }
+          removeQueuedQuestion(item.id);
+          lastSpeakerRef.current = String(item.speaker || '');
+          await askQuestion(`【提问人：${item.speaker}】${item.text}`, { fromQueue: true });
+          return;
+        }
+        if (!active) {
+          await maybeStartNextQueuedQuestion();
+        }
+        return;
+      }
       await askQuestion(text);
     } else if (text && useAgentMode && !selectedAgentId) {
       alert('请选择智能体后再提问');
@@ -1713,6 +1896,21 @@ function App() {
   };
 
   const startTour = async () => {
+    try {
+      const zone = String(tourZone || (tourMeta && tourMeta.default_zone) || '默认路线');
+      const profile = String(audienceProfile || (tourMeta && tourMeta.default_profile) || '大众');
+      const duration = Number(guideDuration || 60);
+      const resp = await fetch('http://localhost:8000/api/tour/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ zone, profile, duration_s: duration }),
+      });
+      const data = await resp.json();
+      const stops = Array.isArray(data && data.stops) ? data.stops.map((s) => String(s || '').trim()).filter(Boolean) : [];
+      if (stops.length) setTourStops(stops);
+    } catch (_) {
+      // ignore
+    }
     const stopIndex = 0;
     const prompt = buildTourPrompt('start', stopIndex);
     beginDebugRun('guide_start');
@@ -1843,6 +2041,38 @@ function App() {
               </select>
             </label>
           ) : null}
+
+          {guideEnabled ? (
+            <label className="kb-select">
+              <span>展区</span>
+              <select value={tourZone} onChange={(e) => setTourZone(e.target.value)}>
+                {(tourMeta && Array.isArray(tourMeta.zones) ? tourMeta.zones : ['默认路线']).map((z) => (
+                  <option key={String(z)} value={String(z)}>
+                    {String(z)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
+          {guideEnabled ? (
+            <label className="kb-select">
+              <span>人群</span>
+              <select value={audienceProfile} onChange={(e) => setAudienceProfile(e.target.value)}>
+                {(tourMeta && Array.isArray(tourMeta.profiles) ? tourMeta.profiles : ['大众', '儿童', '专业']).map((p) => (
+                  <option key={String(p)} value={String(p)}>
+                    {String(p)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
+          <label className="tts-toggle" title="多人围观：轮询提问 + 优先级">
+            <input type="checkbox" checked={groupMode} onChange={(e) => setGroupMode(e.target.checked)} />
+            <span>多人围观</span>
+          </label>
+
           <label className="tts-toggle">
             <input
               type="checkbox"
@@ -1860,6 +2090,7 @@ function App() {
                 : `${tourState.mode === 'running' ? '进行中' : tourState.mode === 'interrupted' ? '已打断' : '就绪'}${
                     tourState.stopIndex >= 0 ? ` · 第${tourState.stopIndex + 1}站` : ''
                   }${tourState.stopName ? ` · ${tourState.stopName}` : ''}`}
+              {currentIntent && currentIntent.intent ? ` · 意图:${currentIntent.intent}` : ''}
             </span>
           </div>
 
@@ -1915,6 +2146,27 @@ function App() {
           </div>
 
           <form className="text-input" onSubmit={handleTextSubmit}>
+            {groupMode ? (
+              <input
+                type="text"
+                className="speaker-tag"
+                value={speakerName}
+                onChange={(e) => setSpeakerName(e.target.value)}
+                placeholder="提问人"
+                title="多人围观模式：当前提问人"
+              />
+            ) : null}
+            {groupMode ? (
+              <select
+                className="priority-select"
+                value={questionPriority}
+                onChange={(e) => setQuestionPriority(e.target.value)}
+                title="多人围观模式：问题优先级（高优先会打断当前回答）"
+              >
+                <option value="normal">普通</option>
+                <option value="high">高优先</option>
+              </select>
+            ) : null}
             <input
               type="text"
               ref={inputElRef}
@@ -1923,6 +2175,7 @@ function App() {
               placeholder="输入问题…"
               disabled={false}
             />
+            {groupMode ? <span className="queue-badge" title="围观提问队列">{(questionQueue || []).length}</span> : null}
             <button
               type="button"
               className="stop-btn"
@@ -2096,6 +2349,33 @@ function App() {
                   <div className="debug-v">
                     {debugInfo.ttsAllDoneAt ? `${(debugInfo.ttsAllDoneAt - debugInfo.submitAt).toFixed(0)} ms` : (ttsEnabled ? '—' : '已关闭')}
                   </div>
+                </div>
+
+                <div className="debug-subtitle">围观队列</div>
+                <div className="debug-list">
+                  {!(questionQueue && questionQueue.length) ? (
+                    <div className="debug-muted">无排队问题</div>
+                  ) : (
+                    (questionQueue || []).slice(0, 12).map((q) => (
+                      <div key={q.id} className="debug-item">
+                        <div className="debug-item-h">
+                          <span>{q.speaker || '观众'}</span>
+                          <span>{q.priority === 'high' ? '高优先' : '普通'}</span>
+                        </div>
+                        <div className="debug-item-b">
+                          <div className="queue-q">{String(q.text || '').slice(0, 60)}</div>
+                          <div className="queue-actions">
+                            <button type="button" className="queue-btn" onClick={() => answerQueuedNow(q)}>
+                              立即回答
+                            </button>
+                            <button type="button" className="queue-btn queue-btn-danger" onClick={() => removeQueuedQuestion(q.id)}>
+                              移除
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
 
                 <div className="debug-subtitle">分段</div>
