@@ -64,7 +64,21 @@ with contextlib.suppress(Exception):
 sys.path.append(str(Path(__file__).parent))
 
 app = Flask(__name__)
-CORS(app)
+# CORS: frontend runs on :3000 and calls backend :8000 (cross-origin).
+# We enable credentials to support browser behaviors like sendBeacon/fetch with cookies if present.
+CORS(
+    app,
+    supports_credentials=True,
+    resources={
+        r"/api/*": {
+            "origins": [
+                "http://localhost:3000",
+                "http://127.0.0.1:3000",
+            ]
+        }
+    },
+    allow_headers=["Content-Type", "X-Client-ID", "X-Request-ID"],
+)
 
 sys.path.append(str(Path(__file__).parent.parent))
 sys.path.append(str(Path(__file__).parent.parent / "ragflow_demo"))
@@ -945,6 +959,7 @@ def ask_question():
             return raw_question
         style = str(guide.get("style") or "friendly").strip().lower()
         stop_name = str(guide.get("stop_name") or "").strip()
+        is_continuous = bool(guide.get("continuous", False))
         try:
             target_chars = int(guide.get("target_chars") or 0)
         except Exception:
@@ -965,6 +980,12 @@ def ask_question():
 
         target_text = f"- 建议总字数：约{target_chars}字（按语速估算）\n" if target_chars > 0 else ""
         stop_text = f"- 当前展厅：{stop_name}\n" if stop_name else ""
+        continuity_text = (
+            "- 衔接（连续讲解）：\n"
+            "  - 开头不要重复寒暄/欢迎词（如“欢迎来到/接下来我们来到/让我们来到”）。\n"
+            "  - 用1句自然承接上一段，再直接进入本站主题。\n"
+            "  - 结尾不要预告下一站（除非用户明确要求）。\n"
+        ) if is_continuous else ""
         guide_text = (
             "【展厅讲解要求】\n"
             "你是一名展厅讲解员，面向来访者做中文讲解。\n"
@@ -972,6 +993,7 @@ def ask_question():
             f"- 讲解风格：{style_text}\n"
             f"- 时长：{length_text}\n"
             f"{target_text}"
+            f"{continuity_text}"
             "- 输出：用短句分段（便于语音播报），必要时用项目符号。\n"
             "- 约束：不要编造；如果知识库/上下文没有依据，请明确说明不确定，并建议咨询现场工作人员。\n"
         )

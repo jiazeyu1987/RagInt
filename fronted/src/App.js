@@ -8,207 +8,14 @@ import { cancelRequest as cancelBackendRequestExt, fetchJson } from './api/backe
 import { RecorderManager } from './managers/RecorderManager';
 import { TtsQueueManager } from './managers/TtsQueueManager';
 import { TourPipelineManager } from './managers/TourPipelineManager';
+import { HistoryPanel } from './components/HistoryPanel';
+import { DebugPanel } from './components/DebugPanel';
+import { ControlBar } from './components/ControlBar';
+import { Composer } from './components/Composer';
+import { ChatPanel } from './components/ChatPanel';
 
-// Legacy in-file audio helpers are being phased out; keep lint quiet during migration.
-// (They will be deleted once App.js is fully split.)
-void playWavBytesViaDecodeAudioData;
-void playWavStreamViaWebAudio;
-
-async function playWavViaDecodeAudioData(url, audioContextRef, currentAudioRef) {
-  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContextClass) throw new Error('WebAudio is not supported');
-
-  if (!audioContextRef.current) {
-    audioContextRef.current = new AudioContextClass();
-  }
-  const audioCtx = audioContextRef.current;
-  if (audioCtx.state === 'suspended') {
-    try {
-      await audioCtx.resume();
-    } catch (_) {
-      // ignore
-    }
-  }
-
-  const abortController = new AbortController();
-  let sourceNode = null;
-  currentAudioRef.current = {
-    stop: () => {
-      try {
-        abortController.abort();
-      } catch (_) {
-        // ignore
-      }
-      try {
-        if (sourceNode) sourceNode.stop(0);
-      } catch (_) {
-        // ignore
-      }
-    }
-  };
-
-  const response = await fetch(url, { signal: abortController.signal });
-  if (!response.ok) throw new Error(`TTS HTTP error: ${response.status}`);
-  const buf = new Uint8Array(await response.arrayBuffer());
-
-  // Patch RIFF/data sizes for streamed WAVs (some servers use placeholders).
-  const patchWavSizes = (bytes) => {
-    if (bytes.byteLength < 44) return bytes;
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const fourcc = (off) =>
-      String.fromCharCode(view.getUint8(off), view.getUint8(off + 1), view.getUint8(off + 2), view.getUint8(off + 3));
-    if (fourcc(0) !== 'RIFF' || fourcc(8) !== 'WAVE') return bytes;
-
-    let offset = 12;
-    let dataOffset = null;
-    let dataSizeOffset = null;
-    while (offset + 8 <= bytes.byteLength) {
-      const id = fourcc(offset);
-      const size = view.getUint32(offset + 4, true);
-      const payload = offset + 8;
-      if (id === 'data') {
-        dataOffset = payload;
-        dataSizeOffset = offset + 4;
-        break;
-      }
-      offset = payload + size;
-      if (offset % 2 === 1) offset += 1;
-    }
-    if (dataOffset == null || dataSizeOffset == null) return bytes;
-
-    const riffSize = bytes.byteLength - 8;
-    const dataSize = bytes.byteLength - dataOffset;
-    view.setUint32(4, riffSize >>> 0, true);
-    view.setUint32(dataSizeOffset, dataSize >>> 0, true);
-    return bytes;
-  };
-
-  const patched = patchWavSizes(buf);
-  const audioBuffer = await audioCtx.decodeAudioData(patched.buffer.slice(patched.byteOffset, patched.byteOffset + patched.byteLength));
-
-  await new Promise((resolve, reject) => {
-    sourceNode = audioCtx.createBufferSource();
-    sourceNode.buffer = audioBuffer;
-    sourceNode.connect(audioCtx.destination);
-    sourceNode.onended = () => resolve();
-    try {
-      sourceNode.start(0);
-    } catch (e) {
-      reject(e);
-    }
-  });
-}
-
-async function playWavBytesViaDecodeAudioData(wavBytes, audioContextRef, currentAudioRef) {
-  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContextClass) throw new Error('WebAudio is not supported');
-
-  const tryParseWavSampleRate = (bytes) => {
-    try {
-      if (!bytes || bytes.byteLength < 44) return null;
-      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-      const fourcc = (off) =>
-        String.fromCharCode(view.getUint8(off), view.getUint8(off + 1), view.getUint8(off + 2), view.getUint8(off + 3));
-      if (fourcc(0) !== 'RIFF' || fourcc(8) !== 'WAVE') return null;
-      let offset = 12;
-      while (offset + 8 <= bytes.byteLength) {
-        const id = fourcc(offset);
-        const size = view.getUint32(offset + 4, true);
-        const payload = offset + 8;
-        if (id === 'fmt ') {
-          if (payload + 16 > bytes.byteLength) return null;
-          const sampleRate = view.getUint32(payload + 4, true);
-          if (sampleRate && sampleRate >= 8000 && sampleRate <= 48000) return sampleRate;
-          return null;
-        }
-        offset = payload + size;
-        if (offset % 2 === 1) offset += 1;
-      }
-    } catch (_) {
-      // ignore
-    }
-    return null;
-  };
-
-  if (!audioContextRef.current) {
-    // Prefer creating AudioContext at WAV sample rate to avoid resampling artifacts.
-    const sr = tryParseWavSampleRate(wavBytes);
-    try {
-      audioContextRef.current = sr ? new AudioContextClass({ sampleRate: sr }) : new AudioContextClass();
-    } catch (_) {
-      audioContextRef.current = new AudioContextClass();
-    }
-  }
-  const audioCtx = audioContextRef.current;
-  if (audioCtx.state === 'suspended') {
-    try {
-      await audioCtx.resume();
-    } catch (_) {
-      // ignore
-    }
-  }
-
-  let sourceNode = null;
-  currentAudioRef.current = {
-    stop: () => {
-      try {
-        if (sourceNode) sourceNode.stop(0);
-      } catch (_) {
-        // ignore
-      }
-    },
-  };
-
-  const patchWavSizes = (bytes) => {
-    if (!bytes || bytes.byteLength < 44) return bytes;
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const fourcc = (off) =>
-      String.fromCharCode(view.getUint8(off), view.getUint8(off + 1), view.getUint8(off + 2), view.getUint8(off + 3));
-    if (fourcc(0) !== 'RIFF' || fourcc(8) !== 'WAVE') return bytes;
-
-    let offset = 12;
-    let dataOffset = null;
-    let dataSizeOffset = null;
-    while (offset + 8 <= bytes.byteLength) {
-      const id = fourcc(offset);
-      const size = view.getUint32(offset + 4, true);
-      const payload = offset + 8;
-      if (id === 'data') {
-        dataOffset = payload;
-        dataSizeOffset = offset + 4;
-        break;
-      }
-      offset = payload + size;
-      if (offset % 2 === 1) offset += 1;
-    }
-    if (dataOffset == null || dataSizeOffset == null) return bytes;
-
-    const riffSize = bytes.byteLength - 8;
-    const dataSize = bytes.byteLength - dataOffset;
-    view.setUint32(4, riffSize >>> 0, true);
-    view.setUint32(dataSizeOffset, dataSize >>> 0, true);
-    return bytes;
-  };
-
-  const patched = patchWavSizes(wavBytes);
-  const audioBuffer = await audioCtx.decodeAudioData(
-    patched.buffer.slice(patched.byteOffset, patched.byteOffset + patched.byteLength)
-  );
-
-  await new Promise((resolve, reject) => {
-    sourceNode = audioCtx.createBufferSource();
-    sourceNode.buffer = audioBuffer;
-    sourceNode.connect(audioCtx.destination);
-    sourceNode.onended = () => resolve();
-    try {
-      sourceNode.start(0);
-    } catch (e) {
-      reject(e);
-    }
-  });
-}
-
-async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, fallbackPlay, onFirstAudioChunk) {
+// eslint-disable-next-line no-unused-vars
+async function _legacyPlayWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, fallbackPlay, onFirstAudioChunk) {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) {
     if (fallbackPlay) return fallbackPlay();
@@ -603,14 +410,8 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
     stopAllSources();
     if (abortController.signal.aborted) return;
     console.warn('[TTS] WebAudio streaming failed, trying decodeAudioData fallback:', err);
-    try {
-      await playWavViaDecodeAudioData(url, audioContextRef, currentAudioRef);
-      return;
-    } catch (decodeErr) {
-      console.warn('[TTS] decodeAudioData fallback failed, trying <audio> fallback:', decodeErr);
-      if (fallbackPlay) return fallbackPlay();
-      throw decodeErr;
-    }
+    if (fallbackPlay) return fallbackPlay();
+    throw err;
   } finally {
     stopPlayback();
     stopAllSources();
@@ -2006,436 +1807,126 @@ function App() {
       <div className="container">
         <h1>AI语音问答</h1>
 
-        <div className="controls">
-          <label className="tts-toggle">
-            <input
-              type="checkbox"
-              checked={useAgentMode}
-              onChange={(e) => setUseAgentMode(e.target.checked)}
-            />
-            <span>使用智能体</span>
-          </label>
+        <ControlBar
+          useAgentMode={useAgentMode}
+          onChangeUseAgentMode={setUseAgentMode}
+          agentOptions={agentOptions}
+          selectedAgentId={selectedAgentId}
+          onChangeSelectedAgentId={setSelectedAgentId}
+          chatOptions={chatOptions}
+          selectedChat={selectedChat}
+          onChangeSelectedChat={setSelectedChat}
+          guideEnabled={guideEnabled}
+          onChangeGuideEnabled={setGuideEnabled}
+          guideDuration={guideDuration}
+          onChangeGuideDuration={setGuideDuration}
+          guideStyle={guideStyle}
+          onChangeGuideStyle={setGuideStyle}
+          tourMeta={tourMeta}
+          tourZone={tourZone}
+          onChangeTourZone={setTourZone}
+          audienceProfile={audienceProfile}
+          onChangeAudienceProfile={setAudienceProfile}
+          groupMode={groupMode}
+          onChangeGroupMode={setGroupMode}
+          ttsEnabled={ttsEnabled}
+          onChangeTtsEnabled={setTtsEnabled}
+          continuousTour={continuousTour}
+          onChangeContinuousTour={setContinuousTour}
+          tourState={tourState}
+          currentIntent={currentIntent}
+          tourStops={tourStops}
+          tourSelectedStopIndex={tourSelectedStopIndex}
+          onChangeTourSelectedStopIndex={setTourSelectedStopIndex}
+          onJump={async () => {
+            try {
+              await jumpTourStop(tourSelectedStopIndex);
+            } catch (e) {
+              console.error('[TOUR] jump failed', e);
+            }
+          }}
+          onReset={resetTour}
+        />
 
-          {useAgentMode ? (
-            <label className="kb-select">
-              <span>智能体</span>
-              <select value={selectedAgentId} onChange={(e) => setSelectedAgentId(e.target.value)}>
-                <option value="">请选择</option>
-                {(agentOptions || []).map((a) => (
-                  <option key={a.id} value={String(a.id)}>
-                    {a.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : (
-            <label className="kb-select">
-              <span>Chat(会话)</span>
-              <select value={selectedChat} onChange={(e) => setSelectedChat(e.target.value)}>
-                {(chatOptions && chatOptions.length ? chatOptions : [selectedChat]).map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-
-          <label className="tts-toggle">
-            <input
-              type="checkbox"
-              checked={guideEnabled}
-              onChange={(e) => setGuideEnabled(e.target.checked)}
-            />
-            <span>展厅讲解</span>
-          </label>
-
-          {guideEnabled ? (
-            <label className="kb-select">
-              <span>时长</span>
-              <select value={guideDuration} onChange={(e) => setGuideDuration(e.target.value)}>
-                <option value="30">30秒</option>
-                <option value="60">1分钟</option>
-                <option value="180">3分钟</option>
-              </select>
-            </label>
-          ) : null}
-
-          {guideEnabled ? (
-            <label className="kb-select">
-              <span>风格</span>
-              <select value={guideStyle} onChange={(e) => setGuideStyle(e.target.value)}>
-                <option value="friendly">通俗</option>
-                <option value="pro">专业</option>
-              </select>
-            </label>
-          ) : null}
-
-          {guideEnabled ? (
-            <label className="kb-select">
-              <span>展区</span>
-              <select value={tourZone} onChange={(e) => setTourZone(e.target.value)}>
-                {(tourMeta && Array.isArray(tourMeta.zones) ? tourMeta.zones : ['默认路线']).map((z) => (
-                  <option key={String(z)} value={String(z)}>
-                    {String(z)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-
-          {guideEnabled ? (
-            <label className="kb-select">
-              <span>人群</span>
-              <select value={audienceProfile} onChange={(e) => setAudienceProfile(e.target.value)}>
-                {(tourMeta && Array.isArray(tourMeta.profiles) ? tourMeta.profiles : ['大众', '儿童', '专业']).map((p) => (
-                  <option key={String(p)} value={String(p)}>
-                    {String(p)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-
-          <label className="tts-toggle" title="多人围观：轮询提问 + 优先级">
-            <input type="checkbox" checked={groupMode} onChange={(e) => setGroupMode(e.target.checked)} />
-            <span>多人围观</span>
-          </label>
-
-          <label className="tts-toggle">
-            <input
-              type="checkbox"
-              checked={ttsEnabled}
-              onChange={(e) => setTtsEnabled(e.target.checked)}
-            />
-            <span>语音播报</span>
-          </label>
-
-          {guideEnabled ? (
-            <label className="tts-toggle" title="无人打断时自动从第1站讲到最后，并预取下一站减少停顿">
-              <input type="checkbox" checked={continuousTour} onChange={(e) => setContinuousTour(e.target.checked)} />
-              <span>连续讲解</span>
-            </label>
-          ) : null}
-
-          <div className="tour-status" title="讲解状态机：打断/继续/下一站">
-            <span className="tour-status-k">讲解</span>
-            <span className="tour-status-v">
-              {tourState.mode === 'idle'
-                ? '未开始'
-                : `${tourState.mode === 'running' ? '进行中' : tourState.mode === 'interrupted' ? '已打断' : '就绪'}${
-                    tourState.stopIndex >= 0 ? ` · 第${tourState.stopIndex + 1}站` : ''
-                  }${tourState.stopName ? ` · ${tourState.stopName}` : ''}`}
-              {currentIntent && currentIntent.intent ? ` · 意图:${currentIntent.intent}` : ''}
-            </span>
-          </div>
-
-          {guideEnabled ? (
-            <div className="tour-controls">
-              <select value={String(tourSelectedStopIndex)} onChange={(e) => setTourSelectedStopIndex(Number(e.target.value) || 0)}>
-                {(tourStops && tourStops.length ? tourStops : ['第1站']).map((s, i) => (
-                  <option key={`${i}_${s}`} value={String(i)}>
-                    {`第${i + 1}站 ${String(s || '').trim()}`}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                className="tour-jump-btn"
-                onClick={async () => {
-                  try {
-                    await jumpTourStop(tourSelectedStopIndex);
-                  } catch (e) {
-                    console.error('[TOUR] jump failed', e);
-                  }
-                }}
-              >
-                跳转
-              </button>
-              <button type="button" className="tour-reset-btn" onClick={resetTour} title="清空讲解状态">
-                重置
-              </button>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="input-section">
-          <div className="voice-input">
-            <button
-              className={`record-btn ${isRecording ? 'recording' : ''}`}
-              onPointerDown={onRecordPointerDown}
-              onPointerUp={onRecordPointerUp}
-              onPointerCancel={onRecordPointerCancel}
-              onPointerLeave={onRecordPointerCancel}
-              onClick={() => {
-                // Fallback only when PointerEvent is not supported (avoid double start/stop from click after pointerup).
-                if (POINTER_SUPPORTED) return;
-                if (isRecording) stopRecording();
-                else startRecording();
-              }}
-              disabled={false}
-              aria-label={isRecording ? '录音中（松开结束）' : '按住说话'}
-              title={isRecording ? '录音中（松开结束）' : '按住说话'}
-            >
-              {isRecording ? '●' : '🎙'}
-            </button>
-          </div>
-
-          <form className="text-input" onSubmit={handleTextSubmit}>
-            {groupMode ? (
-              <input
-                type="text"
-                className="speaker-tag"
-                value={speakerName}
-                onChange={(e) => setSpeakerName(e.target.value)}
-                placeholder="提问人"
-                title="多人围观模式：当前提问人"
-              />
-            ) : null}
-            {groupMode ? (
-              <select
-                className="priority-select"
-                value={questionPriority}
-                onChange={(e) => setQuestionPriority(e.target.value)}
-                title="多人围观模式：问题优先级（高优先会打断当前回答）"
-              >
-                <option value="normal">普通</option>
-                <option value="high">高优先</option>
-              </select>
-            ) : null}
-            <input
-              type="text"
-              ref={inputElRef}
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              placeholder="输入问题…"
-              disabled={false}
-            />
-            {groupMode ? <span className="queue-badge" title="围观提问队列">{(questionQueue || []).length}</span> : null}
-            <button
-              type="button"
-              className="stop-btn"
-              onClick={() => interruptCurrentRun('user_stop')}
-              disabled={
-                !isLoading &&
-                !((ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false) || currentAudioRef.current)
-              }
-              title="打断当前回答/播报"
-            >
-              打断
-            </button>
-            <button type="submit" disabled={!String(inputText || '').trim() || (useAgentMode && !selectedAgentId)}>
-              发送
-            </button>
-          </form>
-
-          <div className="quick-actions">
-            {[
-              { label: '开始讲解', action: 'tour_start', auto: true, primary: true },
-              { label: '继续讲解', action: 'tour_continue', auto: true, primary: true },
-              { label: '下一站', action: 'tour_next', auto: true },
-              { label: '上一站', action: 'tour_prev', auto: true },
-              { label: '30秒总结', text: '请用30秒总结刚才的讲解' },
-              { label: '更通俗', text: '换个更通俗易懂的说法' },
-              { label: '更专业', text: '换个更专业的讲法' },
-            ].map((b) => (
-              <button
-                key={b.label}
-                type="button"
-                className={b.primary ? 'quick-btn quick-btn-primary' : 'quick-btn'}
-                onClick={async () => {
-                  if (b.auto) {
-                    try {
-                      if (b.action === 'tour_start') await startTour();
-                      else if (b.action === 'tour_continue') await continueTour();
-                      else if (b.action === 'tour_next') await nextTourStop();
-                      else if (b.action === 'tour_prev') await prevTourStop();
-                      else await submitTextAuto(b.text, 'quick');
-                    } catch (e) {
-                      console.error('[Quick] submit failed', e);
-                    }
-                    return;
-                  }
-                  setInputText(b.text || '');
-                  try {
-                    setTimeout(() => {
-                      if (inputElRef.current && typeof inputElRef.current.focus === 'function') {
-                        inputElRef.current.focus();
-                      }
-                    }, 0);
-                  } catch (_) {
-                    // ignore
-                  }
-                }}
-              >
-                {b.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <Composer
+          isRecording={isRecording}
+          pointerSupported={POINTER_SUPPORTED}
+          onRecordPointerDown={onRecordPointerDown}
+          onRecordPointerUp={onRecordPointerUp}
+          onRecordPointerCancel={onRecordPointerCancel}
+          onRecordClickFallback={() => {
+            if (POINTER_SUPPORTED) return;
+            if (isRecording) stopRecording();
+            else startRecording();
+          }}
+          groupMode={groupMode}
+          speakerName={speakerName}
+          onChangeSpeakerName={setSpeakerName}
+          questionPriority={questionPriority}
+          onChangeQuestionPriority={setQuestionPriority}
+          inputText={inputText}
+          onChangeInputText={setInputText}
+          inputElRef={inputElRef}
+          questionQueueLength={(questionQueue || []).length}
+          onInterrupt={() => interruptCurrentRun('user_stop')}
+          interruptDisabled={
+            !isLoading && !((ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false) || currentAudioRef.current)
+          }
+          useAgentMode={useAgentMode}
+          selectedAgentId={selectedAgentId}
+          onSubmit={handleTextSubmit}
+          onStartTour={startTour}
+          onContinueTour={continueTour}
+          onNextTourStop={nextTourStop}
+          onPrevTourStop={prevTourStop}
+          onSubmitTextAuto={submitTextAuto}
+          focusInput={() => {
+            try {
+              setTimeout(() => {
+                if (inputElRef.current && typeof inputElRef.current.focus === 'function') {
+                  inputElRef.current.focus();
+                }
+              }, 0);
+            } catch (_) {
+              // ignore
+            }
+          }}
+        />
 
         <div className="layout">
-          <aside className="history-panel">
-            <div className="history-title">
-              <span>历史</span>
-              <select value={historySort} onChange={(e) => setHistorySort(e.target.value)}>
-                <option value="time">按时间</option>
-                <option value="count">按次数</option>
-              </select>
-            </div>
-            <div className="history-list">
-              {(historyItems || []).slice(0, 200).map((item, idx) => {
-                const q = String(item.question || '').trim();
-                if (!q) return null;
-                const cnt = item.cnt != null ? Number(item.cnt) : null;
-                const meta = cnt != null ? `${cnt}次` : '';
-                const key = item.id != null ? `id_${item.id}` : `q_${idx}_${q}`;
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    className="history-item"
-                    onClick={() => {
-                      setInputText(q);
-                      try {
-                        setTimeout(() => {
-                          if (inputElRef.current && typeof inputElRef.current.focus === 'function') {
-                            inputElRef.current.focus();
-                          }
-                        }, 0);
-                      } catch (_) {
-                        // ignore
-                      }
-                    }}
-                    title={q}
-                  >
-                    <div className="history-row">
-                      <div className="history-q">{q}</div>
-                      {meta ? <div className="history-count">{meta}</div> : null}
-                    </div>
-                  </button>
-                );
-              })}
-              {(!historyItems || historyItems.length === 0) ? (
-                <div className="history-empty">暂无历史</div>
-              ) : null}
-            </div>
-          </aside>
-          <div className="main">
-        {lastQuestion && (
-          <div className="question-section">
-            <h3>问题: {lastQuestion}</h3>
-          </div>
-        )}
+          <HistoryPanel
+            historySort={historySort}
+            onChangeSort={(v) => setHistorySort(v)}
+            items={historyItems}
+            onPickQuestion={(q) => {
+              setInputText(q);
+              try {
+                setTimeout(() => {
+                  if (inputElRef.current && typeof inputElRef.current.focus === 'function') {
+                    inputElRef.current.focus();
+                  }
+                }, 0);
+              } catch (_) {
+                // ignore
+              }
+            }}
+          />
 
-        {answer && (
-          <div className="answer-section">
-            <h3>回答:</h3>
-            <p>{answer}</p>
-          </div>
-        )}
+          <ChatPanel
+            lastQuestion={lastQuestion}
+            answer={answer}
+            isLoading={isLoading}
+            queueStatus={queueStatus}
+            messagesEndRef={messagesEndRef}
+          />
 
-        {isLoading && (
-          <div className="loading">
-            处理中...
-          </div>
-        )}
-
-        {queueStatus && (
-          <div className="queue-status">
-            <small>{queueStatus}</small>
-          </div>
-        )}
-        <div ref={messagesEndRef} />
-          </div>
-
-          <aside className="debug-panel">
-            <div className="debug-title">调试面板</div>
-            {!debugInfo ? (
-              <div className="debug-muted">点击发送后显示耗时</div>
-            ) : (
-              <>
-                <div className="debug-row">
-                  <div className="debug-k">触发</div>
-                  <div className="debug-v">{debugInfo.trigger}</div>
-                </div>
-                <div className="debug-row">
-                  <div className="debug-k">提交 → 首字</div>
-                  <div className="debug-v">
-                    {debugInfo.ragflowFirstChunkAt ? `${(debugInfo.ragflowFirstChunkAt - debugInfo.submitAt).toFixed(0)} ms` : '—'}
-                  </div>
-                </div>
-                <div className="debug-row">
-                  <div className="debug-k">提交 → 首段</div>
-                  <div className="debug-v">
-                    {debugInfo.ragflowFirstSegmentAt ? `${(debugInfo.ragflowFirstSegmentAt - debugInfo.submitAt).toFixed(0)} ms` : '—'}
-                  </div>
-                </div>
-                <div className="debug-row">
-                  <div className="debug-k">提交 → TTS首包</div>
-                  <div className="debug-v">
-                    {debugInfo.ttsFirstAudioAt ? `${(debugInfo.ttsFirstAudioAt - debugInfo.submitAt).toFixed(0)} ms` : (ttsEnabled ? '—' : '已关闭')}
-                  </div>
-                </div>
-                <div className="debug-row">
-                  <div className="debug-k">提交 → RAG结束</div>
-                  <div className="debug-v">
-                    {debugInfo.ragflowDoneAt ? `${(debugInfo.ragflowDoneAt - debugInfo.submitAt).toFixed(0)} ms` : '—'}
-                  </div>
-                </div>
-                <div className="debug-row">
-                  <div className="debug-k">提交 → TTS结束</div>
-                  <div className="debug-v">
-                    {debugInfo.ttsAllDoneAt ? `${(debugInfo.ttsAllDoneAt - debugInfo.submitAt).toFixed(0)} ms` : (ttsEnabled ? '—' : '已关闭')}
-                  </div>
-                </div>
-
-                <div className="debug-subtitle">围观队列</div>
-                <div className="debug-list">
-                  {!(questionQueue && questionQueue.length) ? (
-                    <div className="debug-muted">无排队问题</div>
-                  ) : (
-                    (questionQueue || []).slice(0, 12).map((q) => (
-                      <div key={q.id} className="debug-item">
-                        <div className="debug-item-h">
-                          <span>{q.speaker || '观众'}</span>
-                          <span>{q.priority === 'high' ? '高优先' : '普通'}</span>
-                        </div>
-                        <div className="debug-item-b">
-                          <div className="queue-q">{String(q.text || '').slice(0, 60)}</div>
-                          <div className="queue-actions">
-                            <button type="button" className="queue-btn" onClick={() => answerQueuedNow(q)}>
-                              立即回答
-                            </button>
-                            <button type="button" className="queue-btn queue-btn-danger" onClick={() => removeQueuedQuestion(q.id)}>
-                              移除
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-
-                <div className="debug-subtitle">分段</div>
-                <div className="debug-list">
-                  {(debugInfo.segments || []).slice(-12).map((s) => (
-                    <div key={s.seq} className="debug-item">
-                      <div className="debug-item-h">
-                        <span>#{s.seq}</span>
-                        <span>{s.chars}字</span>
-                      </div>
-                      <div className="debug-item-b">
-                        <div>请求: {s.ttsRequestAt ? `${(s.ttsRequestAt - debugInfo.submitAt).toFixed(0)}ms` : '—'}</div>
-                        <div>首包: {s.ttsFirstAudioAt ? `${(s.ttsFirstAudioAt - debugInfo.submitAt).toFixed(0)}ms` : '—'}</div>
-                        <div>结束: {s.ttsDoneAt ? `${(s.ttsDoneAt - debugInfo.submitAt).toFixed(0)}ms` : '—'}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </aside>
+          <DebugPanel
+            debugInfo={debugInfo}
+            ttsEnabled={ttsEnabled}
+            questionQueue={questionQueue}
+            onAnswerQueuedNow={(item) => answerQueuedNow(item)}
+            onRemoveQueuedQuestion={(id) => removeQueuedQuestion(id)}
+          />
         </div>
       </div>
     </div>
