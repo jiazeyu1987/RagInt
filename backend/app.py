@@ -820,6 +820,7 @@ def ask_question():
             return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
         try:
+            last_complete_content = ""
             ragflow_config = load_ragflow_config() or {}
             text_cleaning = ragflow_config.get("text_cleaning", {}) or {}
 
@@ -881,6 +882,17 @@ def ask_question():
                         yield sse_event({"segment": seg, "done": False})
 
                 yield sse_event({"chunk": "", "done": True})
+                try:
+                    history_store.add_entry(
+                        request_id=request_id,
+                        question=question,
+                        answer=fallback_answer,
+                        mode="agent" if agent_id else "chat",
+                        chat_name=conversation_name,
+                        agent_id=agent_id,
+                    )
+                except Exception:
+                    logger.warning(f"[{request_id}] history_store_fallback_save_failed", exc_info=True)
                 return
 
             t_ragflow_request = time.perf_counter()
@@ -904,7 +916,6 @@ def ask_question():
                     f"[{request_id}] RAGFlow响应对象创建成功 dt={time.perf_counter() - t_ragflow_request:.3f}s"
                 )
 
-            last_complete_content = ""
             chunk_count = 0
             first_ragflow_chunk_at = None
             first_ragflow_text_at = None
@@ -1033,6 +1044,17 @@ def ask_question():
                     yield sse_event({"segment": seg, "done": False})
 
             yield sse_event({"chunk": "", "done": True})
+            try:
+                history_store.add_entry(
+                    request_id=request_id,
+                    question=question,
+                    answer=last_complete_content,
+                    mode="agent" if agent_id else "chat",
+                    chat_name=conversation_name,
+                    agent_id=agent_id,
+                )
+            except Exception:
+                logger.warning(f"[{request_id}] history_store_save_failed", exc_info=True)
 
         except Exception as e:
             logger.error(f"[{request_id}] 流式响应异常: {e}", exc_info=True)

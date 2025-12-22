@@ -497,6 +497,8 @@ function App() {
   const [agentOptions, setAgentOptions] = useState([]);
   const [selectedAgentId, setSelectedAgentId] = useState('');
   const [useAgentMode, setUseAgentMode] = useState(false);
+  const [historySort, setHistorySort] = useState('time'); // 'time' | 'count'
+  const [historyItems, setHistoryItems] = useState([]);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const messagesEndRef = useRef(null);
@@ -525,6 +527,7 @@ function App() {
   const recordPointerIdRef = useRef(null);
   const recordStartMsRef = useRef(0);
   const recordCanceledRef = useRef(false);
+  const inputElRef = useRef(null);
 
   const AudioContextClass = typeof window !== 'undefined' ? (window.AudioContext || window.webkitAudioContext) : null;
   const POINTER_SUPPORTED = typeof window !== 'undefined' && 'PointerEvent' in window;
@@ -707,6 +710,23 @@ function App() {
       cancelled = true;
     };
   }, []);
+
+  const fetchHistory = async (sortMode) => {
+    try {
+      const sort = (sortMode || historySort || 'time').trim();
+      const resp = await fetch(`http://localhost:8000/api/history?sort=${encodeURIComponent(sort)}&limit=200`);
+      const data = await resp.json();
+      const items = Array.isArray(data && data.items) ? data.items : [];
+      setHistoryItems(items);
+    } catch (_) {
+      setHistoryItems([]);
+    }
+  };
+
+  useEffect(() => {
+    fetchHistory(historySort);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historySort]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1372,6 +1392,14 @@ function App() {
       if (askAbortRef.current === abortController) {
         askAbortRef.current = null;
       }
+      // refresh history list after a run finishes (best-effort)
+      try {
+        if (runIdRef.current === runId) {
+          fetchHistory(historySort);
+        }
+      } catch (_) {
+        // ignore
+      }
     }
   };
 
@@ -1481,6 +1509,7 @@ function App() {
           <form className="text-input" onSubmit={handleTextSubmit}>
             <input
               type="text"
+              ref={inputElRef}
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               placeholder="输入问题…"
@@ -1493,6 +1522,52 @@ function App() {
         </div>
 
         <div className="layout">
+          <aside className="history-panel">
+            <div className="history-title">
+              <span>历史</span>
+              <select value={historySort} onChange={(e) => setHistorySort(e.target.value)}>
+                <option value="time">按时间</option>
+                <option value="count">按次数</option>
+              </select>
+            </div>
+            <div className="history-list">
+              {(historyItems || []).slice(0, 200).map((item, idx) => {
+                const q = String(item.question || '').trim();
+                if (!q) return null;
+                const cnt = item.cnt != null ? Number(item.cnt) : null;
+                const meta = cnt != null ? `${cnt}次` : '';
+                const key = item.id != null ? `id_${item.id}` : `q_${idx}_${q}`;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className="history-item"
+                    onClick={() => {
+                      setInputText(q);
+                      try {
+                        setTimeout(() => {
+                          if (inputElRef.current && typeof inputElRef.current.focus === 'function') {
+                            inputElRef.current.focus();
+                          }
+                        }, 0);
+                      } catch (_) {
+                        // ignore
+                      }
+                    }}
+                    title={q}
+                  >
+                    <div className="history-row">
+                      <div className="history-q">{q}</div>
+                      {meta ? <div className="history-count">{meta}</div> : null}
+                    </div>
+                  </button>
+                );
+              })}
+              {(!historyItems || historyItems.length === 0) ? (
+                <div className="history-empty">暂无历史</div>
+              ) : null}
+            </div>
+          </aside>
           <div className="main">
         {lastQuestion && (
           <div className="question-section">

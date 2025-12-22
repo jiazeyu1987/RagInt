@@ -108,9 +108,37 @@ class HistoryStore:
             try:
                 rows = conn.execute(
                     f"""
-                    SELECT id, request_id, question, answer, created_at_ms, mode, chat_name, agent_id
-                    FROM qa_history
-                    ORDER BY created_at_ms {order}, id {order}
+                    WITH agg AS (
+                        SELECT
+                            question,
+                            COUNT(1) AS cnt,
+                            MAX(created_at_ms) AS last_at_ms
+                        FROM qa_history
+                        GROUP BY question
+                    ),
+                    pick AS (
+                        SELECT
+                            h.question,
+                            MAX(h.id) AS last_id
+                        FROM qa_history h
+                        JOIN agg
+                            ON agg.question = h.question AND agg.last_at_ms = h.created_at_ms
+                        GROUP BY h.question
+                    )
+                    SELECT
+                        h.id,
+                        h.request_id,
+                        h.question,
+                        h.answer,
+                        h.created_at_ms,
+                        h.mode,
+                        h.chat_name,
+                        h.agent_id,
+                        agg.cnt
+                    FROM qa_history h
+                    JOIN pick ON pick.last_id = h.id
+                    JOIN agg ON agg.question = h.question
+                    ORDER BY agg.last_at_ms {order}, h.id {order}
                     LIMIT ?
                     """,
                     (limit,),
@@ -156,4 +184,3 @@ class HistoryStore:
                 return [dict(r) for r in rows]
             finally:
                 conn.close()
-
