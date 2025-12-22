@@ -801,6 +801,9 @@ def ask_question():
     question = data.get('question', '')
     agent_id = (data.get("agent_id") or "").strip()
     conversation_name = (data.get("conversation_name") or data.get("chat_name") or ragflow_default_chat_name or "").strip()
+    guide = data.get("guide") or {}
+    if not isinstance(guide, dict):
+        guide = {}
     request_id = (
         data.get("request_id")
         or request.headers.get("X-Request-ID")
@@ -812,6 +815,36 @@ def ask_question():
     else:
         logger.info(f"[{request_id}] 问题: {question} chat={conversation_name or 'default'}")
     _timings_set(request_id, t_submit=t_submit)
+
+    def _apply_guide_prompt(raw_question: str) -> str:
+        if not guide.get("enabled", False):
+            return raw_question
+        style = str(guide.get("style") or "friendly").strip().lower()
+        try:
+            duration_s = int(guide.get("duration_s") or 60)
+        except Exception:
+            duration_s = 60
+        duration_s = max(15, min(duration_s, 600))
+
+        style_text = "通俗易懂、亲切自然" if style in ("friendly", "simple") else "更专业、术语更准确"
+        if duration_s <= 35:
+            length_text = "控制在约30秒内，简洁但信息密度高"
+        elif duration_s <= 90:
+            length_text = "控制在约1分钟内，结构清晰"
+        else:
+            length_text = "控制在约3分钟内，分段讲解，循序渐进"
+
+        guide_text = (
+            "【展厅讲解要求】\n"
+            "你是一名展厅讲解员，面向来访者做中文讲解。\n"
+            f"- 讲解风格：{style_text}\n"
+            f"- 时长：{length_text}\n"
+            "- 输出：用短句分段（便于语音播报），必要时用项目符号。\n"
+            "- 约束：不要编造；如果知识库/上下文没有依据，请明确说明不确定，并建议咨询现场工作人员。\n"
+        )
+        return f"{raw_question}\n\n{guide_text}"
+
+    question_for_rag = _apply_guide_prompt(question)
 
     def generate_response():
         def sse_event(payload: dict) -> str:
@@ -899,7 +932,7 @@ def ask_question():
             if agent_id:
                 logger.info(f"[{request_id}] 开始RAGFlow Agent流式响应 agent_id={agent_id}")
                 try:
-                    response = ragflow_agent_service.stream_completion_text(agent_id, question, request_id=request_id)
+                    response = ragflow_agent_service.stream_completion_text(agent_id, question_for_rag, request_id=request_id)
                 except Exception as e:
                     logger.error(f"[{request_id}] ragflow_agent_stream_init_failed err={e}", exc_info=True)
                     msg = (
@@ -911,7 +944,7 @@ def ask_question():
                     return
             else:
                 logger.info(f"[{request_id}] 开始RAGFlow流式响应")
-                response = rag_session.ask(question, stream=True)
+                response = rag_session.ask(question_for_rag, stream=True)
                 logger.info(
                     f"[{request_id}] RAGFlow响应对象创建成功 dt={time.perf_counter() - t_ragflow_request:.3f}s"
                 )

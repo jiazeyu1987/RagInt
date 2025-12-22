@@ -331,6 +331,39 @@ h1 {
   align-items: flex-end;
 }
 
+.quick-actions {
+  width: min(920px, 100%);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+.quick-btn {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.quick-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.quick-btn-primary {
+  border-color: rgba(16, 163, 127, 0.55);
+  background: rgba(16, 163, 127, 0.22);
+}
+
+.quick-btn-primary:hover {
+  background: rgba(16, 163, 127, 0.32);
+}
+
 .record-btn {
   height: 44px;
   width: 44px;

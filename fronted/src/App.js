@@ -497,6 +497,28 @@ function App() {
   const [agentOptions, setAgentOptions] = useState([]);
   const [selectedAgentId, setSelectedAgentId] = useState('');
   const [useAgentMode, setUseAgentMode] = useState(false);
+  const [guideEnabled, setGuideEnabled] = useState(() => {
+    try {
+      const v = localStorage.getItem('guideEnabled');
+      return v == null ? true : v === '1';
+    } catch (_) {
+      return true;
+    }
+  });
+  const [guideDuration, setGuideDuration] = useState(() => {
+    try {
+      return localStorage.getItem('guideDuration') || '60';
+    } catch (_) {
+      return '60';
+    }
+  });
+  const [guideStyle, setGuideStyle] = useState(() => {
+    try {
+      return localStorage.getItem('guideStyle') || 'friendly';
+    } catch (_) {
+      return 'friendly';
+    }
+  });
   const [historySort, setHistorySort] = useState('time'); // 'time' | 'count'
   const [historyItems, setHistoryItems] = useState([]);
   const mediaRecorderRef = useRef(null);
@@ -682,6 +704,16 @@ function App() {
       setQueueStatus('');
     }
   }, [ttsEnabled]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('guideEnabled', guideEnabled ? '1' : '0');
+      localStorage.setItem('guideDuration', String(guideDuration || '60'));
+      localStorage.setItem('guideStyle', String(guideStyle || 'friendly'));
+    } catch (_) {
+      // ignore
+    }
+  }, [guideEnabled, guideDuration, guideStyle]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1274,6 +1306,11 @@ function App() {
           request_id: requestId,
           conversation_name: useAgentMode ? null : selectedChat,
           agent_id: useAgentMode ? (selectedAgentId || null) : null,
+          guide: {
+            enabled: !!guideEnabled,
+            duration_s: Number(guideDuration || 60),
+            style: String(guideStyle || 'friendly'),
+          },
         }),
         signal: abortController.signal
       });
@@ -1426,6 +1463,29 @@ function App() {
     }
   };
 
+  const submitTextAuto = async (text, trigger) => {
+    const q = String(text || '').trim();
+    if (!q) return;
+    if (useAgentMode && !selectedAgentId) {
+      alert('请选择智能体后再提问');
+      return;
+    }
+    if (ttsEnabledRef.current) {
+      if (audioContextRef.current) {
+        try {
+          audioContextRef.current.close().catch(() => {});
+        } catch (_) {
+          // ignore
+        }
+        audioContextRef.current = null;
+      }
+      unlockAudio();
+    }
+    beginDebugRun(trigger || 'quick');
+    setInputText('');
+    await askQuestion(q);
+  };
+
   useEffect(() => {
     if (!messagesEndRef.current) return;
     try {
@@ -1474,6 +1534,36 @@ function App() {
               </select>
             </label>
           )}
+
+          <label className="tts-toggle">
+            <input
+              type="checkbox"
+              checked={guideEnabled}
+              onChange={(e) => setGuideEnabled(e.target.checked)}
+            />
+            <span>展厅讲解</span>
+          </label>
+
+          {guideEnabled ? (
+            <label className="kb-select">
+              <span>时长</span>
+              <select value={guideDuration} onChange={(e) => setGuideDuration(e.target.value)}>
+                <option value="30">30秒</option>
+                <option value="60">1分钟</option>
+                <option value="180">3分钟</option>
+              </select>
+            </label>
+          ) : null}
+
+          {guideEnabled ? (
+            <label className="kb-select">
+              <span>风格</span>
+              <select value={guideStyle} onChange={(e) => setGuideStyle(e.target.value)}>
+                <option value="friendly">通俗</option>
+                <option value="pro">专业</option>
+              </select>
+            </label>
+          ) : null}
           <label className="tts-toggle">
             <input
               type="checkbox"
@@ -1519,6 +1609,46 @@ function App() {
               发送
             </button>
           </form>
+
+          <div className="quick-actions">
+            {[
+              { label: '开始讲解', text: '请开始展厅讲解：先总体介绍公司，再按展品/展区分段讲解。', auto: true, primary: true, trigger: 'guide_start' },
+              { label: '继续讲解', text: '继续讲解', auto: true, primary: true, trigger: 'guide_continue' },
+              { label: '下一站', text: '下一站' },
+              { label: '上一站', text: '上一站' },
+              { label: '30秒总结', text: '请用30秒总结刚才的讲解' },
+              { label: '更通俗', text: '换个更通俗易懂的说法' },
+              { label: '更专业', text: '换个更专业的讲法' },
+            ].map((b) => (
+              <button
+                key={b.label}
+                type="button"
+                className={b.primary ? 'quick-btn quick-btn-primary' : 'quick-btn'}
+                onClick={async () => {
+                  if (b.auto) {
+                    try {
+                      await submitTextAuto(b.text, b.trigger || 'quick');
+                    } catch (e) {
+                      console.error('[Quick] submit failed', e);
+                    }
+                    return;
+                  }
+                  setInputText(b.text);
+                  try {
+                    setTimeout(() => {
+                      if (inputElRef.current && typeof inputElRef.current.focus === 'function') {
+                        inputElRef.current.focus();
+                      }
+                    }, 0);
+                  } catch (_) {
+                    // ignore
+                  }
+                }}
+              >
+                {b.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="layout">
