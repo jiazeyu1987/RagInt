@@ -171,3 +171,5 @@ resource/
 *.zip
 *.tar.gz
 *.rar
+/tts_demo
+/.claude

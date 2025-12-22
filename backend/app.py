@@ -73,12 +73,14 @@ sys.path.append(str(Path(__file__).parent.parent / "tts_demo"))
 
 from services.asr_service import ASRService
 from services.config_utils import get_nested
+from services.history_store import HistoryStore
 from services.ragflow_agent_service import RagflowAgentService
 from services.ragflow_service import RagflowService
 from services.tts_service import TTSSvc
 
 ragflow_service = RagflowService(Path(__file__).parent.parent / "ragflow_demo" / "ragflow_config.json", logger=logger)
 ragflow_agent_service = RagflowAgentService(Path(__file__).parent.parent / "ragflow_demo" / "ragflow_config.json", logger=logger)
+history_store = HistoryStore(Path(__file__).parent / "data" / "qa_history.db", logger=logger)
 asr_service = ASRService(logger=logger)
 tts_service = TTSSvc(logger=logger)
 asr_model_loaded = asr_service.funasr_loaded
@@ -739,6 +741,21 @@ def ragflow_list_agents():
     except Exception:
         pass
     return jsonify(res)
+
+
+@app.route('/api/history', methods=['GET'])
+def api_history_list():
+    sort_mode = (request.args.get("sort") or "time").strip().lower()
+    order = (request.args.get("order") or "desc").strip().lower()
+    limit = int(request.args.get("limit") or 100)
+    desc = order != "asc"
+
+    if sort_mode in ("count", "freq", "frequency"):
+        items = history_store.list_by_count(limit=limit, desc=desc)
+        return jsonify({"sort": "count", "items": items})
+
+    items = history_store.list_by_time(limit=limit, desc=desc)
+    return jsonify({"sort": "time", "items": items})
 
 @app.route('/health')
 def health():
