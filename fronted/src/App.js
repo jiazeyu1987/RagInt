@@ -525,7 +525,17 @@ function App() {
     mode: 'idle', // 'idle' | 'ready' | 'running' | 'interrupted'
     stopIndex: -1,
     stopName: '',
+    lastAnswerTail: '',
     lastAction: null, // 'start' | 'continue' | 'next' | 'user_question' | 'interrupt'
+  });
+  const [tourSelectedStopIndex, setTourSelectedStopIndex] = useState(() => {
+    try {
+      const raw = localStorage.getItem('tourSelectedStopIndex');
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : 0;
+    } catch (_) {
+      return 0;
+    }
   });
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
@@ -748,6 +758,52 @@ function App() {
   }, [tourState]);
 
   useEffect(() => {
+    try {
+      localStorage.setItem('tourSelectedStopIndex', String(tourSelectedStopIndex));
+    } catch (_) {
+      // ignore
+    }
+  }, [tourSelectedStopIndex]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('tourStateV1');
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return;
+      setTourState((prev) => ({
+        ...prev,
+        mode: typeof parsed.mode === 'string' ? parsed.mode : prev.mode,
+        stopIndex: Number.isFinite(parsed.stopIndex) ? parsed.stopIndex : prev.stopIndex,
+        stopName: typeof parsed.stopName === 'string' ? parsed.stopName : prev.stopName,
+        lastAnswerTail: typeof parsed.lastAnswerTail === 'string' ? parsed.lastAnswerTail : prev.lastAnswerTail,
+        lastAction: typeof parsed.lastAction === 'string' ? parsed.lastAction : prev.lastAction,
+      }));
+    } catch (_) {
+      // ignore
+    }
+    // only once
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        'tourStateV1',
+        JSON.stringify({
+          mode: tourState.mode,
+          stopIndex: tourState.stopIndex,
+          stopName: tourState.stopName,
+          lastAnswerTail: tourState.lastAnswerTail,
+          lastAction: tourState.lastAction,
+        })
+      );
+    } catch (_) {
+      // ignore
+    }
+  }, [tourState]);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
@@ -756,6 +812,13 @@ function App() {
         if (cancelled) return;
         const stops = Array.isArray(data && data.stops) ? data.stops.map((s) => String(s || '').trim()).filter(Boolean) : [];
         setTourStops(stops);
+        if (stops.length) {
+          setTourSelectedStopIndex((prev) => {
+            const n = Number(prev);
+            if (!Number.isFinite(n)) return 0;
+            return Math.max(0, Math.min(n, stops.length - 1));
+          });
+        }
       } catch (_) {
         if (!cancelled) setTourStops([]);
       }
@@ -778,14 +841,16 @@ function App() {
     const n = Array.isArray(tourStops) ? tourStops.length : 0;
     const title = stopName ? `第${idx + 1}站「${stopName}」` : `第${idx + 1}站`;
     const suffix = n ? `（共${n}站）` : '';
+    const tail = String((tourStateRef.current && tourStateRef.current.lastAnswerTail) || '').trim();
+    const tailHint = tail ? `\n\n【上一段结束语（供承接）】${tail}` : '';
     if (action === 'start') {
       return `请开始展厅讲解：从${title}${suffix}开始，先给出1-2句开场白，再分点讲解本站重点。`;
     }
     if (action === 'continue') {
-      return `继续讲解${title}${suffix}：承接上一段内容，补充关键细节与示例，保持短句分段。`;
+      return `继续讲解${title}${suffix}：承接上一段内容，补充关键细节与示例，保持短句分段。${tailHint}`;
     }
     if (action === 'next') {
-      return `现在进入${title}${suffix}：请开始讲解，先概括本站主题，再分点说明。`;
+      return `现在进入${title}${suffix}：请开始讲解，先概括本站主题，再分点说明。${tailHint}`;
     }
     return '继续讲解';
   };
@@ -1197,6 +1262,7 @@ function App() {
 
   const askQuestion = async (text, opts) => {
     // Interrupt any previous in-flight /api/ask stream.
+    interruptCurrentRun('new_question');
     try {
       if (askAbortRef.current) askAbortRef.current.abort();
     } catch (_) {
@@ -1439,6 +1505,7 @@ function App() {
         });
     };
 
+    let fullAnswer = '';
     try {
       const response = await fetch('http://localhost:8000/api/ask', {
         method: 'POST',
@@ -1465,7 +1532,6 @@ function App() {
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-      let fullAnswer = '';
       let sseBuffer = '';
 
       while (true) {
@@ -1577,7 +1643,12 @@ function App() {
         if (runIdRef.current === runId) {
           setTourState((prev) => {
             if (!prev || prev.mode === 'idle') return prev;
-            if (prev.mode === 'running') return { ...prev, mode: 'ready' };
+            if (prev.mode === 'running') {
+              const tail = String(fullAnswer || '')
+                .trim()
+                .slice(-80);
+              return { ...prev, mode: 'ready', lastAnswerTail: tail || prev.lastAnswerTail };
+            }
             return prev;
           });
         }
@@ -1656,6 +1727,15 @@ function App() {
     await askQuestion(prompt, { tourAction: 'continue', tourStopIndex: stopIndex });
   };
 
+  const prevTourStop = async () => {
+    const cur = tourStateRef.current;
+    const stopIndexRaw = Number.isFinite(cur && cur.stopIndex) ? cur.stopIndex - 1 : 0;
+    const stopIndex = Math.max(0, stopIndexRaw);
+    const prompt = buildTourPrompt('next', stopIndex);
+    beginDebugRun('guide_prev');
+    await askQuestion(prompt, { tourAction: 'next', tourStopIndex: stopIndex });
+  };
+
   const nextTourStop = async () => {
     const cur = tourStateRef.current;
     const n = Array.isArray(tourStops) ? tourStops.length : 0;
@@ -1664,6 +1744,25 @@ function App() {
     const prompt = buildTourPrompt('next', stopIndex);
     beginDebugRun('guide_next');
     await askQuestion(prompt, { tourAction: 'next', tourStopIndex: stopIndex });
+  };
+
+  const jumpTourStop = async (idx) => {
+    const n = Array.isArray(tourStops) ? tourStops.length : 0;
+    const stopIndex = n ? Math.max(0, Math.min(Number(idx) || 0, n - 1)) : Math.max(0, Number(idx) || 0);
+    const prompt = buildTourPrompt('next', stopIndex);
+    beginDebugRun('guide_jump');
+    await askQuestion(prompt, { tourAction: 'next', tourStopIndex: stopIndex });
+  };
+
+  const resetTour = () => {
+    interruptCurrentRun('tour_reset');
+    setTourState({
+      mode: 'idle',
+      stopIndex: -1,
+      stopName: '',
+      lastAnswerTail: '',
+      lastAction: null,
+    });
   };
 
   useEffect(() => {
@@ -1763,6 +1862,34 @@ function App() {
                   }${tourState.stopName ? ` · ${tourState.stopName}` : ''}`}
             </span>
           </div>
+
+          {guideEnabled ? (
+            <div className="tour-controls">
+              <select value={String(tourSelectedStopIndex)} onChange={(e) => setTourSelectedStopIndex(Number(e.target.value) || 0)}>
+                {(tourStops && tourStops.length ? tourStops : ['第1站']).map((s, i) => (
+                  <option key={`${i}_${s}`} value={String(i)}>
+                    {`第${i + 1}站 ${String(s || '').trim()}`}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="tour-jump-btn"
+                onClick={async () => {
+                  try {
+                    await jumpTourStop(tourSelectedStopIndex);
+                  } catch (e) {
+                    console.error('[TOUR] jump failed', e);
+                  }
+                }}
+              >
+                跳转
+              </button>
+              <button type="button" className="tour-reset-btn" onClick={resetTour} title="清空讲解状态">
+                重置
+              </button>
+            </div>
+          ) : null}
         </div>
 
         <div className="input-section">
@@ -1815,7 +1942,7 @@ function App() {
               { label: '开始讲解', action: 'tour_start', auto: true, primary: true },
               { label: '继续讲解', action: 'tour_continue', auto: true, primary: true },
               { label: '下一站', action: 'tour_next', auto: true },
-              { label: '上一站', text: '上一站' },
+              { label: '上一站', action: 'tour_prev', auto: true },
               { label: '30秒总结', text: '请用30秒总结刚才的讲解' },
               { label: '更通俗', text: '换个更通俗易懂的说法' },
               { label: '更专业', text: '换个更专业的讲法' },
@@ -1830,6 +1957,7 @@ function App() {
                       if (b.action === 'tour_start') await startTour();
                       else if (b.action === 'tour_continue') await continueTour();
                       else if (b.action === 'tour_next') await nextTourStop();
+                      else if (b.action === 'tour_prev') await prevTourStop();
                       else await submitTextAuto(b.text, 'quick');
                     } catch (e) {
                       console.error('[Quick] submit failed', e);
