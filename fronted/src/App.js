@@ -96,6 +96,7 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
   const abortController = new AbortController();
   let audioCtx = null;
   let processor = null;
+  let processorChannels = null;
   let pcmQueue = [];
   let pcmQueueIndex = 0;
   let pcmQueueOffset = 0;
@@ -211,6 +212,7 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
       if (processor) return;
       const bufferSize = 2048;
       processor = audioCtx.createScriptProcessor(bufferSize, 0, wavInfo.channels);
+      processorChannels = wavInfo.channels;
       processor.onaudioprocess = (e) => {
         const frames = e.outputBuffer.length;
         const channels = wavInfo.channels;
@@ -406,6 +408,9 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
         }
 
         if (wavInfo.audioFormatCode !== 1) throw new Error(`Unsupported WAV audioFormat: ${wavInfo.audioFormatCode}`);
+        if (processor && processorChannels != null && processorChannels !== wavInfo.channels) {
+          throw new Error(`WAV channel count changed mid-stream: ${processorChannels} -> ${wavInfo.channels}`);
+        }
         await ensureAudioContext(wavInfo.sampleRate);
         ensureResampler();
         ensureProcessor();
@@ -422,6 +427,28 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
         merged.set(chunk, pcmRemainder.byteLength);
         pcmRemainder = new Uint8Array(0);
         chunk = merged;
+      }
+
+      // Some TTS providers may send each websocket frame as a standalone WAV (RIFF header repeated).
+      // Detect and reset parser to avoid treating RIFF bytes as PCM (white noise).
+      if (
+        chunk.byteLength >= 12 &&
+        chunk[0] === 0x52 && // R
+        chunk[1] === 0x49 && // I
+        chunk[2] === 0x46 && // F
+        chunk[3] === 0x46 && // F
+        chunk[8] === 0x57 && // W
+        chunk[9] === 0x41 && // A
+        chunk[10] === 0x56 && // V
+        chunk[11] === 0x45 // E
+      ) {
+        console.warn('[TTS] Detected embedded WAV header mid-stream; resetting parser');
+        wavInfo = null;
+        headerBuffer = chunk;
+        pcmRemainder = new Uint8Array(0);
+        sanitySamples = [];
+        sanityDone = false;
+        continue;
       }
 
       const blockAlign = wavInfo.channels * 2;

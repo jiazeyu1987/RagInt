@@ -5,20 +5,15 @@ from pathlib import Path
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import json
+import base64
 import threading
-import queue 
+import queue
 import time
 import uuid
 import numpy as np
-import pyaudio
-import webrtcvad
-import requests
-import subprocess
 import logging
-import base64
 import contextlib
-import tempfile
-import wave
+import requests
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -76,17 +71,15 @@ sys.path.append(str(Path(__file__).parent.parent / "ragflow_demo"))
 sys.path.append(str(Path(__file__).parent.parent / "fuasr_demo"))
 sys.path.append(str(Path(__file__).parent.parent / "tts_demo"))
 
-from ragflow_sdk import RAGFlow
+from services.asr_service import ASRService
+from services.config_utils import get_nested
+from services.ragflow_service import RagflowService
+from services.tts_service import TTSSvc
 
-try:
-    from funasr import AutoModel
-    asr_model = AutoModel(model="iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch", device="cpu", disable_update=True)
-    asr_model_loaded = True
-    logger.info("FunASR模型加载成功")
-except Exception as e:
-    asr_model = None
-    asr_model_loaded = False
-    logger.error(f"FunASR模型加载失败: {e}")
+ragflow_service = RagflowService(Path(__file__).parent.parent / "ragflow_demo" / "ragflow_config.json", logger=logger)
+asr_service = ASRService(logger=logger)
+tts_service = TTSSvc(logger=logger)
+asr_model_loaded = asr_service.funasr_loaded
 
 class SuppressOutput:
     def __enter__(self):
@@ -103,28 +96,13 @@ class SuppressOutput:
         sys.stdout = self._original_stdout
         sys.stderr = self._original_stderr
 
-RATE = 16000
-FRAME_MS = 20
-FRAME_SAMPLES = RATE * FRAME_MS // 1000
-FRAME_BYTES = FRAME_SAMPLES * 2
-ENERGY_GATE = 0.008
-VAD_MODE = 2
-MIN_SPEECH_MS = 250
-SILENCE_END_MS = 600
-MAX_UTTER_MS = 15000
-
 ragflow_client = None
 session = None
 ragflow_dataset_id = None
 ragflow_default_chat_name = None
-RAGFLOW_SESSIONS = {}
-RAGFLOW_SESSIONS_LOCK = threading.Lock()
 
 ASK_TIMINGS = {}
 ASK_TIMINGS_LOCK = threading.Lock()
-
-TTS_STREAM_STATE = {}
-TTS_STREAM_STATE_LOCK = threading.Lock()
 
 
 def _timings_prune(now_perf: float, ttl_s: float = 300.0, max_items: int = 500):
@@ -162,156 +140,11 @@ def _timings_get(request_id: str):
         return dict(entry) if isinstance(entry, dict) else None
 
 
-def _tts_state_prune(now_perf: float, ttl_s: float = 600.0, max_items: int = 500):
-    with TTS_STREAM_STATE_LOCK:
-        items = list(TTS_STREAM_STATE.items())
-        for key, value in items:
-            t_last = value.get("t_last")
-            if isinstance(t_last, (int, float)) and (now_perf - float(t_last)) > ttl_s:
-                TTS_STREAM_STATE.pop(key, None)
-        if len(TTS_STREAM_STATE) > max_items:
-            ordered = sorted(
-                TTS_STREAM_STATE.items(),
-                key=lambda kv: float(kv[1].get("t_last", now_perf)),
-            )
-            for key, _ in ordered[: max(0, len(TTS_STREAM_STATE) - max_items)]:
-                TTS_STREAM_STATE.pop(key, None)
-
-
-def _tts_state_update(request_id: str, segment_index, provider: str, endpoint: str):
-    now_perf = time.perf_counter()
-    _tts_state_prune(now_perf)
-    try:
-        seg_int = int(segment_index) if segment_index is not None and str(segment_index).strip() != "" else None
-    except Exception:
-        seg_int = None
-
-    with TTS_STREAM_STATE_LOCK:
-        state = TTS_STREAM_STATE.get(request_id) or {
-            "t_first": now_perf,
-            "t_last": now_perf,
-            "count": 0,
-            "last_segment_index": None,
-            "last_provider": None,
-        }
-        state["t_last"] = now_perf
-        state["count"] = int(state.get("count", 0) or 0) + 1
-        last_seg = state.get("last_segment_index", None)
-        state["last_provider"] = provider
-
-        warn = None
-        if seg_int is not None and last_seg is not None:
-            if seg_int == last_seg:
-                warn = "duplicate_segment_index"
-            elif seg_int < last_seg:
-                warn = "out_of_order_segment_index"
-            elif seg_int > last_seg + 1:
-                warn = "segment_index_gap"
-        if seg_int is not None:
-            state["last_segment_index"] = seg_int
-
-        TTS_STREAM_STATE[request_id] = state
-
-    if warn:
-        logger.warning(
-            f"[{request_id}] tts_order_warning type={warn} endpoint={endpoint} provider={provider} seg={seg_int} last={last_seg}"
-        )
-    else:
-        logger.info(
-            f"[{request_id}] tts_request_seen endpoint={endpoint} provider={provider} seg={seg_int} count={state['count']}"
-        )
-
-
 def load_app_config():
-    return load_ragflow_config() or {}
-
+    return ragflow_service.load_config() or {}
 
 def _get_nested(config: dict, path: list, default=None):
-    cur = config
-    for key in path:
-        if not isinstance(cur, dict) or key not in cur:
-            return default
-        cur = cur[key]
-    return cur
-
-
-def _run_ffmpeg_convert_to_wav16k_mono(input_path: str, output_path: str, *, trim_silence: bool = True) -> None:
-    cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-i",
-        input_path,
-        "-vn",
-    ]
-    if trim_silence:
-        cmd += [
-            "-af",
-            "silenceremove=start_periods=1:start_silence=0.2:start_threshold=-35dB:"
-            "stop_periods=1:stop_silence=0.5:stop_threshold=-35dB",
-        ]
-    cmd += [
-        "-ac",
-        "1",
-        "-ar",
-        "16000",
-        "-c:a",
-        "pcm_s16le",
-        "-f",
-        "wav",
-        output_path,
-    ]
-    subprocess.run(cmd, check=True)
-
-
-def _read_wav_pcm16_mono_16k(path: str) -> np.ndarray:
-    with wave.open(path, "rb") as wf:
-        channels = wf.getnchannels()
-        sample_rate = wf.getframerate()
-        sample_width = wf.getsampwidth()
-        frames = wf.getnframes()
-        raw = wf.readframes(frames)
-    if channels != 1 or sample_rate != 16000 or sample_width != 2:
-        raise ValueError(f"unexpected wav format ch={channels} sr={sample_rate} sw={sample_width}")
-    return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-
-
-def _dashscope_asr_recognize(wav_path: str, *, api_key: str, model: str, sample_rate: int = 16000, kwargs: dict | None = None) -> str:
-    import dashscope
-    from dashscope.audio.asr import Recognition
-
-    dashscope.api_key = api_key
-    recognizer = Recognition(model=model, callback=None, format="wav", sample_rate=sample_rate)
-    result = recognizer.call(wav_path, **(kwargs or {}))
-
-    texts = []
-    try:
-        sentences = result.get_sentence()
-    except Exception:
-        sentences = None
-
-    if isinstance(sentences, list):
-        for s in sentences:
-            if isinstance(s, dict):
-                t = s.get("text") or s.get("sentence") or s.get("transcript")
-                if t:
-                    texts.append(str(t))
-    elif isinstance(sentences, dict):
-        t = sentences.get("text") or sentences.get("sentence") or sentences.get("transcript")
-        if t:
-            texts.append(str(t))
-
-    if texts:
-        return "".join(texts).strip()
-
-    output = getattr(result, "output", None)
-    if isinstance(output, dict) and isinstance(output.get("sentence"), list):
-        for s in output["sentence"]:
-            if isinstance(s, dict) and s.get("text"):
-                texts.append(str(s["text"]))
-    return "".join(texts).strip()
+    return get_nested(config, path, default)
 
 
 def _stream_local_gpt_sovits(text: str, request_id: str, config: dict):
@@ -799,6 +632,13 @@ def find_chat_by_name(client, chat_name):
 def init_ragflow():
     global ragflow_client, session, ragflow_dataset_id, ragflow_default_chat_name
     try:
+        ok = ragflow_service.init()
+        ragflow_client = ragflow_service.client
+        ragflow_dataset_id = ragflow_service.dataset_id
+        ragflow_default_chat_name = ragflow_service.default_chat_name
+        session = ragflow_service.get_session(ragflow_default_chat_name) if ok else None
+        return bool(ok)
+
         ragflow_config_path = Path(__file__).parent.parent / "ragflow_demo" / "ragflow_config.json"
 
         if not ragflow_config_path.exists():
@@ -868,11 +708,7 @@ def init_ragflow():
 init_ragflow()
 
 def load_ragflow_config():
-    config_path = Path(__file__).parent.parent / "ragflow_demo" / "ragflow_config.json"
-    if config_path.exists():
-        with open(config_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return None
+    return ragflow_service.load_config() or {}
 
 
 def _ragflow_chat_to_dict(chat):
@@ -886,59 +722,17 @@ def _ragflow_chat_to_dict(chat):
 
 
 def get_ragflow_session(chat_name: str):
-    global session
-    if not ragflow_client:
-        return None
-    name = str(chat_name or ragflow_default_chat_name or "").strip()
-    if not name:
-        return None
-
-    with RAGFLOW_SESSIONS_LOCK:
-        cached = RAGFLOW_SESSIONS.get(name)
-        if cached is not None:
-            return cached
-
-    try:
-        logger.info(f"RAGFlow get_session chat={name}")
-        chat = find_chat_by_name(ragflow_client, name)
-        if not chat:
-            logger.info(f"RAGFlow create_chat name={name}")
-            chat = ragflow_client.create_chat(
-                name=name,
-                dataset_ids=[ragflow_dataset_id] if ragflow_dataset_id else []
-            )
-        sess = chat.create_session("Chat Session")
-        with RAGFLOW_SESSIONS_LOCK:
-            RAGFLOW_SESSIONS[name] = sess
-        if name == ragflow_default_chat_name:
-            session = sess
-        return sess
-    except Exception as e:
-        logger.error(f"RAGFlow get_session failed chat={name} err={e}", exc_info=True)
-        return None
+    return ragflow_service.get_session(chat_name)
 
 
 @app.route('/api/ragflow/chats', methods=['GET'])
 def ragflow_list_chats():
-    if not ragflow_client:
-        return jsonify({"chats": [], "default": ragflow_default_chat_name, "error": "ragflow_not_initialized"})
-    try:
-        chats = ragflow_client.list_chats() or []
-        items = []
-        for chat in chats:
-            d = _ragflow_chat_to_dict(chat)
-            if d and d.get("name"):
-                items.append(d)
-        items.sort(key=lambda x: (0 if x.get("name") == ragflow_default_chat_name else 1, x.get("name") or ""))
-        return jsonify({"chats": items, "default": ragflow_default_chat_name})
-    except Exception as e:
-        logger.error(f"ragflow_list_chats_failed err={e}", exc_info=True)
-        return jsonify({"chats": [], "default": ragflow_default_chat_name, "error": str(e)})
+    return jsonify(ragflow_service.list_chats())
 
 @app.route('/health')
 def health():
     return jsonify({
-        "asr_loaded": asr_model_loaded,
+        "asr_loaded": asr_service.funasr_loaded,
         "ragflow_connected": session is not None
     })
 
@@ -951,62 +745,13 @@ def speech_to_text():
     raw_bytes = audio_file.read()
 
     app_config = load_app_config()
-    asr_cfg = _get_nested(app_config, ["asr"], {}) or {}
-    provider = str(asr_cfg.get("provider", "dashscope")).strip().lower() or "dashscope"
-
-    # DashScope ASR config (preferred for accuracy on Chinese)
-    dashscope_model = str(_get_nested(app_config, ["asr", "dashscope", "model"], "paraformer-realtime-v2") or "").strip()
-    dashscope_api_key = str(_get_nested(app_config, ["asr", "dashscope", "api_key"], "") or "").strip()
-    if not dashscope_api_key:
-        dashscope_api_key = str(_get_nested(app_config, ["tts", "bailian", "api_key"], "") or "").strip()
-    dashscope_kwargs = _get_nested(app_config, ["asr", "dashscope", "kwargs"], {}) or {}
-    if not isinstance(dashscope_kwargs, dict):
-        dashscope_kwargs = {}
-
-    trim_silence = bool(_get_nested(app_config, ["asr", "preprocess", "trim_silence"], True))
-
     t0 = time.perf_counter()
     try:
-        with tempfile.TemporaryDirectory(prefix="asr_") as td:
-            src_path = str(Path(td) / "input.bin")
-            wav_path = str(Path(td) / "audio_16k_mono.wav")
-            Path(src_path).write_bytes(raw_bytes)
-
-            _run_ffmpeg_convert_to_wav16k_mono(src_path, wav_path, trim_silence=trim_silence)
-
-            if provider == "funasr":
-                if not asr_model_loaded:
-                    logger.warning("asr_provider=funasr but funasr not available, fallback_to_dashscope")
-                else:
-                    x = _read_wav_pcm16_mono_16k(wav_path)
-                    with SuppressOutput():
-                        result = asr_model.generate(input=x, is_final=True)
-                    text = ""
-                    if result and isinstance(result, list) and isinstance(result[0], dict) and result[0].get("text"):
-                        text = str(result[0]["text"]).strip()
-                    logger.info(f"asr_done provider=funasr dt={time.perf_counter()-t0:.3f}s chars={len(text)}")
-                    return jsonify({"text": text})
-
-            if provider == "dashscope" or not asr_model_loaded:
-                if not dashscope_api_key:
-                    logger.error("asr_missing_api_key (set asr.dashscope.api_key or tts.bailian.api_key)")
-                    return jsonify({"text": ""})
-                text = _dashscope_asr_recognize(
-                    wav_path,
-                    api_key=dashscope_api_key,
-                    model=dashscope_model,
-                    sample_rate=16000,
-                    kwargs=dashscope_kwargs,
-                )
-                logger.info(
-                    f"asr_done provider=dashscope model={dashscope_model} dt={time.perf_counter()-t0:.3f}s chars={len(text)}"
-                )
-                return jsonify({"text": text})
-
-            logger.warning(f"asr_provider_unknown provider={provider}")
-            return jsonify({"text": ""})
+        text = asr_service.transcribe(raw_bytes, app_config)
+        logger.info(f"asr_done dt={time.perf_counter()-t0:.3f}s chars={len(text)}")
+        return jsonify({"text": text})
     except Exception as e:
-        logger.error(f"asr_failed provider={provider} err={e}", exc_info=True)
+        logger.error(f"asr_failed err={e}", exc_info=True)
         return jsonify({"text": ""})
 
 @app.route('/api/ask', methods=['POST'])
@@ -1067,7 +812,7 @@ def ask_question():
                     logger.warning(f"文本清洗/分段模块不可用，降级为整段TTS: {e}")
                     enable_cleaning = False
 
-            rag_session = get_ragflow_session(conversation_name) if conversation_name else session
+            rag_session = ragflow_service.get_session(conversation_name) if conversation_name else session
 
             if not rag_session:
                 logger.warning("RAGFlow不可用，使用固定回答")
@@ -1265,13 +1010,25 @@ def text_to_speech():
         or request.headers.get("X-TTS-Provider")
         or _get_nested(app_config, ["tts", "provider"], "local")
     )
-    _tts_state_update(request_id, data.get("segment_index", None), provider=provider, endpoint="/api/text_to_speech")
+    tts_service.tts_state_update(
+        request_id,
+        data.get("segment_index", None),
+        provider=str(provider),
+        endpoint="/api/text_to_speech",
+    )
     logger.info(f"[{request_id}] tts_provider={provider} response_mimetype={_get_nested(app_config, ['tts', 'mimetype'], 'audio/wav')}")
 
     def generate_audio():
         try:
             logger.info(f"[{request_id}] 开始TTS音频生成 provider={provider}")
-            yield from _stream_tts_provider(text=text, request_id=request_id, provider=provider, config=app_config)
+            yield from tts_service.stream(
+                text=text,
+                request_id=request_id,
+                config=app_config,
+                provider=provider,
+                endpoint="/api/text_to_speech",
+                segment_index=data.get("segment_index", None),
+            )
         except GeneratorExit:
             logger.info(f"[{request_id}] tts_generator_exit endpoint=/api/text_to_speech (client_disconnect?)")
             raise
@@ -1323,7 +1080,12 @@ def text_to_speech_stream():
         or request.headers.get("X-TTS-Provider")
         or _get_nested(app_config, ["tts", "provider"], "local")
     )
-    _tts_state_update(request_id, segment_index, provider=provider, endpoint="/api/text_to_speech_stream")
+    tts_service.tts_state_update(
+        request_id,
+        segment_index,
+        provider=str(provider),
+        endpoint="/api/text_to_speech_stream",
+    )
     logger.info(
         f"[{request_id}] tts_provider={provider} response_mimetype={_get_nested(app_config, ['tts', 'mimetype'], 'audio/wav')} remote={request.remote_addr} ua={(request.headers.get('User-Agent') or '')[:60]!r}"
     )
@@ -1336,7 +1098,14 @@ def text_to_speech_stream():
             chunk_count = 0
             first_audio_chunk_at = None
 
-            for chunk in _stream_tts_provider(text=text, request_id=request_id, provider=provider, config=app_config):
+            for chunk in tts_service.stream(
+                text=text,
+                request_id=request_id,
+                config=app_config,
+                provider=provider,
+                endpoint="/api/text_to_speech_stream",
+                segment_index=segment_index,
+            ):
                 if not chunk:
                     continue
                 chunk_count += 1
