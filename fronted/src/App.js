@@ -741,7 +741,7 @@ function App() {
   const ttsAudioQueueRef = useRef([]);
   const seenTtsSegmentsRef = useRef(new Set());
   const prefetchAbortRef = useRef(null);
-  const prefetchStoreRef = useRef(new Map()); // stopIndex -> { segments: [{ text, wavBytes }], createdAt }
+  const prefetchStoreRef = useRef(new Map()); // stopIndex -> { answerText, tail, createdAt }
   const continuousActiveRef = useRef(false);
   const continuousTokenRef = useRef(0);
 
@@ -775,6 +775,28 @@ function App() {
     } catch (_) {
       // ignore
     }
+  };
+
+  const enqueueTtsSegment = (segText, meta) => {
+    const seg = String(segText || '').trim();
+    if (!seg) return null;
+    if (seenTtsSegmentsRef.current.has(seg)) return null;
+    seenTtsSegmentsRef.current.add(seg);
+    const seq = segmentSeqRef.current++;
+    const stopIndex = meta && Number.isFinite(meta.stopIndex) ? meta.stopIndex : null;
+    ttsTextQueueRef.current.push(seg);
+    ttsMetaQueueRef.current.push({ seq, stopIndex });
+    if (debugRef.current) {
+      debugRef.current.segments.push({
+        seq,
+        chars: seg.length,
+        ttsRequestAt: null,
+        ttsFirstAudioAt: null,
+        ttsDoneAt: null,
+      });
+      debugRefresh();
+    }
+    return { seq, seg, stopIndex };
   };
 
   const cancelBackendRequest = (requestId, reason) => {
@@ -1153,11 +1175,10 @@ function App() {
     return '继续讲解';
   };
 
-  const prefetchTourStopFirstSegment = async ({ stopIndex, tail, token }) => {
+  const prefetchTourStopTextToQueue = async ({ stopIndex, tail, token }) => {
     const idx = Number.isFinite(stopIndex) ? stopIndex : 0;
     const stops = Array.isArray(tourStops) ? tourStops : [];
     if (!stops.length || idx < 0 || idx >= stops.length) return;
-    if (!ttsEnabledRef.current) return;
     if (!continuousTourRef.current) return;
     if (continuousActiveRef.current !== true) return;
 
@@ -1190,7 +1211,8 @@ function App() {
           agent_id: useAgentMode ? (selectedAgentId || null) : null,
           guide: {
             enabled: !!guideEnabled,
-            duration_s: Number(guideDuration || 60),
+            // Use per-stop duration/target chars if available (via buildTourPrompt hints + overrides below).
+            duration_s: Math.max(15, Number(guideDuration || 60) || 60),
             style: String(guideStyle || 'friendly'),
           },
         }),
@@ -1202,7 +1224,8 @@ function App() {
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let sseBuffer = '';
-      let firstSegText = '';
+      let answerText = '';
+      let gotAnySegment = false;
 
       while (true) {
         if (ctl.signal.aborted) break;
@@ -1221,39 +1244,37 @@ function App() {
           } catch (_) {
             continue;
           }
+          if (data && data.chunk && !data.done) {
+            answerText += String(data.chunk || '');
+          }
           if (data && data.segment && !data.done) {
             const seg = String(data.segment || '').trim();
             if (seg) {
-              firstSegText = seg;
-              break;
+              gotAnySegment = true;
+              enqueueTtsSegment(seg, { stopIndex: idx, source: 'prefetch' });
             }
           }
+          if (data && data.done) break;
         }
-        if (firstSegText) break;
+        if (gotAnySegment && ttsEnabledRef.current) {
+          // Let generator catch up while we keep streaming.
+        }
       }
-
-      if (!firstSegText || ctl.signal.aborted) return;
-
-      const ttsId = `tts_prefetch_${token}_${idx}_${Date.now()}`;
-      const ttsUrl = new URL('http://localhost:8000/api/text_to_speech_stream');
-      ttsUrl.searchParams.set('text', firstSegText);
-      ttsUrl.searchParams.set('request_id', ttsId);
-      ttsUrl.searchParams.set('client_id', clientIdRef.current);
-      ttsUrl.searchParams.set('segment_index', '0');
-
-      const ttsResp = await fetch(ttsUrl.toString(), {
-        method: 'GET',
-        headers: { 'X-Client-ID': clientIdRef.current, 'X-Request-ID': ttsId },
-        signal: ctl.signal,
-      });
-      if (!ttsResp.ok) throw new Error(`prefetch tts http=${ttsResp.status}`);
-      const wavBytes = new Uint8Array(await ttsResp.arrayBuffer());
 
       if (ctl.signal.aborted) return;
       if (!continuousActiveRef.current || continuousTokenRef.current !== token) return;
 
-      prefetchStoreRef.current.set(idx, { segments: [{ text: firstSegText, wavBytes }], createdAt: Date.now() });
-      console.log('[PREFETCH] ready', `stopIndex=${idx}`, `bytes=${wavBytes.byteLength}`);
+      const tailOut = String(answerText || '').trim().slice(-80);
+      prefetchStoreRef.current.set(idx, { answerText: String(answerText || ''), tail: tailOut, createdAt: Date.now() });
+      console.log('[PREFETCH] ready', `stopIndex=${idx}`, `segments=${gotAnySegment ? 'yes' : 'no'}`);
+
+      // Chain prefetch: once stop idx text is ready, start prefetching idx+1 (one-by-one) without waiting for TTS.
+      const nextIndex = idx + 1;
+      if (nextIndex < stops.length) {
+        setTimeout(() => {
+          prefetchTourStopTextToQueue({ stopIndex: nextIndex, tail: tailOut, token });
+        }, 0);
+      }
     } catch (e) {
       if (ctl.signal.aborted || String(e && e.name) === 'AbortError') return;
       console.warn('[PREFETCH] failed', e);
@@ -1766,43 +1787,12 @@ function App() {
     console.log('[TOUR] continuous start', `token=${token}`, `from=${start}`);
 
     try {
-      for (let i = start; i < stops.length; i += 1) {
-        if (!continuousActiveRef.current || continuousTokenRef.current !== token) break;
-        const action = i === start ? String(firstAction || 'start') : 'next';
-        const prompt = buildTourPrompt(action === 'start' ? 'start' : action === 'continue' ? 'continue' : 'next', i);
-        beginDebugRun(action === 'start' ? 'guide_start' : action === 'continue' ? 'guide_continue' : 'guide_next');
-        const ans = await askQuestion(prompt, { tourAction: action, tourStopIndex: i, continuous: true });
-
-        if (!continuousActiveRef.current || continuousTokenRef.current !== token) break;
-        const cur = tourStateRef.current;
-        if (cur && cur.mode === 'interrupted') break;
-
-        // Fault tolerance: if the model returned nothing / error, retry once with a shorter, safer prompt.
-        const ansText = String(ans || '').trim();
-        if (!ansText || ansText.startsWith('错误:') || ansText.includes('RAGFlow') || ansText.includes('不可用')) {
-          const durs = tourStopDurationsRef.current || [];
-          const tcs = tourStopTargetCharsRef.current || [];
-          const dur = Number.isFinite(Number(durs[i])) && Number(durs[i]) > 0 ? Number(durs[i]) : Math.max(15, Number(guideDuration || 60) || 60);
-          const tc = Number.isFinite(Number(tcs[i])) && Number(tcs[i]) > 0 ? Number(tcs[i]) : Math.max(30, Math.round(dur * 4.5));
-          const dur2 = Math.max(15, Math.round(dur * 0.6));
-          const tc2 = Math.max(30, Math.round(tc * 0.6));
-          const stopName = getTourStopName(i);
-          const retryPrompt =
-            `请用更短的版本重新讲解第${i + 1}站「${stopName || stops[i] || ''}」：` +
-            `\n- 目标：约${dur2}秒（约${tc2}字）` +
-            `\n- 先1句概括主题，再3-5个要点` +
-            `\n- 如果知识库没有信息，请明确说“资料不足”，并给出可问现场工作人员的建议。`;
-          console.warn('[TOUR] retry stop', i, 'due to empty/error answer');
-          beginDebugRun('guide_retry');
-          await askQuestion(retryPrompt, {
-            tourAction: action,
-            tourStopIndex: i,
-            continuous: true,
-            guideDurationSOverride: dur2,
-            guideTargetCharsOverride: tc2,
-          });
-        }
-      }
+      const action = String(firstAction || 'start');
+      const prompt = buildTourPrompt(action === 'continue' ? 'continue' : 'start', start);
+      beginDebugRun(action === 'continue' ? 'guide_continue' : 'guide_start');
+      // Run the first stop as the "root" ask. Subsequent stops are prefetched (kind=ask_prefetch)
+      // and their segments are appended into the same TTS queues, so playback can be seamless.
+      await askQuestion(prompt, { tourAction: action, tourStopIndex: start, continuous: true, continuousRoot: true });
     } finally {
       if (continuousTokenRef.current === token) {
         continuousActiveRef.current = false;
@@ -1974,8 +1964,10 @@ function App() {
           const audioUrl = generateAudioSegmentUrl(nextSegment);
 
           if (audioUrl) {
+            const meta = nextSeq && typeof nextSeq === 'object' ? nextSeq : null;
             ttsAudioQueueRef.current.push({
-              seq: typeof nextSeq === 'number' ? nextSeq : null,
+              seq: meta && typeof meta.seq === 'number' ? meta.seq : typeof nextSeq === 'number' ? nextSeq : null,
+              stopIndex: meta && Number.isFinite(meta.stopIndex) ? meta.stopIndex : null,
               text: nextSegment,
               url: audioUrl
             });
@@ -2017,6 +2009,28 @@ function App() {
             debugRef.current && segSeq != null
               ? (debugRef.current.segments || []).find((s) => s.seq === segSeq)
               : null;
+
+          // When moving to a new stop (continuous tour), update UI state best-effort.
+          if (audioItem && Number.isFinite(audioItem.stopIndex) && guideEnabled) {
+            const nextStopIndex = Number(audioItem.stopIndex);
+            const curStopIndex = Number.isFinite(tourStateRef.current && tourStateRef.current.stopIndex)
+              ? Number(tourStateRef.current.stopIndex)
+              : -1;
+            if (nextStopIndex !== curStopIndex) {
+              const stopName = getTourStopName(nextStopIndex);
+              setTourState((prev) => ({
+                ...(prev || {}),
+                mode: 'running',
+                stopIndex: nextStopIndex,
+                stopName: stopName || (prev && prev.stopName) || '',
+                lastAction: 'next',
+              }));
+              const cached = prefetchStoreRef.current.get(nextStopIndex);
+              if (cached && cached.answerText) {
+                setAnswer(String(cached.answerText || ''));
+              }
+            }
+          }
 
           if (debugRef.current) {
             const tReq = nowMs();
@@ -2095,37 +2109,7 @@ function App() {
     };
 
     // If we already prefetched the next stop (RAG+TTS), inject the first audio chunk to reduce the gap.
-    if (options.tourAction && ttsEnabledRef.current) {
-      const stopIndex = Number.isFinite(options.tourStopIndex) ? options.tourStopIndex : tourStateRef.current.stopIndex;
-      const cached = prefetchStoreRef.current.get(stopIndex);
-      if (cached && cached.segments && cached.segments.length) {
-        try {
-          prefetchStoreRef.current.delete(stopIndex);
-        } catch (_) {
-          // ignore
-        }
-        for (const seg0 of cached.segments) {
-          const segText = String(seg0 && seg0.text ? seg0.text : '').trim();
-          const wavBytes = seg0 && seg0.wavBytes ? seg0.wavBytes : null;
-          if (!segText || !wavBytes) continue;
-          if (seenTtsSegmentsRef.current.has(segText)) continue;
-          seenTtsSegmentsRef.current.add(segText);
-          const seq = segmentSeqRef.current++;
-          ttsAudioQueueRef.current.push({ seq, text: segText, wavBytes, url: null });
-          if (debugRef.current) {
-            debugRef.current.segments.push({
-              seq,
-              chars: segText.length,
-              ttsRequestAt: nowMs(),
-              ttsFirstAudioAt: nowMs(),
-              ttsDoneAt: null,
-            });
-            debugRefresh();
-          }
-        }
-        if (!ttsPlayerPromiseRef.current && ttsAudioQueueRef.current.length > 0) startTTSPlayer();
-      }
-    }
+    // (Deprecated) We no longer inject prefetched WAV bytes; we prefetch text segments and let the generator stream TTS.
 
     let fullAnswer = '';
     try {
@@ -2217,50 +2201,24 @@ function App() {
                 if (data.segment && !data.done) {
                   const seg = String(data.segment).trim();
                   if (seg && ttsEnabledRef.current) {
-                    if (seenTtsSegmentsRef.current.has(seg)) continue;
-                    seenTtsSegmentsRef.current.add(seg);
+                    enqueueTtsSegment(seg, { stopIndex: options.tourAction ? options.tourStopIndex : null, source: 'ask' });
                     debugMark('ragflowFirstSegmentAt');
                     receivedSegmentsRef.current = true;
-                    const seq = segmentSeqRef.current++;
-                    ttsTextQueueRef.current.push(seg);
-                    ttsMetaQueueRef.current.push(seq);
-                  if (debugRef.current) {
-                    debugRef.current.segments.push({
-                      seq,
-                      chars: seg.length,
-                      ttsRequestAt: null,
-                      ttsFirstAudioAt: null,
-                      ttsDoneAt: null,
-                    });
-                    debugRefresh();
+                    console.log(`📝 收到文本段落: "${seg.substring(0, 30)}..."`);
+                    startTTSGenerator();
                   }
-                  console.log(`📝 收到文本段落: "${seg.substring(0, 30)}..."`);
-                  startTTSGenerator();
                 }
-              }
 
               if (data.done) {
                 debugMark('ragflowDoneAt');
                 if (ttsEnabledRef.current && !receivedSegmentsRef.current && seenTtsSegmentsRef.current.size === 0 && fullAnswer.trim()) {
-                  const seq = segmentSeqRef.current++;
-                  ttsTextQueueRef.current.push(fullAnswer.trim());
-                  ttsMetaQueueRef.current.push(seq);
-                  if (debugRef.current) {
-                    debugRef.current.segments.push({
-                      seq,
-                      chars: fullAnswer.trim().length,
-                      ttsRequestAt: null,
-                      ttsFirstAudioAt: null,
-                      ttsDoneAt: null,
-                    });
-                    debugRefresh();
-                  }
+                  enqueueTtsSegment(fullAnswer.trim(), { stopIndex: options.tourAction ? options.tourStopIndex : null, source: 'ask_done' });
                   console.log(`📝 收到完整文本: "${fullAnswer.substring(0, 30)}..."`);
                 }
                 ragflowDoneRef.current = true;
 
-                // Prefetch next stop while current TTS is still playing (continuous tour mode).
-                if (options.tourAction && continuousTourRef.current && continuousActiveRef.current) {
+                // Prefetch next stop text (continuous tour pipeline) without waiting for current TTS.
+                if (options.tourAction && options.continuousRoot && continuousTourRef.current && continuousActiveRef.current) {
                   const curStopIndex = Number.isFinite(options.tourStopIndex) ? options.tourStopIndex : tourStateRef.current.stopIndex;
                   const n = Array.isArray(tourStops) ? tourStops.length : 0;
                   const nextIndex = Number.isFinite(curStopIndex) ? curStopIndex + 1 : -1;
@@ -2268,7 +2226,7 @@ function App() {
                     const tail = String(fullAnswer || '').trim().slice(-80);
                     const token = continuousTokenRef.current;
                     setTimeout(() => {
-                      prefetchTourStopFirstSegment({ stopIndex: nextIndex, tail, token });
+                      prefetchTourStopTextToQueue({ stopIndex: nextIndex, tail, token });
                     }, 0);
                   }
                 }
