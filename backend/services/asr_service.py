@@ -5,6 +5,7 @@ import logging
 import subprocess
 import tempfile
 import threading
+import time
 import wave
 from pathlib import Path
 
@@ -40,6 +41,7 @@ def _run_ffmpeg_convert_to_wav16k_mono(
     normalize: bool = False,
     loudnorm_filter: str | None = None,
     silenceremove_filter: str | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> None:
     cmd = [
         "ffmpeg",
@@ -77,10 +79,34 @@ def _run_ffmpeg_convert_to_wav16k_mono(
         "wav",
         output_path,
     ]
-    p = subprocess.run(cmd, capture_output=True, text=True)
-    if p.returncode != 0:
-        err = (p.stderr or "").strip()
-        raise RuntimeError(f"ffmpeg_convert_failed rc={p.returncode} err={err[:500]}")
+    cancel_event = cancel_event or threading.Event()
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        while True:
+            rc = p.poll()
+            if rc is not None:
+                if rc != 0:
+                    err = ""
+                    with contextlib.suppress(Exception):
+                        if p.stderr:
+                            err = p.stderr.read() or ""
+                    err = (err or "").strip()
+                    raise RuntimeError(f"ffmpeg_convert_failed rc={rc} err={err[:500]}")
+                return
+            if cancel_event.is_set():
+                with contextlib.suppress(Exception):
+                    p.terminate()
+                with contextlib.suppress(Exception):
+                    p.kill()
+                raise RuntimeError("asr_cancelled")
+            time.sleep(0.05)
+    finally:
+        with contextlib.suppress(Exception):
+            if p.stdout:
+                p.stdout.close()
+        with contextlib.suppress(Exception):
+            if p.stderr:
+                p.stderr.close()
 
 
 def _wav_probe(path: str) -> dict:
@@ -254,7 +280,16 @@ class ASRService:
                 self._logger.error(f"faster-whisper模型加载失败: {e}", exc_info=True)
                 return False
 
-    def transcribe(self, raw_bytes: bytes, app_config: dict, *, src_filename: str | None = None, src_mime: str | None = None) -> str:
+    def transcribe(
+        self,
+        raw_bytes: bytes,
+        app_config: dict,
+        *,
+        src_filename: str | None = None,
+        src_mime: str | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
+        cancel_event = cancel_event or threading.Event()
         asr_cfg = get_nested(app_config, ["asr"], {}) or {}
         provider = str(asr_cfg.get("provider", "funasr")).strip().lower() or "funasr"
 
@@ -302,6 +337,8 @@ class ASRService:
                 suffix = ".bin"
 
         with tempfile.TemporaryDirectory(prefix="asr_") as td:
+            if cancel_event.is_set():
+                raise RuntimeError("asr_cancelled")
             src_path = str(Path(td) / f"input{suffix}")
             wav_path = str(Path(td) / "audio_16k_mono.wav")
             Path(src_path).write_bytes(raw_bytes)
@@ -318,7 +355,10 @@ class ASRService:
                 normalize=normalize,
                 loudnorm_filter=loudnorm_filter,
                 silenceremove_filter=silenceremove_filter,
+                cancel_event=cancel_event,
             )
+            if cancel_event.is_set():
+                raise RuntimeError("asr_cancelled")
 
             probe = _wav_probe(wav_path)
             self._logger.info(
@@ -330,6 +370,8 @@ class ASRService:
 
             if provider == "funasr":
                 if self._ensure_funasr_model(app_config) and self._funasr_model is not None:
+                    if cancel_event.is_set():
+                        raise RuntimeError("asr_cancelled")
                     x = _read_wav_pcm16_mono_16k(wav_path)
                     with SuppressOutput():
                         result = self._funasr_model.generate(input=x, is_final=True)
@@ -344,6 +386,8 @@ class ASRService:
 
             if provider in ("faster_whisper", "whisper") or (provider == "funasr" and not self.funasr_loaded):
                 if self._ensure_faster_whisper_model(app_config) and self._fw_model is not None:
+                    if cancel_event.is_set():
+                        raise RuntimeError("asr_cancelled")
                     cfg = get_nested(app_config, ["asr", "faster_whisper"], {}) or {}
                     language = str(cfg.get("language", "zh") or "zh").strip()
                     beam_size = int(cfg.get("beam_size", 5) or 5)
@@ -358,6 +402,8 @@ class ASRService:
                         vad_filter=vad_filter,
                         initial_prompt=initial_prompt,
                     )
+                    if cancel_event.is_set():
+                        raise RuntimeError("asr_cancelled")
                     parts = []
                     for seg in segments:
                         t = getattr(seg, "text", None)
@@ -377,6 +423,8 @@ class ASRService:
                 if not dashscope_api_key:
                     self._logger.error("asr_missing_api_key (set asr.dashscope.api_key or tts.bailian.api_key)")
                     return ""
+                if cancel_event.is_set():
+                    raise RuntimeError("asr_cancelled")
                 text = _dashscope_asr_recognize(
                     wav_path,
                     api_key=dashscope_api_key,
@@ -394,6 +442,8 @@ class ASRService:
             if not dashscope_api_key:
                 self._logger.error("asr_missing_api_key (set asr.dashscope.api_key or tts.bailian.api_key)")
                 return ""
+            if cancel_event.is_set():
+                raise RuntimeError("asr_cancelled")
             text = _dashscope_asr_recognize(
                 wav_path,
                 api_key=dashscope_api_key,

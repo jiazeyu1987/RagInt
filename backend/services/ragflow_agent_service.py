@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import contextlib
 import threading
 import time
 from pathlib import Path
@@ -114,7 +115,13 @@ class RagflowAgentService:
                     return v
         return ""
 
-    def stream_completion_text(self, agent_id: str, question: str, request_id: str) -> Iterable[str]:
+    def stream_completion_text(
+        self,
+        agent_id: str,
+        question: str,
+        request_id: str,
+        cancel_event: threading.Event | None = None,
+    ) -> Iterable[str]:
         """
         Streaming text generator for Ragflow Agent completions, aligned with official docs:
         - Create session: POST `/api/v1/agents/{agent_id}/sessions`
@@ -132,6 +139,7 @@ class RagflowAgentService:
         payload = {"question": q, "stream": True, "session_id": session_id}
         t0 = time.perf_counter()
         last_answer = ""
+        cancel_event = cancel_event or threading.Event()
         try:
             self._logger.info(
                 f"[{request_id}] ragflow_agent_completion_start agent_id={agent_id} session_id={session_id} url={url} q_chars={len(q)}"
@@ -148,6 +156,13 @@ class RagflowAgentService:
                 bytes_count = 0
                 try:
                     for raw in r.iter_lines():
+                        if cancel_event.is_set():
+                            self._logger.info(
+                                f"[{request_id}] ragflow_agent_cancelled_during_stream agent_id={agent_id} session_id={session_id}"
+                            )
+                            with contextlib.suppress(Exception):
+                                r.close()
+                            return
                         if raw is None:
                             continue
                         bytes_count += len(raw)

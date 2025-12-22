@@ -90,16 +90,28 @@ class TTSSvc:
                 f"[{request_id}] tts_request_seen endpoint={endpoint} provider={provider} seg={seg_int} count={state['count']}"
             )
 
-    def stream(self, *, text: str, request_id: str, config: dict, provider: str, endpoint: str, segment_index=None):
+    def stream(
+        self,
+        *,
+        text: str,
+        request_id: str,
+        config: dict,
+        provider: str,
+        endpoint: str,
+        segment_index=None,
+        cancel_event: threading.Event | None = None,
+    ):
         provider_norm = (provider or "").strip().lower() or "local"
         self.tts_state_update(request_id, segment_index, provider_norm, endpoint)
-        yield from self._stream_tts_provider(text=text, request_id=request_id, provider=provider_norm, config=config)
+        yield from self._stream_tts_provider(
+            text=text, request_id=request_id, provider=provider_norm, config=config, cancel_event=cancel_event
+        )
 
-    def _stream_tts_provider(self, text: str, request_id: str, provider: str, config: dict):
+    def _stream_tts_provider(self, text: str, request_id: str, provider: str, config: dict, cancel_event: threading.Event | None = None):
         provider_norm = (provider or "").strip().lower() or "local"
         if provider_norm == "bailian":
             self._logger.info(f"[{request_id}] tts_provider_select provider=bailian")
-            yield from self._stream_bailian_tts(text=text, request_id=request_id, config=config)
+            yield from self._stream_bailian_tts(text=text, request_id=request_id, config=config, cancel_event=cancel_event)
             return
 
         local_enabled = get_nested(config, ["tts", "local", "enabled"], True)
@@ -112,9 +124,9 @@ class TTSSvc:
             raise ValueError("local TTS is disabled and bailian is not configured")
 
         self._logger.info(f"[{request_id}] tts_provider_select provider=local")
-        yield from self._stream_local_gpt_sovits(text=text, request_id=request_id, config=config)
+        yield from self._stream_local_gpt_sovits(text=text, request_id=request_id, config=config, cancel_event=cancel_event)
 
-    def _stream_local_gpt_sovits(self, text: str, request_id: str, config: dict):
+    def _stream_local_gpt_sovits(self, text: str, request_id: str, config: dict, cancel_event: threading.Event | None = None):
         tts_cfg = get_nested(config, ["tts", "local"], {}) or {}
         if tts_cfg.get("enabled") is False:
             raise ValueError("local TTS is disabled by config: tts.local.enabled=false")
@@ -135,6 +147,9 @@ class TTSSvc:
         self._logger.info(
             f"[{request_id}] local_tts_request url={url} timeout_s={timeout_s} media_type={payload.get('media_type')} chars={len(text)}"
         )
+        cancel_event = cancel_event or threading.Event()
+        if cancel_event.is_set():
+            return
         r = requests.post(url, json=payload, headers=headers, stream=True, timeout=timeout_s)
         try:
             self._logger.info(f"[{request_id}] local_tts status={r.status_code} ct={r.headers.get('Content-Type')}")
@@ -142,21 +157,24 @@ class TTSSvc:
                 self._logger.error(f"[{request_id}] local_tts_failed status={r.status_code} body={r.text[:200]}")
                 return
             for chunk in r.iter_content(chunk_size=4096):
+                if cancel_event.is_set():
+                    self._logger.info(f"[{request_id}] local_tts_cancelled")
+                    break
                 if chunk:
                     yield chunk
         finally:
             with contextlib.suppress(Exception):
                 r.close()
 
-    def _stream_bailian_tts(self, text: str, request_id: str, config: dict):
+    def _stream_bailian_tts(self, text: str, request_id: str, config: dict, cancel_event: threading.Event | None = None):
         bailian_cfg = get_nested(config, ["tts", "bailian"], {}) or {}
         mode = str(bailian_cfg.get("mode", "dashscope")).strip().lower() or "dashscope"
         if mode == "http":
-            yield from self._stream_bailian_tts_http(text=text, request_id=request_id, config=config)
+            yield from self._stream_bailian_tts_http(text=text, request_id=request_id, config=config, cancel_event=cancel_event)
             return
-        yield from self._stream_bailian_tts_dashscope(text=text, request_id=request_id, config=config)
+        yield from self._stream_bailian_tts_dashscope(text=text, request_id=request_id, config=config, cancel_event=cancel_event)
 
-    def _stream_bailian_tts_http(self, text: str, request_id: str, config: dict):
+    def _stream_bailian_tts_http(self, text: str, request_id: str, config: dict, cancel_event: threading.Event | None = None):
         bailian_cfg = get_nested(config, ["tts", "bailian"], {}) or {}
         url = str(bailian_cfg.get("url", "")).strip()
         if not url:
@@ -180,6 +198,9 @@ class TTSSvc:
             payload = {}
         payload[text_field] = text
 
+        cancel_event = cancel_event or threading.Event()
+        if cancel_event.is_set():
+            return
         self._logger.info(
             f"[{request_id}] bailian_http_tts_request method={method} url={url} timeout_s={timeout_s} text_field={text_field} chars={len(text)}"
         )
@@ -210,13 +231,18 @@ class TTSSvc:
                 return
 
             for chunk in r.iter_content(chunk_size=4096):
+                if cancel_event.is_set():
+                    self._logger.info(f"[{request_id}] bailian_http_tts_cancelled")
+                    break
                 if chunk:
                     yield chunk
         finally:
             with contextlib.suppress(Exception):
                 r.close()
 
-    def _stream_bailian_tts_dashscope(self, text: str, request_id: str, config: dict):
+    def _stream_bailian_tts_dashscope(
+        self, text: str, request_id: str, config: dict, cancel_event: threading.Event | None = None
+    ):
         bailian_cfg = get_nested(config, ["tts", "bailian"], {}) or {}
         api_key = str(bailian_cfg.get("api_key", "")).strip()
         if not api_key:
@@ -333,6 +359,7 @@ class TTSSvc:
 
         speech_synthesizer = None
         try:
+            cancel_event = cancel_event or threading.Event()
             if use_connection_pool:
                 pool = _dashscope_get_pool(pool_max_size)
                 speech_synthesizer = pool.borrow_synthesizer(
@@ -363,6 +390,10 @@ class TTSSvc:
             self._logger.info(
                 f"[{request_id}] dashscope_tts_call start chars={len(text)} volume={volume} speech_rate={speech_rate} pitch_rate={pitch_rate} additional_params={list(additional_params.keys())}"
             )
+            if cancel_event.is_set():
+                canceled = True
+                stop_event.set()
+                return
             speech_synthesizer.call(text)
 
             first_chunk = True
@@ -417,6 +448,14 @@ class TTSSvc:
                 }
 
             while True:
+                if cancel_event.is_set():
+                    canceled = True
+                    stop_event.set()
+                    self._logger.info(f"[{request_id}] dashscope_tts_cancelled")
+                    if speech_synthesizer is not None:
+                        with contextlib.suppress(Exception):
+                            speech_synthesizer.streaming_cancel()
+                    break
                 try:
                     item = q.get(timeout=0.5)
                 except queue.Empty:

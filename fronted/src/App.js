@@ -520,6 +520,18 @@ function App() {
   });
   const [historySort, setHistorySort] = useState('time'); // 'time' | 'count'
   const [historyItems, setHistoryItems] = useState([]);
+  const [clientId] = useState(() => {
+    try {
+      const existing = localStorage.getItem('clientId');
+      if (existing) return existing;
+      const next =
+        (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `cid_${Date.now()}_${Math.random().toString(16).slice(2)}`);
+      localStorage.setItem('clientId', next);
+      return next;
+    } catch (_) {
+      return `cid_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    }
+  });
   const [tourStops, setTourStops] = useState([]);
   const [tourState, setTourState] = useState({
     mode: 'idle', // 'idle' | 'ready' | 'running' | 'interrupted'
@@ -583,6 +595,8 @@ function App() {
   const segmentSeqRef = useRef(0);
   const askAbortRef = useRef(null);
   const tourStateRef = useRef(tourState);
+  const clientIdRef = useRef(clientId);
+  const activeAskRequestIdRef = useRef(null);
   const groupModeRef = useRef(groupMode);
   const queueRef = useRef([]);
   const lastSpeakerRef = useRef('');
@@ -612,6 +626,30 @@ function App() {
   const POINTER_SUPPORTED = typeof window !== 'undefined' && 'PointerEvent' in window;
   const MIN_RECORD_MS = 900;
 
+  const cancelBackendRequest = (requestId, reason) => {
+    const rid = String(requestId || '').trim();
+    if (!rid) return;
+    const payload = JSON.stringify({ request_id: rid, client_id: clientIdRef.current, reason: String(reason || 'client_cancel') });
+    try {
+      if (navigator && typeof navigator.sendBeacon === 'function') {
+        const ok = navigator.sendBeacon('http://localhost:8000/api/cancel', new Blob([payload], { type: 'application/json' }));
+        if (ok) return;
+      }
+    } catch (_) {
+      // ignore
+    }
+    try {
+      fetch('http://localhost:8000/api/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Client-ID': clientIdRef.current },
+        body: payload
+      }).catch(() => {});
+    } catch (_) {
+      // ignore
+    }
+  };
+
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     const onKeyDown = (e) => {
       if (!e || e.key !== 'Escape') return;
@@ -632,6 +670,7 @@ function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [isLoading]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const resampleMono = (input, inRate, outRate) => {
     if (!input || !input.length || !inRate || !outRate || inRate === outRate) return input;
@@ -1286,9 +1325,12 @@ function App() {
             ? 'mp4'
             : 'webm';
       formData.append('audio', blobToSend, `recording.${ext}`);
+      formData.append('client_id', clientIdRef.current);
+      formData.append('request_id', `asr_${Date.now()}_${Math.random().toString(16).slice(2)}`);
 
       const response = await fetch('http://localhost:8000/api/speech_to_text', {
         method: 'POST',
+        headers: { 'X-Client-ID': clientIdRef.current },
         body: formData
       });
 
@@ -1356,6 +1398,13 @@ function App() {
 
   const interruptCurrentRun = (reason) => {
     try {
+      if (activeAskRequestIdRef.current) {
+        cancelBackendRequest(activeAskRequestIdRef.current, reason || 'interrupt');
+      }
+    } catch (_) {
+      // ignore
+    }
+    try {
       if (askAbortRef.current) askAbortRef.current.abort();
     } catch (_) {
       // ignore
@@ -1421,6 +1470,7 @@ function App() {
     const options = opts && typeof opts === 'object' ? opts : {};
     const runId = ++runIdRef.current;
     const requestId = `ask_${runId}_${Date.now()}`;
+    activeAskRequestIdRef.current = requestId;
     const abortController = new AbortController();
     askAbortRef.current = abortController;
     let segmentIndex = 0;
@@ -1498,6 +1548,7 @@ function App() {
         const url = new URL(USE_SAVED_TTS ? 'http://localhost:8000/api/text_to_speech_saved' : 'http://localhost:8000/api/text_to_speech_stream');
         url.searchParams.set('text', seg);
         url.searchParams.set('request_id', requestId);
+        url.searchParams.set('client_id', clientIdRef.current);
         url.searchParams.set('segment_index', String(segmentIndex++));
         return url.toString();
       } catch (err) {
@@ -1660,10 +1711,12 @@ function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-Client-ID': clientIdRef.current,
         },
         body: JSON.stringify({
           question: text,
           request_id: requestId,
+          client_id: clientIdRef.current,
           conversation_name: useAgentMode ? null : selectedChat,
           agent_id: useAgentMode ? (selectedAgentId || null) : null,
           guide: {
@@ -1792,6 +1845,9 @@ function App() {
     } finally {
       if (askAbortRef.current === abortController) {
         askAbortRef.current = null;
+      }
+      if (activeAskRequestIdRef.current === requestId) {
+        activeAskRequestIdRef.current = null;
       }
       try {
         if (runIdRef.current === runId) {

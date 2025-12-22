@@ -77,6 +77,7 @@ from services.history_store import HistoryStore
 from services.intent_service import IntentService
 from services.ragflow_agent_service import RagflowAgentService
 from services.ragflow_service import RagflowService
+from services.request_registry import RequestRegistry
 from services.tour_planner import TourPlanner
 from services.tts_service import TTSSvc
 
@@ -87,6 +88,7 @@ asr_service = ASRService(logger=logger)
 tts_service = TTSSvc(logger=logger)
 intent_service = IntentService()
 tour_planner = TourPlanner()
+request_registry = RequestRegistry()
 asr_model_loaded = asr_service.funasr_loaded
 
 class SuppressOutput:
@@ -805,6 +807,25 @@ def api_tour_plan():
         }
     )
 
+@app.route('/api/cancel', methods=['POST'])
+def api_cancel():
+    data = request.get_json() or {}
+    request_id = str((data.get("request_id") or "")).strip()
+    client_id = str((data.get("client_id") or request.headers.get("X-Client-ID") or "")).strip() or "-"
+    reason = str((data.get("reason") or "client_cancel")).strip()
+
+    cancelled = False
+    cancelled_id = None
+    if request_id:
+        cancelled = request_registry.cancel(request_id, reason=reason)
+        cancelled_id = request_id if cancelled else None
+    else:
+        cancelled_id = request_registry.cancel_active(client_id=client_id, kind="ask", reason=reason)
+        cancelled = bool(cancelled_id)
+
+    logger.info(f"[{request_id or '-'}] cancel_request client_id={client_id} cancelled={cancelled} target={cancelled_id} reason={reason}")
+    return jsonify({"ok": True, "cancelled": cancelled, "request_id": cancelled_id, "client_id": client_id})
+
 @app.route('/health')
 def health():
     return jsonify({
@@ -820,12 +841,32 @@ def speech_to_text():
     audio_file = request.files['audio']
     raw_bytes = audio_file.read()
 
+    request_id = str((request.form.get("request_id") or request.headers.get("X-Request-ID") or f"asr_{uuid.uuid4().hex[:12]}")).strip()
+    client_id = str((request.form.get("client_id") or request.headers.get("X-Client-ID") or request.remote_addr or "-")).strip() or "-"
+
+    if not request_registry.rate_allow(client_id, "asr", limit=6, window_s=3.0):
+        logger.warning(f"[{request_id}] asr_rate_limited client_id={client_id}")
+        return jsonify({"text": ""})
+
+    cancel_event = request_registry.register(
+        client_id=client_id,
+        request_id=request_id,
+        kind="asr",
+        cancel_previous=True,
+        cancel_reason="asr_replaced_by_new",
+    )
+    if cancel_event.is_set():
+        logger.info(f"[{request_id}] asr_cancelled_before_start client_id={client_id}")
+        request_registry.clear_active(client_id=client_id, kind="asr", request_id=request_id)
+        return jsonify({"text": ""})
+
     app_config = load_app_config()
     t0 = time.perf_counter()
     try:
         text = asr_service.transcribe(
             raw_bytes,
             app_config,
+            cancel_event=cancel_event,
             src_filename=getattr(audio_file, "filename", None),
             src_mime=getattr(audio_file, "mimetype", None),
         )
@@ -834,6 +875,8 @@ def speech_to_text():
     except Exception as e:
         logger.error(f"asr_failed err={e}", exc_info=True)
         return jsonify({"text": ""})
+    finally:
+        request_registry.clear_active(client_id=client_id, kind="asr", request_id=request_id)
 
 @app.route('/api/ask', methods=['POST'])
 def ask_question():
@@ -852,11 +895,21 @@ def ask_question():
     guide = data.get("guide") or {}
     if not isinstance(guide, dict):
         guide = {}
+    client_id = str((data.get("client_id") or request.headers.get("X-Client-ID") or request.remote_addr or "-")).strip() or "-"
     request_id = (
         data.get("request_id")
         or request.headers.get("X-Request-ID")
         or f"ask_{uuid.uuid4().hex[:12]}"
     )
+    # Rate limit to avoid jitter (best-effort, per client).
+    if not request_registry.rate_allow(client_id, "ask", limit=3, window_s=2.5):
+        logger.warning(f"[{request_id}] ask_rate_limited client_id={client_id}")
+        def _rl():
+            payload = {"chunk": "请求过于频繁，请稍等 1-2 秒再提问。", "done": True, "request_id": request_id}
+            return Response(f"data: {json.dumps(payload, ensure_ascii=False)}\n\n", mimetype="text/event-stream")
+        return _rl()
+
+    cancel_event = request_registry.register(client_id=client_id, request_id=request_id, kind="ask", cancel_previous=True)
     intent = intent_service.classify(question)
     logger.info(
         f"[{request_id}] intent_detected intent={intent.intent} conf={intent.confidence:.2f} matched={list(intent.matched)} reason={intent.reason}"
@@ -905,6 +958,9 @@ def ask_question():
             return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
         try:
+            if cancel_event.is_set():
+                logger.info(f"[{request_id}] ask_cancelled_before_start client_id={client_id}")
+                return
             yield sse_event(
                 {
                     "meta": {
@@ -912,6 +968,7 @@ def ask_question():
                         "intent_confidence": round(float(intent.confidence), 3),
                         "intent_matched": list(intent.matched),
                         "intent_reason": intent.reason,
+                        "client_id": client_id,
                     },
                     "done": False,
                 }
@@ -987,6 +1044,9 @@ def ask_question():
                 fallback_answer = f"我收到了你的问题：{question}。由于RAGFlow服务暂时不可用，我现在只能给你一个固定的回答。请确保RAGFlow服务正在运行。"
 
                 for char in fallback_answer:
+                    if cancel_event.is_set():
+                        logger.info(f"[{request_id}] ask_cancelled_during_fallback client_id={client_id}")
+                        return
                     yield sse_event({"chunk": char, "done": False})
 
                     if text_cleaner and tts_buffer:
@@ -1002,6 +1062,9 @@ def ask_question():
 
                 if text_cleaner and tts_buffer:
                     for seg in tts_buffer.finalize():
+                        if cancel_event.is_set():
+                            logger.info(f"[{request_id}] ask_cancelled_during_finalize client_id={client_id}")
+                            return
                         seg = seg.strip()
                         if not seg or seg in emitted_segments:
                             continue
@@ -1026,7 +1089,9 @@ def ask_question():
             if agent_id:
                 logger.info(f"[{request_id}] 开始RAGFlow Agent流式响应 agent_id={agent_id}")
                 try:
-                    response = ragflow_agent_service.stream_completion_text(agent_id, question_for_rag, request_id=request_id)
+                    response = ragflow_agent_service.stream_completion_text(
+                        agent_id, question_for_rag, request_id=request_id, cancel_event=cancel_event
+                    )
                 except Exception as e:
                     logger.error(f"[{request_id}] ragflow_agent_stream_init_failed err={e}", exc_info=True)
                     msg = (
@@ -1050,6 +1115,11 @@ def ask_question():
             carry_segment_text = ""
 
             for chunk in response:
+                if cancel_event.is_set():
+                    logger.info(f"[{request_id}] ask_cancelled_during_rag_stream client_id={client_id}")
+                    with contextlib.suppress(Exception):
+                        getattr(response, "close")()
+                    break
                 chunk_count += 1
                 if first_ragflow_chunk_at is None:
                     first_ragflow_chunk_at = time.perf_counter()
@@ -1158,6 +1228,9 @@ def ask_question():
                     tts_buffer.current_sentence = (carry_segment_text + " " + (tts_buffer.current_sentence or "")).strip()
                     carry_segment_text = ""
                 for seg in tts_buffer.finalize():
+                    if cancel_event.is_set():
+                        logger.info(f"[{request_id}] ask_cancelled_after_rag_finalize client_id={client_id}")
+                        return
                     seg = seg.strip()
                     if not seg or seg in emitted_segments:
                         continue
@@ -1170,7 +1243,8 @@ def ask_question():
                         _timings_set(request_id, t_first_tts_segment=first_segment_at)
                     yield sse_event({"segment": seg, "done": False})
 
-            yield sse_event({"chunk": "", "done": True})
+            if not cancel_event.is_set():
+                yield sse_event({"chunk": "", "done": True})
             try:
                 history_store.add_entry(
                     request_id=request_id,
@@ -1185,6 +1259,7 @@ def ask_question():
 
         except GeneratorExit:
             logger.info(f"[{request_id}] ask_stream_generator_exit (client_disconnect?)")
+            request_registry.cancel(request_id, reason="client_disconnect")
             return
         except Exception as e:
             logger.error(f"[{request_id}] 流式响应异常: {e}", exc_info=True)
@@ -1196,6 +1271,8 @@ def ask_question():
                 yield sse_event({"chunk": msg, "done": True})
             else:
                 yield sse_event({"chunk": f"错误: {str(e)}", "done": True})
+        finally:
+            request_registry.clear_active(client_id=client_id, kind="ask", request_id=request_id)
 
     logger.info("返回流式响应")
     return Response(
@@ -1223,6 +1300,11 @@ def text_to_speech():
         or request.headers.get("X-Request-ID")
         or f"tts_{uuid.uuid4().hex[:12]}"
     )
+    client_id = str((data.get("client_id") or request.headers.get("X-Client-ID") or request.remote_addr or "-")).strip() or "-"
+    cancel_event = request_registry.get_cancel_event(request_id)
+    if cancel_event.is_set():
+        logger.info(f"[{request_id}] tts_cancelled_before_start endpoint=/api/text_to_speech client_id={client_id}")
+        return Response(b"", status=204, mimetype=_get_nested(load_app_config(), ["tts", "mimetype"], "audio/wav"))
     logger.info(f"[{request_id}] tts_request_received endpoint=/api/text_to_speech chars={len(text)} preview={text[:60]!r}")
 
     app_config = load_app_config()
@@ -1249,6 +1331,7 @@ def text_to_speech():
                 provider=provider,
                 endpoint="/api/text_to_speech",
                 segment_index=data.get("segment_index", None),
+                cancel_event=cancel_event,
             )
         except GeneratorExit:
             logger.info(f"[{request_id}] tts_generator_exit endpoint=/api/text_to_speech (client_disconnect?)")
@@ -1286,10 +1369,15 @@ def text_to_speech_stream():
         or request.headers.get("X-Request-ID")
         or f"tts_{uuid.uuid4().hex[:12]}"
     )
+    client_id = str((data.get("client_id") or request.headers.get("X-Client-ID") or request.remote_addr or "-")).strip() or "-"
+    cancel_event = request_registry.get_cancel_event(request_id)
     segment_index = data.get("segment_index", None)
     logger.info(
         f"[{request_id}] tts_request_received endpoint=/api/text_to_speech_stream method={request.method} chars={len(text)} seg={segment_index} preview={text[:60]!r}"
     )
+    if cancel_event.is_set():
+        logger.info(f"[{request_id}] tts_cancelled_before_start endpoint=/api/text_to_speech_stream client_id={client_id} seg={segment_index}")
+        return Response(b"", status=204, mimetype=_get_nested(load_app_config(), ["tts", "mimetype"], "audio/wav"))
     ask_timing = _timings_get(request_id)
     if ask_timing and isinstance(ask_timing.get("t_submit"), (int, float)):
         dt_since_submit = time.perf_counter() - float(ask_timing["t_submit"])
@@ -1326,7 +1414,11 @@ def text_to_speech_stream():
                 provider=provider,
                 endpoint="/api/text_to_speech_stream",
                 segment_index=segment_index,
+                cancel_event=cancel_event,
             ):
+                if cancel_event.is_set():
+                    logger.info(f"[{request_id}] tts_cancelled_during_stream endpoint=/api/text_to_speech_stream client_id={client_id} seg={segment_index}")
+                    break
                 if not chunk:
                     continue
                 chunk_count += 1
