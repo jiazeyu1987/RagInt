@@ -9,6 +9,8 @@ class TourPlan:
     profile: str
     duration_s: int
     stops: tuple[str, ...]
+    stop_durations_s: tuple[int, ...]
+    stop_target_chars: tuple[int, ...]
     source: str
 
 
@@ -106,10 +108,60 @@ class TourPlanner:
                 keep = len(stops_norm)
             stops_norm = stops_norm[:keep]
 
+        # Per-stop duration planning.
+        # Allow three forms:
+        # - tour_planner.stop_durations_s: { "<zone>": [..] } (zone-specific list aligned with stops)
+        # - tour_planner.stop_durations_s: [..] (global list aligned with stops)
+        # - tour_planner.stop_durations_s: { "<stop name>": seconds } (name->seconds)
+        durations_cfg = tour_cfg.get("stop_durations_s")
+        durations_list = None
+        durations_by_name = None
+        if isinstance(durations_cfg, dict):
+            maybe_zone = durations_cfg.get(zone)
+            if isinstance(maybe_zone, list):
+                durations_list = maybe_zone
+            else:
+                durations_by_name = durations_cfg
+        elif isinstance(durations_cfg, list):
+            durations_list = durations_cfg
+
+        stop_durations = []
+        if durations_list is not None:
+            for i, _s in enumerate(stops_norm):
+                try:
+                    v = durations_list[i] if i < len(durations_list) else None
+                    n = int(v)
+                except Exception:
+                    n = 0
+                stop_durations.append(max(0, n))
+        elif isinstance(durations_by_name, dict):
+            for s in stops_norm:
+                try:
+                    n = int(durations_by_name.get(s) or 0)
+                except Exception:
+                    n = 0
+                stop_durations.append(max(0, n))
+
+        # Fallback: allocate total duration evenly.
+        if not stop_durations or len(stop_durations) != len(stops_norm) or sum(stop_durations) <= 0:
+            per = max(15, int(round(float(duration_s) / max(1, len(stops_norm)))))
+            stop_durations = [per for _ in stops_norm]
+
+        # Derive per-stop target chars for Chinese speech planning (heuristic).
+        # Default: ~4.5 chars/s; configurable via tour_planner.chars_per_second.
+        try:
+            cps = float(tour_cfg.get("chars_per_second") or 4.5)
+        except Exception:
+            cps = 4.5
+        cps = max(2.5, min(cps, 8.0))
+        stop_target_chars = [max(20, int(round(float(d) * cps))) for d in stop_durations]
+
         return TourPlan(
             zone=zone,
             profile=profile,
             duration_s=duration_s,
             stops=tuple(stops_norm),
+            stop_durations_s=tuple(stop_durations),
+            stop_target_chars=tuple(stop_target_chars),
             source=source,
         )

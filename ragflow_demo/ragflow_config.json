@@ -65,8 +65,13 @@
     "profiles": ["大众", "儿童", "专业"],
     "default_zone": "展厅顺序",
     "default_profile": "大众",
-    "trim_by_duration": false,
-    "routes": {
+      "trim_by_duration": false,
+      "chars_per_second": 4.5,
+      "stop_durations_s": {
+        "å±•åŽ…é¡ºåº": [50, 60, 60, 60, 60, 60, 70, 60, 50, 40],
+        "é»˜è®¤è·¯çº¿": [50, 60, 60, 60, 60, 60, 70, 60, 50, 40]
+      },
+      "routes": {
       "展厅顺序": [
         "公司与孵化转化平台介绍",
         "心脏介入展厅",

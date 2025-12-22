@@ -616,6 +616,8 @@ function App() {
     }
   });
   const [tourStops, setTourStops] = useState([]);
+  const [tourStopDurations, setTourStopDurations] = useState([]); // aligned with tourStops
+  const [tourStopTargetChars, setTourStopTargetChars] = useState([]); // aligned with tourStops
   const [tourState, setTourState] = useState({
     mode: 'idle', // 'idle' | 'ready' | 'running' | 'interrupted'
     stopIndex: -1,
@@ -679,6 +681,8 @@ function App() {
   const segmentSeqRef = useRef(0);
   const askAbortRef = useRef(null);
   const tourStateRef = useRef(tourState);
+  const tourStopDurationsRef = useRef(tourStopDurations);
+  const tourStopTargetCharsRef = useRef(tourStopTargetChars);
   const clientIdRef = useRef(clientId);
   const activeAskRequestIdRef = useRef(null);
   const groupModeRef = useRef(groupMode);
@@ -947,6 +951,14 @@ function App() {
   }, [tourState]);
 
   useEffect(() => {
+    tourStopDurationsRef.current = Array.isArray(tourStopDurations) ? tourStopDurations : [];
+  }, [tourStopDurations]);
+
+  useEffect(() => {
+    tourStopTargetCharsRef.current = Array.isArray(tourStopTargetChars) ? tourStopTargetChars : [];
+  }, [tourStopTargetChars]);
+
+  useEffect(() => {
     groupModeRef.current = !!groupMode;
     try {
       localStorage.setItem('groupMode', groupMode ? '1' : '0');
@@ -1076,14 +1088,21 @@ function App() {
     const tailHint = tail ? `\n\n【上一段结束语（供承接）】${tail}` : '';
     const profile = String(audienceProfile || '').trim();
     const profileHint = profile ? `\n\n【人群画像】${profile}` : '';
+
+    const durs = tourStopDurationsRef.current || [];
+    const targets = tourStopTargetCharsRef.current || [];
+    const dur =
+      Number.isFinite(Number(durs[idx])) && Number(durs[idx]) > 0 ? Number(durs[idx]) : Math.max(15, Number(guideDuration || 60) || 60);
+    const targetChars = Number.isFinite(Number(targets[idx])) && Number(targets[idx]) > 0 ? Number(targets[idx]) : Math.max(30, Math.round(dur * 4.5));
+    const durHint = `\n\n【本站讲解时长】约${dur}秒（建议总字数约${targetChars}字，按中文语速估算）`;
     if (action === 'start') {
-      return `请开始展厅讲解：从${title}${suffix}开始，先给出1-2句开场白，再分点讲解本站重点。${profileHint}`;
+      return `请开始展厅讲解：从${title}${suffix}开始，先给出1-2句开场白，再分点讲解本站重点。${durHint}${profileHint}`;
     }
     if (action === 'continue') {
-      return `继续讲解${title}${suffix}：承接上一段内容，补充关键细节与示例，保持短句分段。${tailHint}${profileHint}`;
+      return `继续讲解${title}${suffix}：承接上一段内容，补充关键细节与示例，保持短句分段。${durHint}${tailHint}${profileHint}`;
     }
     if (action === 'next') {
-      return `现在进入${title}${suffix}：请开始讲解，先概括本站主题，再分点说明。${tailHint}${profileHint}`;
+      return `现在进入${title}${suffix}：请开始讲解，先概括本站主题，再分点说明。${durHint}${tailHint}${profileHint}`;
     }
     return '继续讲解';
   };
@@ -1706,11 +1725,37 @@ function App() {
         const action = i === start ? String(firstAction || 'start') : 'next';
         const prompt = buildTourPrompt(action === 'start' ? 'start' : action === 'continue' ? 'continue' : 'next', i);
         beginDebugRun(action === 'start' ? 'guide_start' : action === 'continue' ? 'guide_continue' : 'guide_next');
-        await askQuestion(prompt, { tourAction: action, tourStopIndex: i, continuous: true });
+        const ans = await askQuestion(prompt, { tourAction: action, tourStopIndex: i, continuous: true });
 
         if (!continuousActiveRef.current || continuousTokenRef.current !== token) break;
         const cur = tourStateRef.current;
         if (cur && cur.mode === 'interrupted') break;
+
+        // Fault tolerance: if the model returned nothing / error, retry once with a shorter, safer prompt.
+        const ansText = String(ans || '').trim();
+        if (!ansText || ansText.startsWith('错误:') || ansText.includes('RAGFlow') || ansText.includes('不可用')) {
+          const durs = tourStopDurationsRef.current || [];
+          const tcs = tourStopTargetCharsRef.current || [];
+          const dur = Number.isFinite(Number(durs[i])) && Number(durs[i]) > 0 ? Number(durs[i]) : Math.max(15, Number(guideDuration || 60) || 60);
+          const tc = Number.isFinite(Number(tcs[i])) && Number(tcs[i]) > 0 ? Number(tcs[i]) : Math.max(30, Math.round(dur * 4.5));
+          const dur2 = Math.max(15, Math.round(dur * 0.6));
+          const tc2 = Math.max(30, Math.round(tc * 0.6));
+          const stopName = getTourStopName(i);
+          const retryPrompt =
+            `请用更短的版本重新讲解第${i + 1}站「${stopName || stops[i] || ''}」：` +
+            `\n- 目标：约${dur2}秒（约${tc2}字）` +
+            `\n- 先1句概括主题，再3-5个要点` +
+            `\n- 如果知识库没有信息，请明确说“资料不足”，并给出可问现场工作人员的建议。`;
+          console.warn('[TOUR] retry stop', i, 'due to empty/error answer');
+          beginDebugRun('guide_retry');
+          await askQuestion(retryPrompt, {
+            tourAction: action,
+            tourStopIndex: i,
+            continuous: true,
+            guideDurationSOverride: dur2,
+            guideTargetCharsOverride: tc2,
+          });
+        }
       }
     } finally {
       if (continuousTokenRef.current === token) {
@@ -2041,6 +2086,27 @@ function App() {
 
     let fullAnswer = '';
     try {
+      let guideDurationS = Math.max(15, Number(guideDuration || 60) || 60);
+      let guideTargetChars = Math.max(30, Math.round(guideDurationS * 4.5));
+      let guideStopName = null;
+      if (options.tourAction) {
+        const idx = Number.isFinite(options.tourStopIndex) ? options.tourStopIndex : tourStateRef.current.stopIndex;
+        guideStopName = getTourStopName(idx) || null;
+        const durs = tourStopDurationsRef.current || [];
+        const tcs = tourStopTargetCharsRef.current || [];
+        const d = Number.isFinite(Number(durs[idx])) ? Number(durs[idx]) : 0;
+        const tc = Number.isFinite(Number(tcs[idx])) ? Number(tcs[idx]) : 0;
+        if (d > 0) guideDurationS = Math.max(15, Math.min(600, d));
+        if (tc > 0) guideTargetChars = Math.max(30, tc);
+        if (tc <= 0 && d > 0) guideTargetChars = Math.max(30, Math.round(guideDurationS * 4.5));
+      }
+      if (Number.isFinite(Number(options.guideDurationSOverride)) && Number(options.guideDurationSOverride) > 0) {
+        guideDurationS = Math.max(15, Math.min(600, Number(options.guideDurationSOverride)));
+      }
+      if (Number.isFinite(Number(options.guideTargetCharsOverride)) && Number(options.guideTargetCharsOverride) > 0) {
+        guideTargetChars = Math.max(30, Number(options.guideTargetCharsOverride));
+      }
+
       const response = await fetch('http://localhost:8000/api/ask', {
         method: 'POST',
         headers: {
@@ -2055,7 +2121,9 @@ function App() {
           agent_id: useAgentMode ? (selectedAgentId || null) : null,
           guide: {
             enabled: !!guideEnabled,
-            duration_s: Number(guideDuration || 60),
+            duration_s: guideDurationS,
+            target_chars: guideTargetChars,
+            stop_name: guideStopName,
             style: String(guideStyle || 'friendly'),
           },
         }),
@@ -2164,7 +2232,7 @@ function App() {
 
                 if (!ttsEnabledRef.current) {
                   if (runIdRef.current === runId) setIsLoading(false);
-                  return;
+                  return fullAnswer;
                 }
                 console.log('📚 RAGFlow响应完成，等待TTS处理完毕');
                 startTTSGenerator();
@@ -2178,7 +2246,7 @@ function App() {
                 if (ttsPlayerPromiseRef.current) {
                   await ttsPlayerPromiseRef.current;
                 }
-                return;
+                return fullAnswer;
               }
             } catch (err) {
               console.error('Error parsing chunk:', err);
@@ -2186,9 +2254,10 @@ function App() {
           }
         }
       }
+      return fullAnswer;
     } catch (err) {
       if (abortController.signal.aborted || String(err && err.name) === 'AbortError') {
-        return;
+        return '';
       }
       console.error('Error asking question:', err);
       if (runIdRef.current === runId) setIsLoading(false);
@@ -2316,6 +2385,23 @@ function App() {
       const stops = Array.isArray(data && data.stops) ? data.stops.map((s) => String(s || '').trim()).filter(Boolean) : [];
       if (stops.length) setTourStops(stops);
       if (stops.length) plannedStops = stops;
+
+      const durs = Array.isArray(data && data.stop_durations_s) ? data.stop_durations_s.map((x) => Number(x) || 0) : [];
+      const tcs = Array.isArray(data && data.stop_target_chars) ? data.stop_target_chars.map((x) => Number(x) || 0) : [];
+      if (stops.length && durs.length === stops.length) {
+        setTourStopDurations(durs);
+        tourStopDurationsRef.current = durs;
+      } else {
+        setTourStopDurations([]);
+        tourStopDurationsRef.current = [];
+      }
+      if (stops.length && tcs.length === stops.length) {
+        setTourStopTargetChars(tcs);
+        tourStopTargetCharsRef.current = tcs;
+      } else {
+        setTourStopTargetChars([]);
+        tourStopTargetCharsRef.current = [];
+      }
     } catch (_) {
       // ignore
     }

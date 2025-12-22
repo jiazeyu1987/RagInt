@@ -797,12 +797,21 @@ def api_tour_plan():
     profile = str((data.get("profile") or "")).strip()
     duration_s = data.get("duration_s") or 60
     plan = tour_planner.make_plan(cfg if isinstance(cfg, dict) else {}, zone=zone, profile=profile, duration_s=duration_s)
+    stops_meta = []
+    try:
+        for name, d, tc in zip(list(plan.stops), list(plan.stop_durations_s), list(plan.stop_target_chars)):
+            stops_meta.append({"name": str(name), "duration_s": int(d), "target_chars": int(tc)})
+    except Exception:
+        stops_meta = [{"name": str(s)} for s in list(plan.stops)]
     return jsonify(
         {
             "zone": plan.zone,
             "profile": plan.profile,
             "duration_s": plan.duration_s,
             "stops": list(plan.stops),
+            "stop_durations_s": list(getattr(plan, "stop_durations_s", ()) or ()),
+            "stop_target_chars": list(getattr(plan, "stop_target_chars", ()) or ()),
+            "stops_meta": stops_meta,
             "source": plan.source,
         }
     )
@@ -935,6 +944,11 @@ def ask_question():
         if not guide.get("enabled", False):
             return raw_question
         style = str(guide.get("style") or "friendly").strip().lower()
+        stop_name = str(guide.get("stop_name") or "").strip()
+        try:
+            target_chars = int(guide.get("target_chars") or 0)
+        except Exception:
+            target_chars = 0
         try:
             duration_s = int(guide.get("duration_s") or 60)
         except Exception:
@@ -949,11 +963,15 @@ def ask_question():
         else:
             length_text = "控制在约3分钟内，分段讲解，循序渐进"
 
+        target_text = f"- 建议总字数：约{target_chars}字（按语速估算）\n" if target_chars > 0 else ""
+        stop_text = f"- 当前展厅：{stop_name}\n" if stop_name else ""
         guide_text = (
             "【展厅讲解要求】\n"
             "你是一名展厅讲解员，面向来访者做中文讲解。\n"
+            f"{stop_text}"
             f"- 讲解风格：{style_text}\n"
             f"- 时长：{length_text}\n"
+            f"{target_text}"
             "- 输出：用短句分段（便于语音播报），必要时用项目符号。\n"
             "- 约束：不要编造；如果知识库/上下文没有依据，请明确说明不确定，并建议咨询现场工作人员。\n"
         )
