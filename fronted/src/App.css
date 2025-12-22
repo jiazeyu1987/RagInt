@@ -444,6 +444,22 @@ h1 {
   background: rgba(16, 163, 127, 1);
 }
 
+.text-input .stop-btn {
+  min-width: 64px;
+  background: rgba(0, 0, 0, 0.10);
+  color: rgba(255, 255, 255, 0.90);
+  border-color: rgba(239, 68, 68, 0.55);
+}
+
+.text-input .stop-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(239, 68, 68, 0.75);
+}
+
+.text-input .stop-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
 .text-input button:disabled {
   opacity: 0.55;
   cursor: not-allowed;

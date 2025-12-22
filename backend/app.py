@@ -1089,6 +1089,9 @@ def ask_question():
             except Exception:
                 logger.warning(f"[{request_id}] history_store_save_failed", exc_info=True)
 
+        except GeneratorExit:
+            logger.info(f"[{request_id}] ask_stream_generator_exit (client_disconnect?)")
+            return
         except Exception as e:
             logger.error(f"[{request_id}] 流式响应异常: {e}", exc_info=True)
             if agent_id and "ragflow_agent_completion_no_data" in str(e):

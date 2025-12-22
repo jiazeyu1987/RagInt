@@ -555,6 +555,27 @@ function App() {
   const POINTER_SUPPORTED = typeof window !== 'undefined' && 'PointerEvent' in window;
   const MIN_RECORD_MS = 900;
 
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (!e || e.key !== 'Escape') return;
+      const hasActiveRun =
+        !!askAbortRef.current ||
+        isLoading ||
+        !!ttsGeneratorPromiseRef.current ||
+        !!ttsPlayerPromiseRef.current ||
+        !!currentAudioRef.current;
+      if (!hasActiveRun) return;
+      try {
+        e.preventDefault();
+      } catch (_) {
+        // ignore
+      }
+      interruptCurrentRun('escape');
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isLoading]);
+
   const resampleMono = (input, inRate, outRate) => {
     if (!input || !input.length || !inRate || !outRate || inRate === outRate) return input;
     const ratio = inRate / outRate;
@@ -1067,6 +1088,51 @@ function App() {
     stopRecording();
   };
 
+  const interruptCurrentRun = (reason) => {
+    try {
+      if (askAbortRef.current) askAbortRef.current.abort();
+    } catch (_) {
+      // ignore
+    } finally {
+      askAbortRef.current = null;
+    }
+
+    // Make all in-flight loops exit (SSE + TTS generator/player).
+    runIdRef.current += 1;
+
+    // Stop audio playback / in-flight audio fetch.
+    try {
+      if (currentAudioRef.current) {
+        if (typeof currentAudioRef.current.stop === 'function') {
+          currentAudioRef.current.stop();
+        } else if (typeof currentAudioRef.current.pause === 'function') {
+          currentAudioRef.current.pause();
+          currentAudioRef.current.src = '';
+        }
+      }
+    } catch (_) {
+      // ignore
+    } finally {
+      currentAudioRef.current = null;
+    }
+
+    ttsTextQueueRef.current = [];
+    ttsMetaQueueRef.current = [];
+    ttsAudioQueueRef.current = [];
+    ragflowDoneRef.current = true;
+    receivedSegmentsRef.current = false;
+    ttsGeneratorPromiseRef.current = null;
+    ttsPlayerPromiseRef.current = null;
+
+    try {
+      setQueueStatus('');
+      setIsLoading(false);
+    } catch (_) {
+      // ignore
+    }
+    console.log('[INTERRUPT]', reason || 'manual');
+  };
+
   const askQuestion = async (text) => {
     // Interrupt any previous in-flight /api/ask stream.
     try {
@@ -1086,7 +1152,7 @@ function App() {
     setAnswer('');
     setIsLoading(true);
 
-    // 清空所有队列
+    // 清空所有队列/状态（用于“打断”或新问题覆盖旧问题）
     ttsTextQueueRef.current = [];
     ttsMetaQueueRef.current = [];
     ttsAudioQueueRef.current = [];
@@ -1130,7 +1196,6 @@ function App() {
     // TTS音频生成函数
     const generateAudioSegmentUrl = (segmentText) => {
       try {
-        console.log(`🎵 开始生成音频: "${segmentText.substring(0, 30)}..."`);
         const seg = String(segmentText || '').trim();
         if (!seg) return null;
         const url = new URL(USE_SAVED_TTS ? 'http://localhost:8000/api/text_to_speech_saved' : 'http://localhost:8000/api/text_to_speech_stream');
@@ -1138,9 +1203,6 @@ function App() {
         url.searchParams.set('request_id', requestId);
         url.searchParams.set('segment_index', String(segmentIndex++));
         return url.toString();
-
-
-        console.log(`✅ 音频生成完成: ${audioBlob.size} bytes`);
       } catch (err) {
         console.error(`❌ 音频生成失败: "${segmentText}"`, err);
         return null;
@@ -1605,6 +1667,15 @@ function App() {
               placeholder="输入问题…"
               disabled={false}
             />
+            <button
+              type="button"
+              className="stop-btn"
+              onClick={() => interruptCurrentRun('user_stop')}
+              disabled={!isLoading && !(ttsGeneratorPromiseRef.current || ttsPlayerPromiseRef.current || currentAudioRef.current)}
+              title="打断当前回答/播报"
+            >
+              打断
+            </button>
             <button type="submit" disabled={!String(inputText || '').trim() || (useAgentMode && !selectedAgentId)}>
               发送
             </button>
