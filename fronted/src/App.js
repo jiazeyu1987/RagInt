@@ -90,8 +90,41 @@ async function playWavBytesViaDecodeAudioData(wavBytes, audioContextRef, current
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) throw new Error('WebAudio is not supported');
 
+  const tryParseWavSampleRate = (bytes) => {
+    try {
+      if (!bytes || bytes.byteLength < 44) return null;
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const fourcc = (off) =>
+        String.fromCharCode(view.getUint8(off), view.getUint8(off + 1), view.getUint8(off + 2), view.getUint8(off + 3));
+      if (fourcc(0) !== 'RIFF' || fourcc(8) !== 'WAVE') return null;
+      let offset = 12;
+      while (offset + 8 <= bytes.byteLength) {
+        const id = fourcc(offset);
+        const size = view.getUint32(offset + 4, true);
+        const payload = offset + 8;
+        if (id === 'fmt ') {
+          if (payload + 16 > bytes.byteLength) return null;
+          const sampleRate = view.getUint32(payload + 4, true);
+          if (sampleRate && sampleRate >= 8000 && sampleRate <= 48000) return sampleRate;
+          return null;
+        }
+        offset = payload + size;
+        if (offset % 2 === 1) offset += 1;
+      }
+    } catch (_) {
+      // ignore
+    }
+    return null;
+  };
+
   if (!audioContextRef.current) {
-    audioContextRef.current = new AudioContextClass();
+    // Prefer creating AudioContext at WAV sample rate to avoid resampling artifacts.
+    const sr = tryParseWavSampleRate(wavBytes);
+    try {
+      audioContextRef.current = sr ? new AudioContextClass({ sampleRate: sr }) : new AudioContextClass();
+    } catch (_) {
+      audioContextRef.current = new AudioContextClass();
+    }
   }
   const audioCtx = audioContextRef.current;
   if (audioCtx.state === 'suspended') {
@@ -492,7 +525,20 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
         ensureProcessor();
 
         const dataStart = wavInfo.dataOffset;
-        if (headerBuffer.byteLength > dataStart) enqueuePcmChunk(headerBuffer.slice(dataStart));
+        if (headerBuffer.byteLength > dataStart) {
+          // The very first PCM bytes may be cut mid-sample depending on network chunk boundaries.
+          // Use the same blockAlign/remainder logic to avoid dropping 1 byte and shifting all samples (white-noise).
+          const firstPcm = headerBuffer.slice(dataStart);
+          const blockAlign = wavInfo.channels * 2;
+          const usableBytes = firstPcm.byteLength - (firstPcm.byteLength % blockAlign);
+          if (usableBytes > 0) {
+            enqueuePcmChunk(firstPcm.slice(0, usableBytes));
+          }
+          const leftover = firstPcm.byteLength - usableBytes;
+          if (leftover > 0) {
+            pcmRemainder = firstPcm.slice(usableBytes);
+          }
+        }
         headerBuffer = new Uint8Array(0);
         continue;
       }
@@ -1979,58 +2025,55 @@ function App() {
             debugRefresh();
           }
 
-          if (audioItem && audioItem.wavBytes) {
-            try {
-              await playWavBytesViaDecodeAudioData(audioItem.wavBytes, audioContextRef, currentAudioRef);
-            } catch (err) {
-              console.warn('[TTS] prefetched playback failed, falling back to stream fetch:', err);
-              if (audioItem.url) {
-                await playWavStreamViaWebAudio(
-                  audioItem.url,
-                  audioContextRef,
-                  currentAudioRef,
-                  () => playAudioUrl(audioItem.url, audioItem.text),
-                  () => {
-                    const tFirst = nowMs();
-                    debugMark('ttsFirstAudioAt', tFirst);
-                    if (segDebug && segDebug.ttsFirstAudioAt == null) {
-                      segDebug.ttsFirstAudioAt = tFirst;
-                      debugRefresh();
+          try {
+            if (audioItem && audioItem.wavBytes) {
+              try {
+                await playWavBytesViaDecodeAudioData(audioItem.wavBytes, audioContextRef, currentAudioRef);
+              } catch (err) {
+                console.warn('[TTS] prefetched playback failed, falling back to stream fetch:', err);
+                if (audioItem.url) {
+                  await playWavStreamViaWebAudio(
+                    audioItem.url,
+                    audioContextRef,
+                    currentAudioRef,
+                    () => playAudioUrl(audioItem.url, audioItem.text),
+                    () => {
+                      const tFirst = nowMs();
+                      debugMark('ttsFirstAudioAt', tFirst);
+                      if (segDebug && segDebug.ttsFirstAudioAt == null) {
+                        segDebug.ttsFirstAudioAt = tFirst;
+                        debugRefresh();
+                      }
                     }
-                  }
-                );
-              }
-            }
-
-            if (segDebug && segDebug.ttsDoneAt == null) {
-              segDebug.ttsDoneAt = nowMs();
-              debugRefresh();
-            }
-            continue;
-          }
-
-          if (USE_SAVED_TTS) {
-            try {
-              await playWavViaDecodeAudioData(audioItem.url, audioContextRef, currentAudioRef);
-            } catch (err) {
-              console.warn('[TTS] saved playback failed, fallback to <audio>:', err);
-              await playAudioUrl(audioItem.url, audioItem.text);
-            }
-          } else {
-            await playWavStreamViaWebAudio(
-              audioItem.url,
-              audioContextRef,
-              currentAudioRef,
-              () => playAudioUrl(audioItem.url, audioItem.text),
-              () => {
-                const tFirst = nowMs();
-                debugMark('ttsFirstAudioAt', tFirst);
-                if (segDebug && segDebug.ttsFirstAudioAt == null) {
-                  segDebug.ttsFirstAudioAt = tFirst;
-                  debugRefresh();
+                  );
                 }
               }
-            );
+            } else if (USE_SAVED_TTS) {
+              try {
+                await playWavViaDecodeAudioData(audioItem.url, audioContextRef, currentAudioRef);
+              } catch (err) {
+                console.warn('[TTS] saved playback failed, fallback to <audio>:', err);
+                await playAudioUrl(audioItem.url, audioItem.text);
+              }
+            } else {
+              await playWavStreamViaWebAudio(
+                audioItem.url,
+                audioContextRef,
+                currentAudioRef,
+                () => playAudioUrl(audioItem.url, audioItem.text),
+                () => {
+                  const tFirst = nowMs();
+                  debugMark('ttsFirstAudioAt', tFirst);
+                  if (segDebug && segDebug.ttsFirstAudioAt == null) {
+                    segDebug.ttsFirstAudioAt = tFirst;
+                    debugRefresh();
+                  }
+                }
+              );
+            }
+          } finally {
+            // Prevent stale "playing" state from leaking into next segments / next tour stop.
+            if (currentAudioRef.current) currentAudioRef.current = null;
           }
 
           if (segDebug && segDebug.ttsDoneAt == null) {
@@ -2371,6 +2414,23 @@ function App() {
   };
 
   const startTour = async () => {
+    if (ttsEnabledRef.current) {
+      try {
+        // Ensure we create AudioContext at preferred sampleRate before the first (prefetched) segment,
+        // otherwise subsequent streaming segments may resample and cause artifacts/white-noise.
+        if (audioContextRef.current && audioContextRef.current.sampleRate !== PREFERRED_TTS_SAMPLE_RATE) {
+          try {
+            audioContextRef.current.close().catch(() => {});
+          } catch (_) {
+            // ignore
+          }
+          audioContextRef.current = null;
+        }
+      } catch (_) {
+        audioContextRef.current = null;
+      }
+      unlockAudio();
+    }
     let plannedStops = null;
     try {
       const zone = String(tourZone || (tourMeta && tourMeta.default_zone) || '默认路线');
@@ -2416,6 +2476,21 @@ function App() {
   };
 
   const continueTour = async () => {
+    if (ttsEnabledRef.current) {
+      try {
+        if (audioContextRef.current && audioContextRef.current.sampleRate !== PREFERRED_TTS_SAMPLE_RATE) {
+          try {
+            audioContextRef.current.close().catch(() => {});
+          } catch (_) {
+            // ignore
+          }
+          audioContextRef.current = null;
+        }
+      } catch (_) {
+        audioContextRef.current = null;
+      }
+      unlockAudio();
+    }
     const cur = tourStateRef.current;
     const stopIndex = Number.isFinite(cur && cur.stopIndex) && cur.stopIndex >= 0 ? cur.stopIndex : 0;
     if (continuousTourRef.current) {
