@@ -757,6 +757,26 @@ def api_history_list():
     items = history_store.list_by_time(limit=limit, desc=desc)
     return jsonify({"sort": "time", "items": items})
 
+@app.route('/api/tour/stops', methods=['GET'])
+def api_tour_stops():
+    cfg = load_ragflow_config() or {}
+    tour_cfg = cfg.get("tour", {}) if isinstance(cfg, dict) else {}
+    stops = tour_cfg.get("stops") if isinstance(tour_cfg, dict) else None
+    source = "default"
+    if isinstance(stops, list) and stops:
+        source = "ragflow_config.tour.stops"
+    else:
+        stops = [
+            "公司总体介绍",
+            "核心产品概览",
+            "骨科产品",
+            "泌尿产品",
+            "其他产品与应用场景",
+            "总结与提问引导",
+        ]
+    stops = [str(s).strip() for s in stops if str(s).strip()]
+    return jsonify({"stops": stops, "source": source})
+
 @app.route('/health')
 def health():
     return jsonify({

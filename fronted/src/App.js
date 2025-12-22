@@ -476,7 +476,6 @@ async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, f
       if (fallbackPlay) return fallbackPlay();
       throw decodeErr;
     }
-    throw err;
   } finally {
     stopPlayback();
     stopAllSources();
@@ -521,6 +520,13 @@ function App() {
   });
   const [historySort, setHistorySort] = useState('time'); // 'time' | 'count'
   const [historyItems, setHistoryItems] = useState([]);
+  const [tourStops, setTourStops] = useState([]);
+  const [tourState, setTourState] = useState({
+    mode: 'idle', // 'idle' | 'ready' | 'running' | 'interrupted'
+    stopIndex: -1,
+    stopName: '',
+    lastAction: null, // 'start' | 'continue' | 'next' | 'user_question' | 'interrupt'
+  });
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const messagesEndRef = useRef(null);
@@ -529,6 +535,7 @@ function App() {
   const debugRef = useRef(null);
   const segmentSeqRef = useRef(0);
   const askAbortRef = useRef(null);
+  const tourStateRef = useRef(tourState);
 
   // 原始文本队列和预生成音频队列
   const ttsTextQueueRef = useRef([]);
@@ -735,6 +742,53 @@ function App() {
       // ignore
     }
   }, [guideEnabled, guideDuration, guideStyle]);
+
+  useEffect(() => {
+    tourStateRef.current = tourState;
+  }, [tourState]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch('http://localhost:8000/api/tour/stops');
+        const data = await resp.json();
+        if (cancelled) return;
+        const stops = Array.isArray(data && data.stops) ? data.stops.map((s) => String(s || '').trim()).filter(Boolean) : [];
+        setTourStops(stops);
+      } catch (_) {
+        if (!cancelled) setTourStops([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const getTourStopName = (index) => {
+    const stops = Array.isArray(tourStops) ? tourStops : [];
+    if (!stops.length) return '';
+    const i = Math.max(0, Math.min(Number(index) || 0, stops.length - 1));
+    return String(stops[i] || '').trim();
+  };
+
+  const buildTourPrompt = (action, stopIndex) => {
+    const idx = Number.isFinite(stopIndex) ? stopIndex : 0;
+    const stopName = getTourStopName(idx);
+    const n = Array.isArray(tourStops) ? tourStops.length : 0;
+    const title = stopName ? `第${idx + 1}站「${stopName}」` : `第${idx + 1}站`;
+    const suffix = n ? `（共${n}站）` : '';
+    if (action === 'start') {
+      return `请开始展厅讲解：从${title}${suffix}开始，先给出1-2句开场白，再分点讲解本站重点。`;
+    }
+    if (action === 'continue') {
+      return `继续讲解${title}${suffix}：承接上一段内容，补充关键细节与示例，保持短句分段。`;
+    }
+    if (action === 'next') {
+      return `现在进入${title}${suffix}：请开始讲解，先概括本站主题，再分点说明。`;
+    }
+    return '继续讲解';
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -1130,10 +1184,18 @@ function App() {
     } catch (_) {
       // ignore
     }
+    try {
+      setTourState((prev) => {
+        if (!prev || prev.mode === 'idle') return prev;
+        return { ...prev, mode: 'interrupted', lastAction: 'interrupt' };
+      });
+    } catch (_) {
+      // ignore
+    }
     console.log('[INTERRUPT]', reason || 'manual');
   };
 
-  const askQuestion = async (text) => {
+  const askQuestion = async (text, opts) => {
     // Interrupt any previous in-flight /api/ask stream.
     try {
       if (askAbortRef.current) askAbortRef.current.abort();
@@ -1141,6 +1203,7 @@ function App() {
       // ignore
     }
 
+    const options = opts && typeof opts === 'object' ? opts : {};
     const runId = ++runIdRef.current;
     const requestId = `ask_${runId}_${Date.now()}`;
     const abortController = new AbortController();
@@ -1158,6 +1221,25 @@ function App() {
     ttsAudioQueueRef.current = [];
     ragflowDoneRef.current = false;
     receivedSegmentsRef.current = false;
+
+    if (options.tourAction) {
+      const action = String(options.tourAction || '').trim();
+      const stopIndex = Number.isFinite(options.tourStopIndex) ? options.tourStopIndex : tourStateRef.current.stopIndex;
+      const stopName = getTourStopName(stopIndex);
+      setTourState((prev) => ({
+        ...(prev || {}),
+        mode: 'running',
+        stopIndex: Number.isFinite(stopIndex) ? stopIndex : (prev && prev.stopIndex) || 0,
+        stopName: stopName || (prev && prev.stopName) || '',
+        lastAction: action,
+      }));
+      console.log('[TOUR]', `action=${action}`, `stopIndex=${stopIndex}`, stopName ? `stop=${stopName}` : '');
+    } else {
+      setTourState((prev) => {
+        if (!prev || prev.mode === 'idle') return prev;
+        return { ...prev, lastAction: 'user_question' };
+      });
+    }
 
     // 启动状态监控
     if (ttsEnabledRef.current) {
@@ -1491,6 +1573,17 @@ function App() {
       if (askAbortRef.current === abortController) {
         askAbortRef.current = null;
       }
+      try {
+        if (runIdRef.current === runId) {
+          setTourState((prev) => {
+            if (!prev || prev.mode === 'idle') return prev;
+            if (prev.mode === 'running') return { ...prev, mode: 'ready' };
+            return prev;
+          });
+        }
+      } catch (_) {
+        // ignore
+      }
       // refresh history list after a run finishes (best-effort)
       try {
         if (runIdRef.current === runId) {
@@ -1546,6 +1639,31 @@ function App() {
     beginDebugRun(trigger || 'quick');
     setInputText('');
     await askQuestion(q);
+  };
+
+  const startTour = async () => {
+    const stopIndex = 0;
+    const prompt = buildTourPrompt('start', stopIndex);
+    beginDebugRun('guide_start');
+    await askQuestion(prompt, { tourAction: 'start', tourStopIndex: stopIndex });
+  };
+
+  const continueTour = async () => {
+    const cur = tourStateRef.current;
+    const stopIndex = Number.isFinite(cur && cur.stopIndex) && cur.stopIndex >= 0 ? cur.stopIndex : 0;
+    const prompt = buildTourPrompt('continue', stopIndex);
+    beginDebugRun('guide_continue');
+    await askQuestion(prompt, { tourAction: 'continue', tourStopIndex: stopIndex });
+  };
+
+  const nextTourStop = async () => {
+    const cur = tourStateRef.current;
+    const n = Array.isArray(tourStops) ? tourStops.length : 0;
+    const nextIndexRaw = Number.isFinite(cur && cur.stopIndex) ? cur.stopIndex + 1 : 0;
+    const stopIndex = n ? Math.min(nextIndexRaw, n - 1) : Math.max(0, nextIndexRaw);
+    const prompt = buildTourPrompt('next', stopIndex);
+    beginDebugRun('guide_next');
+    await askQuestion(prompt, { tourAction: 'next', tourStopIndex: stopIndex });
   };
 
   useEffect(() => {
@@ -1634,6 +1752,17 @@ function App() {
             />
             <span>语音播报</span>
           </label>
+
+          <div className="tour-status" title="讲解状态机：打断/继续/下一站">
+            <span className="tour-status-k">讲解</span>
+            <span className="tour-status-v">
+              {tourState.mode === 'idle'
+                ? '未开始'
+                : `${tourState.mode === 'running' ? '进行中' : tourState.mode === 'interrupted' ? '已打断' : '就绪'}${
+                    tourState.stopIndex >= 0 ? ` · 第${tourState.stopIndex + 1}站` : ''
+                  }${tourState.stopName ? ` · ${tourState.stopName}` : ''}`}
+            </span>
+          </div>
         </div>
 
         <div className="input-section">
@@ -1683,9 +1812,9 @@ function App() {
 
           <div className="quick-actions">
             {[
-              { label: '开始讲解', text: '请开始展厅讲解：先总体介绍公司，再按展品/展区分段讲解。', auto: true, primary: true, trigger: 'guide_start' },
-              { label: '继续讲解', text: '继续讲解', auto: true, primary: true, trigger: 'guide_continue' },
-              { label: '下一站', text: '下一站' },
+              { label: '开始讲解', action: 'tour_start', auto: true, primary: true },
+              { label: '继续讲解', action: 'tour_continue', auto: true, primary: true },
+              { label: '下一站', action: 'tour_next', auto: true },
               { label: '上一站', text: '上一站' },
               { label: '30秒总结', text: '请用30秒总结刚才的讲解' },
               { label: '更通俗', text: '换个更通俗易懂的说法' },
@@ -1698,13 +1827,16 @@ function App() {
                 onClick={async () => {
                   if (b.auto) {
                     try {
-                      await submitTextAuto(b.text, b.trigger || 'quick');
+                      if (b.action === 'tour_start') await startTour();
+                      else if (b.action === 'tour_continue') await continueTour();
+                      else if (b.action === 'tour_next') await nextTourStop();
+                      else await submitTextAuto(b.text, 'quick');
                     } catch (e) {
                       console.error('[Quick] submit failed', e);
                     }
                     return;
                   }
-                  setInputText(b.text);
+                  setInputText(b.text || '');
                   try {
                     setTimeout(() => {
                       if (inputElRef.current && typeof inputElRef.current.focus === 'function') {
