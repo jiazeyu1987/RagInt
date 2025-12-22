@@ -494,6 +494,9 @@ function App() {
   const [debugInfo, setDebugInfo] = useState(null);
   const [chatOptions, setChatOptions] = useState([]);
   const [selectedChat, setSelectedChat] = useState('展厅聊天');
+  const [agentOptions, setAgentOptions] = useState([]);
+  const [selectedAgentId, setSelectedAgentId] = useState('');
+  const [useAgentMode, setUseAgentMode] = useState(false);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const messagesEndRef = useRef(null);
@@ -698,6 +701,30 @@ function App() {
       } catch (e) {
         // fallback to default
         if (!cancelled) setChatOptions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch('http://localhost:8000/api/ragflow/agents');
+        const data = await resp.json();
+        if (cancelled) return;
+        const agents = Array.isArray(data && data.agents) ? data.agents : [];
+        setAgentOptions(agents);
+        const defId = (data && data.default ? String(data.default) : '').trim();
+        if (defId && agents.some((a) => String(a && a.id) === defId)) {
+          setSelectedAgentId(defId);
+        } else {
+          setSelectedAgentId('');
+        }
+      } catch (e) {
+        if (!cancelled) setAgentOptions([]);
       }
     })();
     return () => {
@@ -1222,7 +1249,12 @@ function App() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ question: text, request_id: requestId, conversation_name: selectedChat }),
+        body: JSON.stringify({
+          question: text,
+          request_id: requestId,
+          conversation_name: useAgentMode ? null : selectedChat,
+          agent_id: useAgentMode ? (selectedAgentId || null) : null,
+        }),
         signal: abortController.signal
       });
 
@@ -1357,10 +1389,12 @@ function App() {
       unlockAudio();
     }
     const text = String(inputText || '').trim();
-    if (text) {
+    if (text && (!useAgentMode || !!selectedAgentId)) {
       beginDebugRun('text');
       setInputText('');
       await askQuestion(text);
+    } else if (text && useAgentMode && !selectedAgentId) {
+      alert('请选择智能体后再提问');
     }
   };
 
@@ -1379,16 +1413,39 @@ function App() {
         <h1>AI语音问答</h1>
 
         <div className="controls">
-          <label className="kb-select">
-            <span>知识库</span>
-            <select value={selectedChat} onChange={(e) => setSelectedChat(e.target.value)}>
-              {(chatOptions && chatOptions.length ? chatOptions : [selectedChat]).map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
+          <label className="tts-toggle">
+            <input
+              type="checkbox"
+              checked={useAgentMode}
+              onChange={(e) => setUseAgentMode(e.target.checked)}
+            />
+            <span>使用智能体</span>
           </label>
+
+          {useAgentMode ? (
+            <label className="kb-select">
+              <span>智能体</span>
+              <select value={selectedAgentId} onChange={(e) => setSelectedAgentId(e.target.value)}>
+                <option value="">请选择</option>
+                {(agentOptions || []).map((a) => (
+                  <option key={a.id} value={String(a.id)}>
+                    {a.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <label className="kb-select">
+              <span>Chat(会话)</span>
+              <select value={selectedChat} onChange={(e) => setSelectedChat(e.target.value)}>
+                {(chatOptions && chatOptions.length ? chatOptions : [selectedChat]).map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="tts-toggle">
             <input
               type="checkbox"
@@ -1429,7 +1486,7 @@ function App() {
               placeholder="输入问题…"
               disabled={false}
             />
-            <button type="submit" disabled={!String(inputText || '').trim()}>
+            <button type="submit" disabled={!String(inputText || '').trim() || (useAgentMode && !selectedAgentId)}>
               发送
             </button>
           </form>

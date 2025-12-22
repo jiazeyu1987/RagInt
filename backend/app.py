@@ -73,10 +73,12 @@ sys.path.append(str(Path(__file__).parent.parent / "tts_demo"))
 
 from services.asr_service import ASRService
 from services.config_utils import get_nested
+from services.ragflow_agent_service import RagflowAgentService
 from services.ragflow_service import RagflowService
 from services.tts_service import TTSSvc
 
 ragflow_service = RagflowService(Path(__file__).parent.parent / "ragflow_demo" / "ragflow_config.json", logger=logger)
+ragflow_agent_service = RagflowAgentService(Path(__file__).parent.parent / "ragflow_demo" / "ragflow_config.json", logger=logger)
 asr_service = ASRService(logger=logger)
 tts_service = TTSSvc(logger=logger)
 asr_model_loaded = asr_service.funasr_loaded
@@ -729,6 +731,15 @@ def get_ragflow_session(chat_name: str):
 def ragflow_list_chats():
     return jsonify(ragflow_service.list_chats())
 
+@app.route('/api/ragflow/agents', methods=['GET'])
+def ragflow_list_agents():
+    res = ragflow_service.list_agents()
+    try:
+        logger.info(f"ragflow_agents_list count={len(res.get('agents') or [])}")
+    except Exception:
+        pass
+    return jsonify(res)
+
 @app.route('/health')
 def health():
     return jsonify({
@@ -771,13 +782,18 @@ def ask_question():
         return jsonify({"error": "No question"}), 400
 
     question = data.get('question', '')
+    agent_id = (data.get("agent_id") or "").strip()
     conversation_name = (data.get("conversation_name") or data.get("chat_name") or ragflow_default_chat_name or "").strip()
     request_id = (
         data.get("request_id")
         or request.headers.get("X-Request-ID")
         or f"ask_{uuid.uuid4().hex[:12]}"
     )
-    logger.info(f"[{request_id}] 问题: {question} chat={conversation_name or 'default'}")
+    if agent_id:
+        conversation_name = ""
+        logger.info(f"[{request_id}] 问题: {question} agent_id={agent_id}")
+    else:
+        logger.info(f"[{request_id}] 问题: {question} chat={conversation_name or 'default'}")
     _timings_set(request_id, t_submit=t_submit)
 
     def generate_response():
@@ -817,9 +833,11 @@ def ask_question():
                     logger.warning(f"文本清洗/分段模块不可用，降级为整段TTS: {e}")
                     enable_cleaning = False
 
-            rag_session = ragflow_service.get_session(conversation_name) if conversation_name else session
+            rag_session = None
+            if not agent_id:
+                rag_session = ragflow_service.get_session(conversation_name) if conversation_name else session
 
-            if not rag_session:
+            if (not agent_id) and (not rag_session):
                 logger.warning("RAGFlow不可用，使用固定回答")
                 fallback_answer = f"我收到了你的问题：{question}。由于RAGFlow服务暂时不可用，我现在只能给你一个固定的回答。请确保RAGFlow服务正在运行。"
 
@@ -849,11 +867,25 @@ def ask_question():
                 return
 
             t_ragflow_request = time.perf_counter()
-            logger.info(f"[{request_id}] 开始RAGFlow流式响应")
-            response = rag_session.ask(question, stream=True)
-            logger.info(
-                f"[{request_id}] RAGFlow响应对象创建成功 dt={time.perf_counter() - t_ragflow_request:.3f}s"
-            )
+            if agent_id:
+                logger.info(f"[{request_id}] 开始RAGFlow Agent流式响应 agent_id={agent_id}")
+                try:
+                    response = ragflow_agent_service.stream_completion_text(agent_id, question, request_id=request_id)
+                except Exception as e:
+                    logger.error(f"[{request_id}] ragflow_agent_stream_init_failed err={e}", exc_info=True)
+                    msg = (
+                        f"智能体接口暂时不可用（RAGFlow /api/v1/agents/{agent_id}/completions 无输出）。"
+                        f"请检查 RAGFlow 服务日志/版本或接口权限。"
+                    )
+                    yield sse_event({"chunk": msg, "done": False})
+                    yield sse_event({"chunk": "", "done": True})
+                    return
+            else:
+                logger.info(f"[{request_id}] 开始RAGFlow流式响应")
+                response = rag_session.ask(question, stream=True)
+                logger.info(
+                    f"[{request_id}] RAGFlow响应对象创建成功 dt={time.perf_counter() - t_ragflow_request:.3f}s"
+                )
 
             last_complete_content = ""
             chunk_count = 0
@@ -872,8 +904,16 @@ def ask_question():
                     _timings_set(request_id, t_ragflow_first_chunk=first_ragflow_chunk_at)
                 #logger.info(f"收到chunk #{chunk_count}: {type(chunk)} - {chunk}")
 
-                if chunk and hasattr(chunk, 'content'):
+                content = None
+                if agent_id:
+                    if isinstance(chunk, str):
+                        content = last_complete_content + chunk
+                    else:
+                        content = str(chunk) if chunk is not None else ""
+                elif chunk and hasattr(chunk, 'content'):
                     content = chunk.content
+
+                if isinstance(content, str):
                     logger.info(f"Chunk内容长度: {len(content)}")
 
                     # 只处理更长和更完整的内容（去重）
@@ -979,7 +1019,14 @@ def ask_question():
 
         except Exception as e:
             logger.error(f"[{request_id}] 流式响应异常: {e}", exc_info=True)
-            yield sse_event({"chunk": f"错误: {str(e)}", "done": True})
+            if agent_id and "ragflow_agent_completion_no_data" in str(e):
+                msg = (
+                    f"智能体接口暂时不可用（RAGFlow /api/v1/agents/{agent_id}/completions 无输出）。"
+                    f"请检查 RAGFlow 服务日志/版本或接口权限。"
+                )
+                yield sse_event({"chunk": msg, "done": True})
+            else:
+                yield sse_event({"chunk": f"错误: {str(e)}", "done": True})
 
     logger.info("返回流式响应")
     return Response(
