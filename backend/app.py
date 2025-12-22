@@ -747,7 +747,12 @@ def speech_to_text():
     app_config = load_app_config()
     t0 = time.perf_counter()
     try:
-        text = asr_service.transcribe(raw_bytes, app_config)
+        text = asr_service.transcribe(
+            raw_bytes,
+            app_config,
+            src_filename=getattr(audio_file, "filename", None),
+            src_mime=getattr(audio_file, "mimetype", None),
+        )
         logger.info(f"asr_done dt={time.perf_counter()-t0:.3f}s chars={len(text)}")
         return jsonify({"text": text})
     except Exception as e:

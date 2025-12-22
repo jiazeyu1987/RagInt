@@ -518,9 +518,107 @@ function App() {
   const receivedSegmentsRef = useRef(false);
   const audioContextRef = useRef(null);
   const USE_SAVED_TTS = false;
+  const recordStreamRef = useRef(null);
+  const recordPointerIdRef = useRef(null);
+  const recordStartMsRef = useRef(0);
+  const recordCanceledRef = useRef(false);
+
+  const AudioContextClass = typeof window !== 'undefined' ? (window.AudioContext || window.webkitAudioContext) : null;
+  const POINTER_SUPPORTED = typeof window !== 'undefined' && 'PointerEvent' in window;
+  const MIN_RECORD_MS = 900;
+
+  const resampleMono = (input, inRate, outRate) => {
+    if (!input || !input.length || !inRate || !outRate || inRate === outRate) return input;
+    const ratio = inRate / outRate;
+    const outLength = Math.max(1, Math.round(input.length / ratio));
+    const out = new Float32Array(outLength);
+    for (let i = 0; i < outLength; i++) {
+      const srcPos = i * ratio;
+      const idx = Math.floor(srcPos);
+      const frac = srcPos - idx;
+      const s0 = input[idx] || 0;
+      const s1 = input[Math.min(idx + 1, input.length - 1)] || 0;
+      out[i] = s0 + (s1 - s0) * frac;
+    }
+    return out;
+  };
+
+  const encodeWavPcm16Mono = (samples, sampleRate) => {
+    const n = samples.length;
+    const bytesPerSample = 2;
+    const dataSize = n * bytesPerSample;
+    const buffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buffer);
+    const writeStr = (off, s) => {
+      for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+    };
+    writeStr(0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); // PCM
+    view.setUint16(22, 1, true); // mono
+    view.setUint32(24, sampleRate >>> 0, true);
+    view.setUint32(28, (sampleRate * bytesPerSample) >>> 0, true);
+    view.setUint16(32, bytesPerSample, true);
+    view.setUint16(34, 16, true);
+    writeStr(36, 'data');
+    view.setUint32(40, dataSize >>> 0, true);
+    let offset = 44;
+    for (let i = 0; i < n; i++) {
+      let v = samples[i];
+      if (v > 1) v = 1;
+      if (v < -1) v = -1;
+      const s = v < 0 ? v * 32768 : v * 32767;
+      view.setInt16(offset, s, true);
+      offset += 2;
+    }
+    return new Uint8Array(buffer);
+  };
+
+  const decodeAndConvertToWav16kMono = async (blob) => {
+    if (!AudioContextClass) throw new Error('WebAudio not supported');
+    const ab = await blob.arrayBuffer();
+    const ctx = new AudioContextClass();
+    try {
+      const audioBuffer = await ctx.decodeAudioData(ab.slice(0));
+      const channels = audioBuffer.numberOfChannels || 1;
+      const inRate = audioBuffer.sampleRate || 48000;
+      const len = audioBuffer.length || 0;
+      if (!len) throw new Error('decoded audio is empty');
+
+      // Mix down to mono
+      const mono = new Float32Array(len);
+      for (let ch = 0; ch < channels; ch++) {
+        const data = audioBuffer.getChannelData(ch);
+        for (let i = 0; i < len; i++) mono[i] += data[i] / channels;
+      }
+
+      // Normalize peak (helps low-volume recordings)
+      let peak = 0;
+      for (let i = 0; i < mono.length; i++) peak = Math.max(peak, Math.abs(mono[i]));
+      const targetPeak = 0.85;
+      const gain = peak > 1e-5 ? Math.min(20, targetPeak / peak) : 1.0;
+      if (gain !== 1.0) {
+        for (let i = 0; i < mono.length; i++) mono[i] = mono[i] * gain;
+      }
+
+      // Resample to 16k
+      const outRate = 16000;
+      const resampled = resampleMono(mono, inRate, outRate);
+      const wavBytes = encodeWavPcm16Mono(resampled, outRate);
+      return new Blob([wavBytes], { type: 'audio/wav' });
+    } finally {
+      try {
+        ctx.close().catch(() => {});
+      } catch (_) {
+        // ignore
+      }
+    }
+  };
 
   const unlockAudio = () => {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return;
     try {
       if (!audioContextRef.current) {
@@ -672,23 +770,92 @@ function App() {
   const startRecording = async () => {
     try {
       if (isRecording) return;
+      if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+        console.error('[REC] getUserMedia not supported');
+        alert('当前浏览器不支持麦克风录音（getUserMedia 不可用）');
+        return;
+      }
+      if (typeof window !== 'undefined' && window.isSecureContext === false) {
+        console.error('[REC] insecure context, microphone blocked');
+        alert('浏览器限制：非安全环境无法使用麦克风。请使用 https 或通过 localhost/127.0.0.1 访问页面。');
+        return;
+      }
       unlockAudio();
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+      recordStreamRef.current = stream;
+      recordStartMsRef.current = Date.now();
+      recordCanceledRef.current = false;
+
+      let mimeType = '';
+      const candidates = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/ogg',
+        'audio/mp4',
+      ];
+      for (const c of candidates) {
+        try {
+          if (window.MediaRecorder && typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(c)) {
+            mimeType = c;
+            break;
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      let mediaRecorder;
+      try {
+        mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      } catch (e) {
+        console.error('[REC] MediaRecorder init failed', e);
+        stream.getTracks().forEach((t) => t.stop());
+        recordStreamRef.current = null;
+        alert('初始化录音失败：当前浏览器不支持 MediaRecorder 或音频编码格式。');
+        return;
+      }
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
       mediaRecorder.ondataavailable = (event) => {
-        audioChunksRef.current.push(event.data);
+        if (event && event.data && event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
-        stream.getTracks().forEach(track => track.stop());
-        await processAudio(audioBlob);
+        const dt = Date.now() - (recordStartMsRef.current || Date.now());
+        const chunks = audioChunksRef.current || [];
+        const blobType = (mimeType || (mediaRecorder && mediaRecorder.mimeType) || 'application/octet-stream').split(';')[0];
+        const audioBlob = new Blob(chunks, { type: blobType });
+        const s = recordStreamRef.current;
+        recordStreamRef.current = null;
+        try {
+          if (s) s.getTracks().forEach((track) => track.stop());
+        } catch (_) {
+          // ignore
+        }
+        if (recordCanceledRef.current) {
+          console.warn(`[REC] canceled, drop blob type=${audioBlob.type} bytes=${audioBlob.size} dt=${dt}ms`);
+          recordCanceledRef.current = false;
+          return;
+        }
+        if (dt < MIN_RECORD_MS) {
+          console.warn(`[REC] too short, drop blob type=${audioBlob.type} bytes=${audioBlob.size} dt=${dt}ms`);
+          alert('录音太短，请按住说话 1 秒以上');
+          return;
+        }
+        if (!audioBlob || audioBlob.size <= 0) {
+          console.warn('[REC] empty audio blob, skip');
+          return;
+        }
+        console.log(`[REC] recorded blob type=${audioBlob.type} bytes=${audioBlob.size}`);
+        await processAudio(audioBlob, { mimeType: audioBlob.type });
       };
 
-      mediaRecorder.start();
+      // Emit data periodically to avoid "no data for short press" issues on some browsers.
+      mediaRecorder.start(250);
       setIsRecording(true);
     } catch (err) {
       console.error('Error accessing microphone:', err);
@@ -707,16 +874,52 @@ function App() {
         audioContextRef.current = null;
       }
       unlockAudio();
-      mediaRecorderRef.current.stop();
+      try {
+        if (mediaRecorderRef.current.state === 'recording') {
+          // Force flush any buffered data before stop.
+          if (typeof mediaRecorderRef.current.requestData === 'function') {
+            try {
+              mediaRecorderRef.current.requestData();
+            } catch (_) {
+              // ignore
+            }
+          }
+          mediaRecorderRef.current.stop();
+        }
+      } catch (e) {
+        console.error('[REC] stop failed', e);
+      }
       setIsRecording(false);
     }
   };
 
-  const processAudio = async (audioBlob) => {
+  const processAudio = async (audioBlob, meta = {}) => {
     setIsLoading(true);
     try {
+      let blobToSend = audioBlob;
+      // Convert MediaRecorder formats (webm/ogg/mp4) to WAV16k mono to improve ASR reliability.
+      const ct = String(meta.mimeType || audioBlob.type || '').toLowerCase();
+      if (ct.includes('webm') || ct.includes('ogg') || ct.includes('mp4')) {
+        try {
+          const wav = await decodeAndConvertToWav16kMono(audioBlob);
+          console.log(`[REC] converted_to_wav bytes=${wav.size}`);
+          blobToSend = wav;
+        } catch (e) {
+          console.warn('[REC] decode/convert failed, sending original blob:', e);
+          blobToSend = audioBlob;
+        }
+      }
+
       const formData = new FormData();
-      formData.append('audio', audioBlob);
+      const sendType = String(blobToSend.type || '').toLowerCase();
+      const ext = sendType.includes('wav')
+        ? 'wav'
+        : ct.includes('ogg')
+          ? 'ogg'
+          : ct.includes('mp4')
+            ? 'mp4'
+            : 'webm';
+      formData.append('audio', blobToSend, `recording.${ext}`);
 
       const response = await fetch('http://localhost:8000/api/speech_to_text', {
         method: 'POST',
@@ -727,9 +930,14 @@ function App() {
       const text = result.text || '';
 
       if (text) {
-        setInputText('');
-        beginDebugRun('voice');
-        await askQuestion(text);
+        console.log(`[REC] asr_text chars=${text.length} preview="${text.slice(0, 30)}"`);
+        setInputText((prev) => {
+          const p = String(prev || '').trim();
+          const t = String(text || '').trim();
+          if (!t) return p;
+          return p ? `${p} ${t}` : t;
+        });
+        setIsLoading(false);
       } else {
         setIsLoading(false);
       }
@@ -737,6 +945,47 @@ function App() {
       console.error('Error processing audio:', err);
       setIsLoading(false);
     }
+  };
+
+  const onRecordPointerDown = async (e) => {
+    try {
+      e.preventDefault();
+      e.stopPropagation();
+    } catch (_) {
+      // ignore
+    }
+    if (recordPointerIdRef.current != null) return;
+    recordPointerIdRef.current = e && e.pointerId != null ? e.pointerId : 'mouse';
+    console.log('[REC] pointerdown', recordPointerIdRef.current);
+    try {
+      if (e && e.currentTarget && typeof e.currentTarget.setPointerCapture === 'function' && e.pointerId != null) {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      }
+    } catch (_) {
+      // ignore
+    }
+    await startRecording();
+  };
+
+  const onRecordPointerUp = (e) => {
+    try {
+      e.preventDefault();
+      e.stopPropagation();
+    } catch (_) {
+      // ignore
+    }
+    const pid = e && e.pointerId != null ? e.pointerId : 'mouse';
+    if (recordPointerIdRef.current != null && recordPointerIdRef.current !== pid) return;
+    console.log('[REC] pointerup', pid);
+    recordPointerIdRef.current = null;
+    stopRecording();
+  };
+
+  const onRecordPointerCancel = () => {
+    console.log('[REC] pointercancel');
+    recordCanceledRef.current = true;
+    recordPointerIdRef.current = null;
+    stopRecording();
   };
 
   const askQuestion = async (text) => {
@@ -1154,10 +1403,16 @@ function App() {
           <div className="voice-input">
             <button
               className={`record-btn ${isRecording ? 'recording' : ''}`}
-              onMouseDown={startRecording}
-              onMouseUp={stopRecording}
-              onTouchStart={startRecording}
-              onTouchEnd={stopRecording}
+              onPointerDown={onRecordPointerDown}
+              onPointerUp={onRecordPointerUp}
+              onPointerCancel={onRecordPointerCancel}
+              onPointerLeave={onRecordPointerCancel}
+              onClick={() => {
+                // Fallback only when PointerEvent is not supported (avoid double start/stop from click after pointerup).
+                if (POINTER_SUPPORTED) return;
+                if (isRecording) stopRecording();
+                else startRecording();
+              }}
               disabled={false}
               aria-label={isRecording ? '录音中（松开结束）' : '按住说话'}
               title={isRecording ? '录音中（松开结束）' : '按住说话'}

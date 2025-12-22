@@ -4,9 +4,26 @@
   "dataset_name": "展厅",
   "default_conversation_name": "展厅聊天",
   "asr": {
-    "provider": "dashscope",
+    "provider": "funasr",
     "preprocess": {
-      "trim_silence": true
+      "trim_silence": true,
+      "normalize": true
+    },
+    "funasr": {
+      "model": "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+      "device": "cpu",
+      "disable_update": true,
+      "kwargs": {}
+    },
+    "faster_whisper": {
+      "model": "large-v3",
+      "device": "cpu",
+      "compute_type": "int8",
+      "cpu_threads": null,
+      "language": "zh",
+      "beam_size": 5,
+      "vad_filter": true,
+      "initial_prompt": null
     },
     "dashscope": {
       "api_key": "",
