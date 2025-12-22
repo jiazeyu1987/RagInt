@@ -1,5 +1,18 @@
 import React, { useEffect, useState, useRef } from 'react';
 import './App.css';
+import {
+  decodeAndConvertToWav16kMono as decodeAndConvertToWav16kMonoExt,
+  unlockAudio as unlockAudioExt,
+} from './audio/ttsAudio';
+import { cancelRequest as cancelBackendRequestExt, fetchJson } from './api/backendClient';
+import { RecorderManager } from './managers/RecorderManager';
+import { TtsQueueManager } from './managers/TtsQueueManager';
+import { TourPipelineManager } from './managers/TourPipelineManager';
+
+// Legacy in-file audio helpers are being phased out; keep lint quiet during migration.
+// (They will be deleted once App.js is fully split.)
+void playWavBytesViaDecodeAudioData;
+void playWavStreamViaWebAudio;
 
 async function playWavViaDecodeAudioData(url, audioContextRef, currentAudioRef) {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -717,14 +730,19 @@ function App() {
       return 0;
     }
   });
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
   const messagesEndRef = useRef(null);
   const PREFERRED_TTS_SAMPLE_RATE = 16000;
   const ttsEnabledRef = useRef(true);
   const continuousTourRef = useRef(continuousTour);
+  const guideEnabledRef = useRef(guideEnabled);
+  const tourStopsRef = useRef(tourStops);
+  const audienceProfileRef = useRef(audienceProfile);
+  const guideDurationRef = useRef(guideDuration);
+  const guideStyleRef = useRef(guideStyle);
+  const useAgentModeRef = useRef(useAgentMode);
+  const selectedChatRef = useRef(selectedChat);
+  const selectedAgentIdRef = useRef(selectedAgentId);
   const debugRef = useRef(null);
-  const segmentSeqRef = useRef(0);
   const askAbortRef = useRef(null);
   const tourStateRef = useRef(tourState);
   const tourStopDurationsRef = useRef(tourStopDurations);
@@ -735,91 +753,140 @@ function App() {
   const queueRef = useRef([]);
   const lastSpeakerRef = useRef('');
 
-  // 原始文本队列和预生成音频队列
-  const ttsTextQueueRef = useRef([]);
-  const ttsMetaQueueRef = useRef([]);
-  const ttsAudioQueueRef = useRef([]);
-  const seenTtsSegmentsRef = useRef(new Set());
-  const prefetchAbortRef = useRef(null);
-  const prefetchStoreRef = useRef(new Map()); // stopIndex -> { answerText, tail, createdAt }
-  const continuousActiveRef = useRef(false);
-  const continuousTokenRef = useRef(0);
+  const ttsManagerRef = useRef(null);
+  const tourPipelineRef = useRef(null);
 
-  // 工作线程引用
-  const ttsGeneratorPromiseRef = useRef(null);
-  const ttsPlayerPromiseRef = useRef(null);
-
-  const ragflowDoneRef = useRef(false);
   const runIdRef = useRef(0);
   const currentAudioRef = useRef(null);
   const receivedSegmentsRef = useRef(false);
   const audioContextRef = useRef(null);
   const USE_SAVED_TTS = false;
-  const recordStreamRef = useRef(null);
   const recordPointerIdRef = useRef(null);
-  const recordStartMsRef = useRef(0);
   const recordCanceledRef = useRef(false);
   const inputElRef = useRef(null);
+  const recorderManagerRef = useRef(null);
 
-  const AudioContextClass = typeof window !== 'undefined' ? (window.AudioContext || window.webkitAudioContext) : null;
   const POINTER_SUPPORTED = typeof window !== 'undefined' && 'PointerEvent' in window;
   const MIN_RECORD_MS = 900;
 
-  const abortPrefetch = (reason) => {
-    const ctl = prefetchAbortRef.current;
-    prefetchAbortRef.current = null;
-    if (!ctl) return;
-    try {
-      ctl.abort();
-      console.log('[PREFETCH] aborted', reason || 'unknown');
-    } catch (_) {
-      // ignore
-    }
+  const getTourPipeline = () => {
+    if (tourPipelineRef.current) return tourPipelineRef.current;
+
+    tourPipelineRef.current = new TourPipelineManager({
+      baseUrl: 'http://localhost:8000',
+      getClientId: () => clientIdRef.current,
+      getStops: () => tourStopsRef.current || [],
+      getLastAnswerTail: () => String((tourStateRef.current && tourStateRef.current.lastAnswerTail) || ''),
+      getAudienceProfile: () => String(audienceProfileRef.current || ''),
+      getGuideDuration: () => Number(guideDurationRef.current || 60),
+      getGuideStyle: () => String(guideStyleRef.current || 'friendly'),
+      getGuideEnabled: () => !!guideEnabledRef.current,
+      getPerStopDurations: () => tourStopDurationsRef.current || [],
+      getPerStopTargetChars: () => tourStopTargetCharsRef.current || [],
+      isContinuousTourEnabled: () => !!continuousTourRef.current,
+      getConversationConfig: () => ({
+        useAgentMode: !!useAgentModeRef.current,
+        selectedChat: useAgentModeRef.current ? null : selectedChatRef.current,
+        selectedAgentId: useAgentModeRef.current ? selectedAgentIdRef.current : null,
+      }),
+      onLog: (...args) => console.log(...args),
+      onWarn: (...args) => console.warn(...args),
+    });
+
+    return tourPipelineRef.current;
   };
 
-  const enqueueTtsSegment = (segText, meta) => {
-    const seg = String(segText || '').trim();
-    if (!seg) return null;
-    if (seenTtsSegmentsRef.current.has(seg)) return null;
-    seenTtsSegmentsRef.current.add(seg);
-    const seq = segmentSeqRef.current++;
-    const stopIndex = meta && Number.isFinite(meta.stopIndex) ? meta.stopIndex : null;
-    ttsTextQueueRef.current.push(seg);
-    ttsMetaQueueRef.current.push({ seq, stopIndex });
-    if (debugRef.current) {
-      debugRef.current.segments.push({
-        seq,
-        chars: seg.length,
-        ttsRequestAt: null,
-        ttsFirstAudioAt: null,
-        ttsDoneAt: null,
-      });
-      debugRefresh();
-    }
-    return { seq, seg, stopIndex };
+  const abortPrefetch = (reason) => {
+    if (!tourPipelineRef.current) return;
+    tourPipelineRef.current.abortPrefetch(reason);
+  };
+
+  const getTtsManager = () => {
+    if (ttsManagerRef.current) return ttsManagerRef.current;
+
+    ttsManagerRef.current = new TtsQueueManager({
+      audioContextRef,
+      currentAudioRef,
+      getRunId: () => runIdRef.current,
+      getClientId: () => clientIdRef.current,
+      nowMs,
+      baseUrl: 'http://localhost:8000',
+      useSavedTts: USE_SAVED_TTS,
+      maxPreGenerateCount: MAX_PRE_GENERATE_COUNT,
+      onStopIndexChange: (nextStopIndex) => {
+        if (!guideEnabledRef.current) return;
+        const curStopIndex = Number.isFinite(tourStateRef.current && tourStateRef.current.stopIndex)
+          ? Number(tourStateRef.current.stopIndex)
+          : -1;
+        if (Number(nextStopIndex) === curStopIndex) return;
+        const stopName = getTourStopName(Number(nextStopIndex));
+        setTourState((prev) => ({
+          ...(prev || {}),
+          mode: 'running',
+          stopIndex: Number(nextStopIndex),
+          stopName: stopName || (prev && prev.stopName) || '',
+          lastAction: 'next',
+        }));
+        const cached = tourPipelineRef.current ? tourPipelineRef.current.getPrefetch(Number(nextStopIndex)) : null;
+        if (cached && cached.answerText) {
+          setAnswer(String(cached.answerText || ''));
+        }
+      },
+      onDebug: (evt) => {
+        if (!evt || !debugRef.current) return;
+        const cur = debugRef.current;
+        const seq = typeof evt.seq === 'number' ? evt.seq : null;
+
+        if (evt.type === 'enqueue') {
+          cur.segments.push({
+            seq,
+            chars: Number(evt.chars) || 0,
+            ttsRequestAt: null,
+            ttsFirstAudioAt: null,
+            ttsDoneAt: null,
+          });
+          debugRefresh();
+          return;
+        }
+
+        if (evt.type === 'tts_request') {
+          if (!cur.ttsFirstRequestAt) cur.ttsFirstRequestAt = evt.t || nowMs();
+          if (seq != null) {
+            const segDebug = (cur.segments || []).find((s) => s.seq === seq);
+            if (segDebug && segDebug.ttsRequestAt == null) segDebug.ttsRequestAt = evt.t || nowMs();
+          }
+          debugRefresh();
+          return;
+        }
+
+        if (evt.type === 'tts_first_audio') {
+          debugMark('ttsFirstAudioAt', evt.t || nowMs());
+          if (seq != null) {
+            const segDebug = (cur.segments || []).find((s) => s.seq === seq);
+            if (segDebug && segDebug.ttsFirstAudioAt == null) segDebug.ttsFirstAudioAt = evt.t || nowMs();
+          }
+          debugRefresh();
+          return;
+        }
+
+        if (evt.type === 'tts_done') {
+          if (seq != null) {
+            const segDebug = (cur.segments || []).find((s) => s.seq === seq);
+            if (segDebug && segDebug.ttsDoneAt == null) segDebug.ttsDoneAt = evt.t || nowMs();
+          }
+          debugRefresh();
+        }
+      },
+      onLog: (...args) => console.log(...args),
+      onWarn: (...args) => console.warn(...args),
+      onError: (...args) => console.error(...args),
+    });
+
+    return ttsManagerRef.current;
   };
 
   const cancelBackendRequest = (requestId, reason) => {
-    const rid = String(requestId || '').trim();
-    if (!rid) return;
-    const payload = JSON.stringify({ request_id: rid, client_id: clientIdRef.current, reason: String(reason || 'client_cancel') });
-    try {
-      if (navigator && typeof navigator.sendBeacon === 'function') {
-        const ok = navigator.sendBeacon('http://localhost:8000/api/cancel', new Blob([payload], { type: 'application/json' }));
-        if (ok) return;
-      }
-    } catch (_) {
-      // ignore
-    }
-    try {
-      fetch('http://localhost:8000/api/cancel', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Client-ID': clientIdRef.current },
-        body: payload
-      }).catch(() => {});
-    } catch (_) {
-      // ignore
-    }
+    cancelBackendRequestExt({ requestId, clientId: clientIdRef.current, reason });
   };
 
   /* eslint-disable react-hooks/exhaustive-deps */
@@ -829,8 +896,7 @@ function App() {
       const hasActiveRun =
         !!askAbortRef.current ||
         isLoading ||
-        !!ttsGeneratorPromiseRef.current ||
-        !!ttsPlayerPromiseRef.current ||
+        (ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false) ||
         !!currentAudioRef.current;
       if (!hasActiveRun) return;
       try {
@@ -845,125 +911,12 @@ function App() {
   }, [isLoading]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
-  const resampleMono = (input, inRate, outRate) => {
-    if (!input || !input.length || !inRate || !outRate || inRate === outRate) return input;
-    const ratio = inRate / outRate;
-    const outLength = Math.max(1, Math.round(input.length / ratio));
-    const out = new Float32Array(outLength);
-    for (let i = 0; i < outLength; i++) {
-      const srcPos = i * ratio;
-      const idx = Math.floor(srcPos);
-      const frac = srcPos - idx;
-      const s0 = input[idx] || 0;
-      const s1 = input[Math.min(idx + 1, input.length - 1)] || 0;
-      out[i] = s0 + (s1 - s0) * frac;
-    }
-    return out;
-  };
-
-  const encodeWavPcm16Mono = (samples, sampleRate) => {
-    const n = samples.length;
-    const bytesPerSample = 2;
-    const dataSize = n * bytesPerSample;
-    const buffer = new ArrayBuffer(44 + dataSize);
-    const view = new DataView(buffer);
-    const writeStr = (off, s) => {
-      for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
-    };
-    writeStr(0, 'RIFF');
-    view.setUint32(4, 36 + dataSize, true);
-    writeStr(8, 'WAVE');
-    writeStr(12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true); // PCM
-    view.setUint16(22, 1, true); // mono
-    view.setUint32(24, sampleRate >>> 0, true);
-    view.setUint32(28, (sampleRate * bytesPerSample) >>> 0, true);
-    view.setUint16(32, bytesPerSample, true);
-    view.setUint16(34, 16, true);
-    writeStr(36, 'data');
-    view.setUint32(40, dataSize >>> 0, true);
-    let offset = 44;
-    for (let i = 0; i < n; i++) {
-      let v = samples[i];
-      if (v > 1) v = 1;
-      if (v < -1) v = -1;
-      const s = v < 0 ? v * 32768 : v * 32767;
-      view.setInt16(offset, s, true);
-      offset += 2;
-    }
-    return new Uint8Array(buffer);
-  };
-
   const decodeAndConvertToWav16kMono = async (blob) => {
-    if (!AudioContextClass) throw new Error('WebAudio not supported');
-    const ab = await blob.arrayBuffer();
-    const ctx = new AudioContextClass();
-    try {
-      const audioBuffer = await ctx.decodeAudioData(ab.slice(0));
-      const channels = audioBuffer.numberOfChannels || 1;
-      const inRate = audioBuffer.sampleRate || 48000;
-      const len = audioBuffer.length || 0;
-      if (!len) throw new Error('decoded audio is empty');
-
-      // Mix down to mono
-      const mono = new Float32Array(len);
-      for (let ch = 0; ch < channels; ch++) {
-        const data = audioBuffer.getChannelData(ch);
-        for (let i = 0; i < len; i++) mono[i] += data[i] / channels;
-      }
-
-      // Normalize peak (helps low-volume recordings)
-      let peak = 0;
-      for (let i = 0; i < mono.length; i++) peak = Math.max(peak, Math.abs(mono[i]));
-      const targetPeak = 0.85;
-      const gain = peak > 1e-5 ? Math.min(20, targetPeak / peak) : 1.0;
-      if (gain !== 1.0) {
-        for (let i = 0; i < mono.length; i++) mono[i] = mono[i] * gain;
-      }
-
-      // Resample to 16k
-      const outRate = 16000;
-      const resampled = resampleMono(mono, inRate, outRate);
-      const wavBytes = encodeWavPcm16Mono(resampled, outRate);
-      return new Blob([wavBytes], { type: 'audio/wav' });
-    } finally {
-      try {
-        ctx.close().catch(() => {});
-      } catch (_) {
-        // ignore
-      }
-    }
+    return decodeAndConvertToWav16kMonoExt(blob);
   };
 
   const unlockAudio = () => {
-    if (!AudioContextClass) return;
-    try {
-      if (!audioContextRef.current) {
-        try {
-          audioContextRef.current = new AudioContextClass({ sampleRate: PREFERRED_TTS_SAMPLE_RATE });
-        } catch (_) {
-          audioContextRef.current = new AudioContextClass();
-        }
-      }
-      const audioCtx = audioContextRef.current;
-      if (audioCtx && audioCtx.state === 'suspended') {
-        audioCtx.resume().catch((err) => console.warn('[audio] resume blocked:', err));
-      }
-
-      try {
-        const buffer = audioCtx.createBuffer(1, 1, audioCtx.sampleRate);
-        const src = audioCtx.createBufferSource();
-        src.buffer = buffer;
-        src.connect(audioCtx.destination);
-        src.start(0);
-        src.stop(0);
-      } catch (_) {
-        // ignore
-      }
-    } catch (err) {
-      console.warn('[audio] unlock failed:', err);
-    }
+    unlockAudioExt(audioContextRef, PREFERRED_TTS_SAMPLE_RATE);
   };
 
   useEffect(() => {
@@ -985,12 +938,9 @@ function App() {
       currentAudioRef.current = null;
       }
 
-      ttsTextQueueRef.current = [];
-      ttsMetaQueueRef.current = [];
-      ttsAudioQueueRef.current = [];
-      ragflowDoneRef.current = true;
-      ttsGeneratorPromiseRef.current = null;
-      ttsPlayerPromiseRef.current = null;
+      if (ttsManagerRef.current) {
+        ttsManagerRef.current.stop('tts_disabled');
+      }
       setQueueStatus('');
     }
   }, [ttsEnabled]);
@@ -1015,8 +965,16 @@ function App() {
   }, [guideEnabled, guideDuration, guideStyle]);
 
   useEffect(() => {
+    guideEnabledRef.current = !!guideEnabled;
+  }, [guideEnabled]);
+
+  useEffect(() => {
     tourStateRef.current = tourState;
   }, [tourState]);
+
+  useEffect(() => {
+    tourStopsRef.current = Array.isArray(tourStops) ? tourStops : [];
+  }, [tourStops]);
 
   useEffect(() => {
     tourStopDurationsRef.current = Array.isArray(tourStopDurations) ? tourStopDurations : [];
@@ -1025,6 +983,27 @@ function App() {
   useEffect(() => {
     tourStopTargetCharsRef.current = Array.isArray(tourStopTargetChars) ? tourStopTargetChars : [];
   }, [tourStopTargetChars]);
+
+  useEffect(() => {
+    audienceProfileRef.current = String(audienceProfile || '').trim();
+  }, [audienceProfile]);
+
+  useEffect(() => {
+    guideDurationRef.current = guideDuration;
+    guideStyleRef.current = guideStyle;
+  }, [guideDuration, guideStyle]);
+
+  useEffect(() => {
+    useAgentModeRef.current = !!useAgentMode;
+  }, [useAgentMode]);
+
+  useEffect(() => {
+    selectedChatRef.current = selectedChat;
+  }, [selectedChat]);
+
+  useEffect(() => {
+    selectedAgentIdRef.current = selectedAgentId;
+  }, [selectedAgentId]);
 
   useEffect(() => {
     groupModeRef.current = !!groupMode;
@@ -1106,8 +1085,7 @@ function App() {
     let cancelled = false;
     (async () => {
       try {
-        const metaResp = await fetch('http://localhost:8000/api/tour/meta');
-        const meta = await metaResp.json();
+        const meta = await fetchJson('/api/tour/meta');
         if (cancelled) return;
         if (meta && typeof meta === 'object') {
           setTourMeta(meta);
@@ -1117,8 +1095,7 @@ function App() {
           setAudienceProfile((prev) => (prev ? prev : String(meta.default_profile || profiles[0] || '大众')));
         }
 
-        const resp = await fetch('http://localhost:8000/api/tour/stops');
-        const data = await resp.json();
+        const data = await fetchJson('/api/tour/stops');
         if (cancelled) return;
         const stops = Array.isArray(data && data.stops) ? data.stops.map((s) => String(s || '').trim()).filter(Boolean) : [];
         setTourStops(stops);
@@ -1146,141 +1123,7 @@ function App() {
   };
 
   const buildTourPrompt = (action, stopIndex, tailOverride) => {
-    const idx = Number.isFinite(stopIndex) ? stopIndex : 0;
-    const stopName = getTourStopName(idx);
-    const n = Array.isArray(tourStops) ? tourStops.length : 0;
-    const title = stopName ? `第${idx + 1}站「${stopName}」` : `第${idx + 1}站`;
-    const suffix = n ? `（共${n}站）` : '';
-    const tail =
-      tailOverride != null ? String(tailOverride || '').trim() : String((tourStateRef.current && tourStateRef.current.lastAnswerTail) || '').trim();
-    const tailHint = tail ? `\n\n【上一段结束语（供承接）】${tail}` : '';
-    const profile = String(audienceProfile || '').trim();
-    const profileHint = profile ? `\n\n【人群画像】${profile}` : '';
-
-    const durs = tourStopDurationsRef.current || [];
-    const targets = tourStopTargetCharsRef.current || [];
-    const dur =
-      Number.isFinite(Number(durs[idx])) && Number(durs[idx]) > 0 ? Number(durs[idx]) : Math.max(15, Number(guideDuration || 60) || 60);
-    const targetChars = Number.isFinite(Number(targets[idx])) && Number(targets[idx]) > 0 ? Number(targets[idx]) : Math.max(30, Math.round(dur * 4.5));
-    const durHint = `\n\n【本站讲解时长】约${dur}秒（建议总字数约${targetChars}字，按中文语速估算）`;
-    if (action === 'start') {
-      return `请开始展厅讲解：从${title}${suffix}开始，先给出1-2句开场白，再分点讲解本站重点。${durHint}${profileHint}`;
-    }
-    if (action === 'continue') {
-      return `继续讲解${title}${suffix}：承接上一段内容，补充关键细节与示例，保持短句分段。${durHint}${tailHint}${profileHint}`;
-    }
-    if (action === 'next') {
-      return `现在进入${title}${suffix}：请开始讲解，先概括本站主题，再分点说明。${durHint}${tailHint}${profileHint}`;
-    }
-    return '继续讲解';
-  };
-
-  const prefetchTourStopTextToQueue = async ({ stopIndex, tail, token }) => {
-    const idx = Number.isFinite(stopIndex) ? stopIndex : 0;
-    const stops = Array.isArray(tourStops) ? tourStops : [];
-    if (!stops.length || idx < 0 || idx >= stops.length) return;
-    if (!continuousTourRef.current) return;
-    if (continuousActiveRef.current !== true) return;
-
-    // If already cached, skip.
-    if (prefetchStoreRef.current.has(idx)) return;
-
-    abortPrefetch('replace');
-    const ctl = new AbortController();
-    prefetchAbortRef.current = ctl;
-
-    const prefetchAskId = `ask_prefetch_${token}_${idx}_${Date.now()}`;
-    const prompt = buildTourPrompt('next', idx, tail);
-
-    console.log('[PREFETCH] start', `stopIndex=${idx}`, `askId=${prefetchAskId}`);
-
-    try {
-      const resp = await fetch('http://localhost:8000/api/ask', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Client-ID': clientIdRef.current,
-          'X-Request-ID': prefetchAskId,
-        },
-        body: JSON.stringify({
-          question: prompt,
-          request_id: prefetchAskId,
-          client_id: clientIdRef.current,
-          kind: 'ask_prefetch',
-          conversation_name: useAgentMode ? null : selectedChat,
-          agent_id: useAgentMode ? (selectedAgentId || null) : null,
-          guide: {
-            enabled: !!guideEnabled,
-            // Use per-stop duration/target chars if available (via buildTourPrompt hints + overrides below).
-            duration_s: Math.max(15, Number(guideDuration || 60) || 60),
-            style: String(guideStyle || 'friendly'),
-          },
-        }),
-        signal: ctl.signal,
-      });
-
-      if (!resp.ok || !resp.body) throw new Error(`prefetch /api/ask http=${resp.status}`);
-
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let sseBuffer = '';
-      let answerText = '';
-      let gotAnySegment = false;
-
-      while (true) {
-        if (ctl.signal.aborted) break;
-        if (!continuousActiveRef.current || continuousTokenRef.current !== token) break;
-        const { done, value } = await reader.read();
-        if (done) break;
-        sseBuffer += decoder.decode(value, { stream: true });
-        const lines = sseBuffer.split('\n');
-        sseBuffer = lines.pop() || '';
-        for (const line of lines) {
-          const trimmed = String(line || '').trim();
-          if (!trimmed.startsWith('data: ')) continue;
-          let data = null;
-          try {
-            data = JSON.parse(trimmed.slice(6));
-          } catch (_) {
-            continue;
-          }
-          if (data && data.chunk && !data.done) {
-            answerText += String(data.chunk || '');
-          }
-          if (data && data.segment && !data.done) {
-            const seg = String(data.segment || '').trim();
-            if (seg) {
-              gotAnySegment = true;
-              enqueueTtsSegment(seg, { stopIndex: idx, source: 'prefetch' });
-            }
-          }
-          if (data && data.done) break;
-        }
-        if (gotAnySegment && ttsEnabledRef.current) {
-          // Let generator catch up while we keep streaming.
-        }
-      }
-
-      if (ctl.signal.aborted) return;
-      if (!continuousActiveRef.current || continuousTokenRef.current !== token) return;
-
-      const tailOut = String(answerText || '').trim().slice(-80);
-      prefetchStoreRef.current.set(idx, { answerText: String(answerText || ''), tail: tailOut, createdAt: Date.now() });
-      console.log('[PREFETCH] ready', `stopIndex=${idx}`, `segments=${gotAnySegment ? 'yes' : 'no'}`);
-
-      // Chain prefetch: once stop idx text is ready, start prefetching idx+1 (one-by-one) without waiting for TTS.
-      const nextIndex = idx + 1;
-      if (nextIndex < stops.length) {
-        setTimeout(() => {
-          prefetchTourStopTextToQueue({ stopIndex: nextIndex, tail: tailOut, token });
-        }, 0);
-      }
-    } catch (e) {
-      if (ctl.signal.aborted || String(e && e.name) === 'AbortError') return;
-      console.warn('[PREFETCH] failed', e);
-    } finally {
-      if (prefetchAbortRef.current === ctl) prefetchAbortRef.current = null;
-    }
+    return getTourPipeline().buildTourPrompt(action, stopIndex, tailOverride);
   };
 
   const enqueueQuestion = ({ speaker, text, priority }) => {
@@ -1317,8 +1160,9 @@ function App() {
 
   const maybeStartNextQueuedQuestion = async () => {
     if (!groupModeRef.current) return;
-    if (continuousActiveRef.current) return;
-    if (isLoading || askAbortRef.current || ttsGeneratorPromiseRef.current || ttsPlayerPromiseRef.current) return;
+    if (tourPipelineRef.current && tourPipelineRef.current.isActive()) return;
+    const ttsBusy = ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false;
+    if (isLoading || askAbortRef.current || ttsBusy) return;
     const next = pickNextQueuedQuestion();
     if (!next) return;
     removeQueuedQuestion(next.id);
@@ -1339,7 +1183,10 @@ function App() {
       lastSpeakerRef.current = String(item.speaker || '');
       const prefixed = `【提问人：${String(item.speaker || '').trim() || '观众'}】${String(item.text || '').trim()}`;
       const active =
-        !!askAbortRef.current || isLoading || !!ttsGeneratorPromiseRef.current || !!ttsPlayerPromiseRef.current || !!currentAudioRef.current;
+        !!askAbortRef.current ||
+        isLoading ||
+        !!currentAudioRef.current ||
+        (ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false);
       if (active) interruptCurrentRun('queue_takeover');
       beginDebugRun(item.priority === 'high' ? 'group_high' : 'group_takeover');
       await askQuestion(prefixed, { fromQueue: true });
@@ -1352,8 +1199,7 @@ function App() {
     let cancelled = false;
     (async () => {
       try {
-        const resp = await fetch('http://localhost:8000/api/ragflow/chats');
-        const data = await resp.json();
+        const data = await fetchJson('/api/ragflow/chats');
         if (cancelled) return;
         const chats = Array.isArray(data && data.chats) ? data.chats : [];
         const names = chats.map((c) => (c && c.name ? String(c.name) : '')).filter(Boolean);
@@ -1397,8 +1243,7 @@ function App() {
     let cancelled = false;
     (async () => {
       try {
-        const resp = await fetch('http://localhost:8000/api/ragflow/agents');
-        const data = await resp.json();
+        const data = await fetchJson('/api/ragflow/agents');
         if (cancelled) return;
         const agents = Array.isArray(data && data.agents) ? data.agents : [];
         setAgentOptions(agents);
@@ -1455,10 +1300,12 @@ function App() {
 
   // 更新队列状态显示
   const updateQueueStatus = () => {
-    const textCount = ttsTextQueueRef.current.length;
-    const audioCount = ttsAudioQueueRef.current.length;
-    const generatorRunning = !!ttsGeneratorPromiseRef.current;
-    const playerRunning = !!ttsPlayerPromiseRef.current;
+    const mgr = ttsManagerRef.current;
+    const stats = mgr ? mgr.getStats() : { textCount: 0, audioCount: 0, generatorRunning: false, playerRunning: false };
+    const textCount = stats.textCount || 0;
+    const audioCount = stats.audioCount || 0;
+    const generatorRunning = !!stats.generatorRunning;
+    const playerRunning = !!stats.playerRunning;
 
     setQueueStatus(
       `📝待生成: ${textCount} | 🔊预生成: ${audioCount} | ` +
@@ -1470,7 +1317,8 @@ function App() {
   // 启动队列状态监控
   const startStatusMonitor = (runId) => {
     const interval = setInterval(() => {
-      if (runIdRef.current === runId && (isLoading || ttsGeneratorPromiseRef.current || ttsPlayerPromiseRef.current)) {
+      const busy = ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false;
+      if (runIdRef.current === runId && (isLoading || busy)) {
         updateQueueStatus();
       } else {
         setQueueStatus('');
@@ -1480,103 +1328,24 @@ function App() {
   };
 
   const startRecording = async () => {
-    try {
-      if (isRecording) return;
-      if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
-        console.error('[REC] getUserMedia not supported');
-        alert('当前浏览器不支持麦克风录音（getUserMedia 不可用）');
-        return;
-      }
-      if (typeof window !== 'undefined' && window.isSecureContext === false) {
-        console.error('[REC] insecure context, microphone blocked');
-        alert('浏览器限制：非安全环境无法使用麦克风。请使用 https 或通过 localhost/127.0.0.1 访问页面。');
-        return;
-      }
-      unlockAudio();
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      recordStreamRef.current = stream;
-      recordStartMsRef.current = Date.now();
-      recordCanceledRef.current = false;
-
-      let mimeType = '';
-      const candidates = [
-        'audio/webm;codecs=opus',
-        'audio/webm',
-        'audio/ogg;codecs=opus',
-        'audio/ogg',
-        'audio/mp4',
-      ];
-      for (const c of candidates) {
-        try {
-          if (window.MediaRecorder && typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(c)) {
-            mimeType = c;
-            break;
-          }
-        } catch (_) {
-          // ignore
-        }
-      }
-
-      let mediaRecorder;
-      try {
-        mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-      } catch (e) {
-        console.error('[REC] MediaRecorder init failed', e);
-        stream.getTracks().forEach((t) => t.stop());
-        recordStreamRef.current = null;
-        alert('初始化录音失败：当前浏览器不支持 MediaRecorder 或音频编码格式。');
-        return;
-      }
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event && event.data && event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = async () => {
-        const dt = Date.now() - (recordStartMsRef.current || Date.now());
-        const chunks = audioChunksRef.current || [];
-        const blobType = (mimeType || (mediaRecorder && mediaRecorder.mimeType) || 'application/octet-stream').split(';')[0];
-        const audioBlob = new Blob(chunks, { type: blobType });
-        const s = recordStreamRef.current;
-        recordStreamRef.current = null;
-        try {
-          if (s) s.getTracks().forEach((track) => track.stop());
-        } catch (_) {
-          // ignore
-        }
-        if (recordCanceledRef.current) {
-          console.warn(`[REC] canceled, drop blob type=${audioBlob.type} bytes=${audioBlob.size} dt=${dt}ms`);
-          recordCanceledRef.current = false;
-          return;
-        }
-        if (dt < MIN_RECORD_MS) {
-          console.warn(`[REC] too short, drop blob type=${audioBlob.type} bytes=${audioBlob.size} dt=${dt}ms`);
-          alert('录音太短，请按住说话 1 秒以上');
-          return;
-        }
-        if (!audioBlob || audioBlob.size <= 0) {
-          console.warn('[REC] empty audio blob, skip');
-          return;
-        }
-        console.log(`[REC] recorded blob type=${audioBlob.type} bytes=${audioBlob.size}`);
-        await processAudio(audioBlob, { mimeType: audioBlob.type });
-      };
-
-      // Emit data periodically to avoid "no data for short press" issues on some browsers.
-      mediaRecorder.start(250);
-      setIsRecording(true);
-    } catch (err) {
-      console.error('Error accessing microphone:', err);
+    if (!recorderManagerRef.current) {
+      recorderManagerRef.current = new RecorderManager({
+        minRecordMs: MIN_RECORD_MS,
+        onStateChange: (v) => setIsRecording(!!v),
+        onBlob: async (blob, meta) => {
+          await processAudio(blob, meta);
+        },
+        onLog: (...args) => console.log(...args),
+      });
     }
+    unlockAudio();
+    await recorderManagerRef.current.start();
   };
 
   const stopRecording = () => {
-    if (!isRecording) return;
-    if (mediaRecorderRef.current) {
+    if (!recorderManagerRef.current) return;
+    // Keep the "unlock" behavior from the original implementation.
+    if (ttsEnabledRef.current) {
       if (audioContextRef.current) {
         try {
           audioContextRef.current.close().catch(() => {});
@@ -1586,23 +1355,8 @@ function App() {
         audioContextRef.current = null;
       }
       unlockAudio();
-      try {
-        if (mediaRecorderRef.current.state === 'recording') {
-          // Force flush any buffered data before stop.
-          if (typeof mediaRecorderRef.current.requestData === 'function') {
-            try {
-              mediaRecorderRef.current.requestData();
-            } catch (_) {
-              // ignore
-            }
-          }
-          mediaRecorderRef.current.stop();
-        }
-      } catch (e) {
-        console.error('[REC] stop failed', e);
-      }
-      setIsRecording(false);
     }
+    recorderManagerRef.current.stop();
   };
 
   const processAudio = async (audioBlob, meta = {}) => {
@@ -1704,14 +1458,11 @@ function App() {
   };
 
   const interruptCurrentRun = (reason) => {
-    continuousActiveRef.current = false;
-    continuousTokenRef.current += 1;
     try {
-      prefetchStoreRef.current.clear();
+      if (tourPipelineRef.current) tourPipelineRef.current.interrupt('interrupt');
     } catch (_) {
       // ignore
     }
-    abortPrefetch('interrupt');
     try {
       if (activeAskRequestIdRef.current) {
         cancelBackendRequest(activeAskRequestIdRef.current, reason || 'interrupt');
@@ -1746,13 +1497,10 @@ function App() {
       currentAudioRef.current = null;
     }
 
-    ttsTextQueueRef.current = [];
-    ttsMetaQueueRef.current = [];
-    ttsAudioQueueRef.current = [];
-    ragflowDoneRef.current = true;
     receivedSegmentsRef.current = false;
-    ttsGeneratorPromiseRef.current = null;
-    ttsPlayerPromiseRef.current = null;
+    if (ttsManagerRef.current) {
+      ttsManagerRef.current.stop(reason || 'interrupt');
+    }
 
     try {
       setQueueStatus('');
@@ -1778,34 +1526,18 @@ function App() {
       console.warn('[TOUR] continuous: no stops loaded');
       return;
     }
-
-    const token = ++continuousTokenRef.current;
-    continuousActiveRef.current = true;
-    abortPrefetch('continuous_start');
-
-    const start = Math.max(0, Math.min(Number(startIndex) || 0, stops.length - 1));
-    console.log('[TOUR] continuous start', `token=${token}`, `from=${start}`);
-
-    try {
-      const action = String(firstAction || 'start');
-      const prompt = buildTourPrompt(action === 'continue' ? 'continue' : 'start', start);
-      beginDebugRun(action === 'continue' ? 'guide_continue' : 'guide_start');
-      // Run the first stop as the "root" ask. Subsequent stops are prefetched (kind=ask_prefetch)
-      // and their segments are appended into the same TTS queues, so playback can be seamless.
-      await askQuestion(prompt, { tourAction: action, tourStopIndex: start, continuous: true, continuousRoot: true });
-    } finally {
-      if (continuousTokenRef.current === token) {
-        continuousActiveRef.current = false;
-        abortPrefetch('continuous_end');
-        console.log('[TOUR] continuous end', `token=${token}`);
-      }
-    }
+    const action = String(firstAction || 'start');
+    beginDebugRun(action === 'continue' ? 'guide_continue' : 'guide_start');
+    await getTourPipeline().startContinuousTour({ startIndex, firstAction: action, askQuestion, stopsOverride: stops });
   };
 
   const askQuestion = async (text, opts) => {
     // Interrupt any previous in-flight /api/ask stream.
     const hasActiveRun =
-      !!askAbortRef.current || isLoading || !!ttsGeneratorPromiseRef.current || !!ttsPlayerPromiseRef.current || !!currentAudioRef.current;
+      !!askAbortRef.current ||
+      isLoading ||
+      !!currentAudioRef.current ||
+      (ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false);
     if (hasActiveRun) interruptCurrentRun('new_question');
     try {
       if (askAbortRef.current) askAbortRef.current.abort();
@@ -1819,24 +1551,15 @@ function App() {
     activeAskRequestIdRef.current = requestId;
     const abortController = new AbortController();
     askAbortRef.current = abortController;
-    let segmentIndex = 0;
-    segmentSeqRef.current = 0;
     if (!debugRef.current) beginDebugRun('unknown');
     setLastQuestion(text);
     setAnswer('');
     setIsLoading(true);
 
     // 清空所有队列/状态（用于“打断”或新问题覆盖旧问题）
-    ttsTextQueueRef.current = [];
-    ttsMetaQueueRef.current = [];
-    ttsAudioQueueRef.current = [];
-    ragflowDoneRef.current = false;
     receivedSegmentsRef.current = false;
-    try {
-      seenTtsSegmentsRef.current.clear();
-    } catch (_) {
-      seenTtsSegmentsRef.current = new Set();
-    }
+    const ttsMgr = getTtsManager();
+    ttsMgr.resetForRun({ requestId });
     abortPrefetch('ask_start');
 
     if (options.tourAction) {
@@ -1880,237 +1603,6 @@ function App() {
       currentAudioRef.current = null;
     }
 
-
-
-    // 终止之前的工作线程
-    if (ttsGeneratorPromiseRef.current) {
-      ttsGeneratorPromiseRef.current = null;
-    }
-    if (ttsPlayerPromiseRef.current) {
-      ttsPlayerPromiseRef.current = null;
-    }
-
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-    // TTS音频生成函数
-    const generateAudioSegmentUrl = (segmentText) => {
-      try {
-        const seg = String(segmentText || '').trim();
-        if (!seg) return null;
-        const url = new URL(USE_SAVED_TTS ? 'http://localhost:8000/api/text_to_speech_saved' : 'http://localhost:8000/api/text_to_speech_stream');
-        url.searchParams.set('text', seg);
-        url.searchParams.set('request_id', requestId);
-        url.searchParams.set('client_id', clientIdRef.current);
-        url.searchParams.set('segment_index', String(segmentIndex++));
-        return url.toString();
-      } catch (err) {
-        console.error(`❌ 音频生成失败: "${segmentText}"`, err);
-        return null;
-      }
-    };
-
-    // TTS音频播放函数
-    const playAudioUrl = async (audioUrl, segmentText) => {
-      if (!audioUrl) return;
-      try {
-        console.log(`🔊 开始播放: "${segmentText.substring(0, 30)}..."`);
-        await new Promise((resolve, reject) => {
-          const audio = new Audio(audioUrl);
-          currentAudioRef.current = audio;
-
-          audio.onended = () => {
-            console.log(`✅ 播放完成: "${segmentText.substring(0, 30)}..."`);
-            resolve();
-          };
-          audio.onerror = () => reject(new Error('Audio playback failed'));
-
-          audio.play().catch(reject);
-        });
-      } catch (err) {
-        console.error(`❌ 播放失败: "${segmentText}"`, err);
-      } finally {
-        if (currentAudioRef.current) {
-          currentAudioRef.current = null;
-        }
-      }
-    };
-
-    // TTS音频生成工作线程 - 后台预生成音频
-    const startTTSGenerator = () => {
-      if (ttsGeneratorPromiseRef.current) return;
-
-      ttsGeneratorPromiseRef.current = (async () => {
-        while (runIdRef.current === runId) {
-          // 如果音频队列已经有足够的预生成音频，等待
-          if (ttsAudioQueueRef.current.length >= MAX_PRE_GENERATE_COUNT) {
-            await sleep(50);
-            continue;
-          }
-
-          // 检查是否有待生成的文本
-          const nextSegment = ttsTextQueueRef.current[0]; // 查看但不移除
-          if (!nextSegment) {
-            if (ragflowDoneRef.current) {
-              console.log('🏁 TTS生成器: 所有文本已处理完毕');
-              break;
-            }
-            await sleep(50);
-            continue;
-          }
-
-          // 移除文本并生成音频
-          ttsTextQueueRef.current.shift();
-          const nextSeq = ttsMetaQueueRef.current.shift();
-          const audioUrl = generateAudioSegmentUrl(nextSegment);
-
-          if (audioUrl) {
-            const meta = nextSeq && typeof nextSeq === 'object' ? nextSeq : null;
-            ttsAudioQueueRef.current.push({
-              seq: meta && typeof meta.seq === 'number' ? meta.seq : typeof nextSeq === 'number' ? nextSeq : null,
-              stopIndex: meta && Number.isFinite(meta.stopIndex) ? meta.stopIndex : null,
-              text: nextSegment,
-              url: audioUrl
-            });
-          }
-
-          // 检查是否应该启动播放器
-          if (!ttsPlayerPromiseRef.current && ttsAudioQueueRef.current.length > 0) {
-            startTTSPlayer();
-          }
-        }
-      })()
-        .catch((err) => {
-          console.error('❌ TTS生成线程出错:', err);
-        })
-        .finally(() => {
-          ttsGeneratorPromiseRef.current = null;
-        });
-    };
-
-    // TTS音频播放工作线程 - 专门负责播放
-    const startTTSPlayer = () => {
-      if (ttsPlayerPromiseRef.current) return;
-
-      ttsPlayerPromiseRef.current = (async () => {
-        while (runIdRef.current === runId) {
-          const audioItem = ttsAudioQueueRef.current.shift();
-          if (!audioItem) {
-            // 检查是否所有工作都已完成
-            if (ragflowDoneRef.current && !ttsGeneratorPromiseRef.current) {
-              console.log('🏁 TTS播放器: 所有音频播放完毕');
-              break;
-            }
-            await sleep(50);
-            continue;
-          }
-
-          const segSeq = typeof audioItem.seq === 'number' ? audioItem.seq : null;
-          const segDebug =
-            debugRef.current && segSeq != null
-              ? (debugRef.current.segments || []).find((s) => s.seq === segSeq)
-              : null;
-
-          // When moving to a new stop (continuous tour), update UI state best-effort.
-          if (audioItem && Number.isFinite(audioItem.stopIndex) && guideEnabled) {
-            const nextStopIndex = Number(audioItem.stopIndex);
-            const curStopIndex = Number.isFinite(tourStateRef.current && tourStateRef.current.stopIndex)
-              ? Number(tourStateRef.current.stopIndex)
-              : -1;
-            if (nextStopIndex !== curStopIndex) {
-              const stopName = getTourStopName(nextStopIndex);
-              setTourState((prev) => ({
-                ...(prev || {}),
-                mode: 'running',
-                stopIndex: nextStopIndex,
-                stopName: stopName || (prev && prev.stopName) || '',
-                lastAction: 'next',
-              }));
-              const cached = prefetchStoreRef.current.get(nextStopIndex);
-              if (cached && cached.answerText) {
-                setAnswer(String(cached.answerText || ''));
-              }
-            }
-          }
-
-          if (debugRef.current) {
-            const tReq = nowMs();
-            if (!debugRef.current.ttsFirstRequestAt) debugRef.current.ttsFirstRequestAt = tReq;
-            if (segDebug && segDebug.ttsRequestAt == null) segDebug.ttsRequestAt = tReq;
-            debugRefresh();
-          }
-
-          try {
-            if (audioItem && audioItem.wavBytes) {
-              try {
-                await playWavBytesViaDecodeAudioData(audioItem.wavBytes, audioContextRef, currentAudioRef);
-              } catch (err) {
-                console.warn('[TTS] prefetched playback failed, falling back to stream fetch:', err);
-                if (audioItem.url) {
-                  await playWavStreamViaWebAudio(
-                    audioItem.url,
-                    audioContextRef,
-                    currentAudioRef,
-                    () => playAudioUrl(audioItem.url, audioItem.text),
-                    () => {
-                      const tFirst = nowMs();
-                      debugMark('ttsFirstAudioAt', tFirst);
-                      if (segDebug && segDebug.ttsFirstAudioAt == null) {
-                        segDebug.ttsFirstAudioAt = tFirst;
-                        debugRefresh();
-                      }
-                    }
-                  );
-                }
-              }
-            } else if (USE_SAVED_TTS) {
-              try {
-                await playWavViaDecodeAudioData(audioItem.url, audioContextRef, currentAudioRef);
-              } catch (err) {
-                console.warn('[TTS] saved playback failed, fallback to <audio>:', err);
-                await playAudioUrl(audioItem.url, audioItem.text);
-              }
-            } else {
-              await playWavStreamViaWebAudio(
-                audioItem.url,
-                audioContextRef,
-                currentAudioRef,
-                () => playAudioUrl(audioItem.url, audioItem.text),
-                () => {
-                  const tFirst = nowMs();
-                  debugMark('ttsFirstAudioAt', tFirst);
-                  if (segDebug && segDebug.ttsFirstAudioAt == null) {
-                    segDebug.ttsFirstAudioAt = tFirst;
-                    debugRefresh();
-                  }
-                }
-              );
-            }
-          } finally {
-            // Prevent stale "playing" state from leaking into next segments / next tour stop.
-            if (currentAudioRef.current) currentAudioRef.current = null;
-          }
-
-          if (segDebug && segDebug.ttsDoneAt == null) {
-            segDebug.ttsDoneAt = nowMs();
-            debugRefresh();
-          }
-        }
-      })()
-        .catch((err) => {
-          console.error('❌ TTS播放线程出错:', err);
-        })
-        .finally(() => {
-          if (runIdRef.current === runId) {
-            setIsLoading(false);
-            debugMark('ttsAllDoneAt');
-          }
-          ttsPlayerPromiseRef.current = null;
-        });
-    };
-
-    // If we already prefetched the next stop (RAG+TTS), inject the first audio chunk to reduce the gap.
-    // (Deprecated) We no longer inject prefetched WAV bytes; we prefetch text segments and let the generator stream TTS.
-
     let fullAnswer = '';
     try {
       let guideDurationS = Math.max(15, Number(guideDuration || 60) || 60);
@@ -2151,6 +1643,7 @@ function App() {
             duration_s: guideDurationS,
             target_chars: guideTargetChars,
             stop_name: guideStopName,
+            continuous: !!options.continuous,
             style: String(guideStyle || 'friendly'),
           },
         }),
@@ -2201,33 +1694,37 @@ function App() {
                 if (data.segment && !data.done) {
                   const seg = String(data.segment).trim();
                   if (seg && ttsEnabledRef.current) {
-                    enqueueTtsSegment(seg, { stopIndex: options.tourAction ? options.tourStopIndex : null, source: 'ask' });
+                    ttsMgr.enqueueText(seg, { stopIndex: options.tourAction ? options.tourStopIndex : null, source: 'ask' });
                     debugMark('ragflowFirstSegmentAt');
                     receivedSegmentsRef.current = true;
                     console.log(`📝 收到文本段落: "${seg.substring(0, 30)}..."`);
-                    startTTSGenerator();
+                    ttsMgr.ensureRunning();
                   }
                 }
 
               if (data.done) {
                 debugMark('ragflowDoneAt');
-                if (ttsEnabledRef.current && !receivedSegmentsRef.current && seenTtsSegmentsRef.current.size === 0 && fullAnswer.trim()) {
-                  enqueueTtsSegment(fullAnswer.trim(), { stopIndex: options.tourAction ? options.tourStopIndex : null, source: 'ask_done' });
+                if (ttsEnabledRef.current && !receivedSegmentsRef.current && !ttsMgr.hasAnySegment() && fullAnswer.trim()) {
+                  ttsMgr.enqueueText(fullAnswer.trim(), { stopIndex: options.tourAction ? options.tourStopIndex : null, source: 'ask_done' });
                   console.log(`📝 收到完整文本: "${fullAnswer.substring(0, 30)}..."`);
                 }
-                ragflowDoneRef.current = true;
+                ttsMgr.markRagDone();
 
                 // Prefetch next stop text (continuous tour pipeline) without waiting for current TTS.
-                if (options.tourAction && options.continuousRoot && continuousTourRef.current && continuousActiveRef.current) {
-                  const curStopIndex = Number.isFinite(options.tourStopIndex) ? options.tourStopIndex : tourStateRef.current.stopIndex;
-                  const n = Array.isArray(tourStops) ? tourStops.length : 0;
-                  const nextIndex = Number.isFinite(curStopIndex) ? curStopIndex + 1 : -1;
-                  if (n && nextIndex >= 0 && nextIndex < n) {
+                if (options.tourAction && options.continuousRoot) {
+                  try {
+                    const curStopIndex = Number.isFinite(options.tourStopIndex) ? options.tourStopIndex : tourStateRef.current.stopIndex;
                     const tail = String(fullAnswer || '').trim().slice(-80);
-                    const token = continuousTokenRef.current;
-                    setTimeout(() => {
-                      prefetchTourStopTextToQueue({ stopIndex: nextIndex, tail, token });
-                    }, 0);
+                    getTourPipeline().maybePrefetchNextStop({
+                      currentStopIndex: curStopIndex,
+                      tail,
+                      enqueueSegment: (seg, meta) => ttsMgr.enqueueText(seg, meta),
+                      ensureTtsRunning: () => {
+                        if (ttsEnabledRef.current) ttsMgr.ensureRunning();
+                      },
+                    });
+                  } catch (_) {
+                    // ignore
                   }
                 }
 
@@ -2236,16 +1733,11 @@ function App() {
                   return fullAnswer;
                 }
                 console.log('📚 RAGFlow响应完成，等待TTS处理完毕');
-                startTTSGenerator();
-
-                // 等待TTS生成器完成
-                if (ttsGeneratorPromiseRef.current) {
-                  await ttsGeneratorPromiseRef.current;
-                }
-
-                // 等待TTS播放器完成
-                if (ttsPlayerPromiseRef.current) {
-                  await ttsPlayerPromiseRef.current;
+                ttsMgr.ensureRunning();
+                await ttsMgr.waitForIdle();
+                if (runIdRef.current === runId) {
+                  setIsLoading(false);
+                  debugMark('ttsAllDoneAt');
                 }
                 return fullAnswer;
               }
@@ -2323,7 +1815,10 @@ function App() {
       beginDebugRun('text');
       setInputText('');
       const active =
-        !!askAbortRef.current || isLoading || !!ttsGeneratorPromiseRef.current || !!ttsPlayerPromiseRef.current || !!currentAudioRef.current;
+        !!askAbortRef.current ||
+        isLoading ||
+        !!currentAudioRef.current ||
+        (ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false);
       if (groupMode) {
         const item = enqueueQuestion({ speaker: speakerName, text, priority: questionPriority });
         if (item && item.priority === 'high' && active) {
@@ -2394,12 +1889,11 @@ function App() {
       const zone = String(tourZone || (tourMeta && tourMeta.default_zone) || '默认路线');
       const profile = String(audienceProfile || (tourMeta && tourMeta.default_profile) || '大众');
       const duration = Number(guideDuration || 60);
-      const resp = await fetch('http://localhost:8000/api/tour/plan', {
+      const data = await fetchJson('/api/tour/plan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ zone, profile, duration_s: duration }),
       });
-      const data = await resp.json();
       const stops = Array.isArray(data && data.stops) ? data.stops.map((s) => String(s || '').trim()).filter(Boolean) : [];
       if (stops.length) setTourStops(stops);
       if (stops.length) plannedStops = stops;
@@ -2722,7 +2216,10 @@ function App() {
               type="button"
               className="stop-btn"
               onClick={() => interruptCurrentRun('user_stop')}
-              disabled={!isLoading && !(ttsGeneratorPromiseRef.current || ttsPlayerPromiseRef.current || currentAudioRef.current)}
+              disabled={
+                !isLoading &&
+                !((ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false) || currentAudioRef.current)
+              }
               title="打断当前回答/播报"
             >
               打断
