@@ -166,3 +166,21 @@ class RequestRegistry:
             ev = self._cancel_events.get(rid)
             return bool(ev and ev.is_set())
 
+    def get_info(self, request_id: str) -> dict | None:
+        rid = str(request_id or "").strip()
+        if not rid:
+            return None
+        now = time.perf_counter()
+        self._prune(now)
+        with self._lock:
+            info = self._infos.get(rid)
+            if not info:
+                return None
+            return {
+                "request_id": info.request_id,
+                "client_id": info.client_id,
+                "kind": info.kind,
+                "created_at": info.created_at,
+                "canceled_at": info.canceled_at,
+                "cancel_reason": info.cancel_reason,
+            }

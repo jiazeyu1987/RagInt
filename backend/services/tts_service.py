@@ -90,6 +90,16 @@ class TTSSvc:
                 f"[{request_id}] tts_request_seen endpoint={endpoint} provider={provider} seg={seg_int} count={state['count']}"
             )
 
+    def tts_state_get(self, request_id: str) -> dict | None:
+        rid = str(request_id or "").strip()
+        if not rid:
+            return None
+        now_perf = time.perf_counter()
+        self._tts_state_prune(now_perf)
+        with self._tts_state_lock:
+            state = self._tts_state.get(rid)
+            return dict(state) if isinstance(state, dict) else None
+
     def stream(
         self,
         *,

@@ -25,6 +25,8 @@ export class TourPipelineManager {
         ? options.getConversationConfig
         : () => ({ useAgentMode: false, selectedChat: null, selectedAgentId: null });
 
+    this._maxPrefetchAhead = Math.max(0, Number(options.maxPrefetchAhead ?? 1) || 1);
+
     this._log = typeof options.onLog === 'function' ? options.onLog : () => {};
     this._warn = typeof options.onWarn === 'function' ? options.onWarn : () => {};
 
@@ -33,6 +35,7 @@ export class TourPipelineManager {
     this._prefetchAbort = null;
     this._prefetchStore = new Map(); // stopIndex -> { answerText, tail, createdAt }
     this._stopsOverride = null;
+    this._currentStopIndex = -1;
   }
 
   isActive() {
@@ -53,6 +56,16 @@ export class TourPipelineManager {
     this._prefetchStore.clear();
   }
 
+  setCurrentStopIndex(idx) {
+    const n = Number(idx);
+    if (!Number.isFinite(n)) return;
+    this._currentStopIndex = n;
+  }
+
+  getCurrentStopIndex() {
+    return Number.isFinite(this._currentStopIndex) ? this._currentStopIndex : -1;
+  }
+
   abortPrefetch(reason) {
     const ctl = this._prefetchAbort;
     this._prefetchAbort = null;
@@ -69,6 +82,7 @@ export class TourPipelineManager {
     this._active = false;
     this._token += 1;
     this._stopsOverride = null;
+    this._currentStopIndex = -1;
     this.clearPrefetchStore();
     this.abortPrefetch(reason || 'interrupt');
   }
@@ -87,6 +101,24 @@ export class TourPipelineManager {
     return String(stops[i] || '').trim();
   }
 
+  _compressTailForContinuity(rawTail) {
+    const tail = String(rawTail || '').trim();
+    if (!tail) return '';
+
+    // If the previous answer already contains a "go to next stop" transition, don't echo it again.
+    // This reduces: "接下来我们去下一站/请大家跟我来" + "欢迎来到下一站" duplication.
+    const hints = ['接下来', '下一站', '继续参观', '请大家跟我来', '我们来到了', '让我们来到', '欢迎来到'];
+    for (const h of hints) {
+      if (tail.includes(h)) return '';
+    }
+
+    const maxLen = 80;
+    let out = tail;
+    if (out.length > maxLen) out = out.slice(-maxLen);
+    out = out.replace(/^[，。；、\s]+/g, '').replace(/[，。；、\s]+$/g, '');
+    return out;
+  }
+
   buildTourPrompt(action, stopIndex, tailOverride) {
     const idx = Number.isFinite(stopIndex) ? stopIndex : 0;
     const stopName = this._getStopName(idx);
@@ -94,9 +126,8 @@ export class TourPipelineManager {
     const n = stops.length;
     const title = stopName ? `第${idx + 1}站「${stopName}」` : `第${idx + 1}站`;
     const suffix = n ? `（共${n}站）` : '';
-    const tail =
+    const rawTail =
       tailOverride != null ? String(tailOverride || '').trim() : String(this._getLastAnswerTail() || '').trim();
-    const tailHint = tail ? `\n\n【上一段结束语（供承接）】${tail}` : '';
     const profile = String(this._getAudienceProfile() || '').trim();
     const profileHint = profile ? `\n\n【人群画像】${profile}` : '';
 
@@ -111,8 +142,10 @@ export class TourPipelineManager {
     const durHint = `\n\n【本站讲解时长】约${dur}秒（建议总字数约${targetChars}字，按中文语速估算）`;
 
     const isContinuous = !!(this._isContinuousTourEnabled() && this._active);
+    const tail = isContinuous ? this._compressTailForContinuity(rawTail) : rawTail;
+    const tailHint = tail ? `\n\n【上一段结束语（供承接）】${tail}` : '';
     const continuityHint = isContinuous
-      ? `\n\n【衔接要求】连续讲解模式：上一站刚结束。\n- 开头不要重复“欢迎来到/接下来我们来到/让我们来到”等过渡话术。\n- 用1句自然承接上一站，再直接进入本站主题。\n- 结尾不要预告下一站（除非我明确要求）。`
+      ? `\n\n【衔接要求】连续讲解模式：上一站刚结束。\n- 开头禁止使用“欢迎来到/接下来我们来到/让我们来到/我们来到了/下面我们来看”等固定过渡话术。\n- 用1句自然承接上一站（不要复述“请大家跟我来/继续参观”等过渡句），然后直接进入本站主题。\n- 结尾不要预告下一站（除非我明确要求）。`
       : '';
 
     if (action === 'start') {
@@ -162,11 +195,43 @@ export class TourPipelineManager {
   maybePrefetchNextStop({ currentStopIndex, tail, enqueueSegment, ensureTtsRunning }) {
     if (!this._isContinuousTourEnabled()) return;
     if (!this._active) return;
+    this.setCurrentStopIndex(currentStopIndex);
     const stops = Array.isArray(this._getStops()) ? this._getStops() : [];
     const n = stops.length;
     const cur = Number.isFinite(currentStopIndex) ? Number(currentStopIndex) : -1;
     const nextIndex = cur + 1;
     if (!n || nextIndex < 0 || nextIndex >= n) return;
+
+    // Keep a small prefetch window to avoid main-thread pressure (ScriptProcessorNode) and reduce stutter.
+    if (this._maxPrefetchAhead >= 0) {
+      const base = this.getCurrentStopIndex();
+      if (base >= 0 && nextIndex > base + this._maxPrefetchAhead) return;
+    }
+
+    const token = this._token;
+    setTimeout(() => {
+      this.prefetchStopTextToQueue({ stopIndex: nextIndex, tail, token, enqueueSegment, ensureTtsRunning });
+    }, 0);
+  }
+
+  maybePrefetchFromPlayback({ currentStopIndex, enqueueSegment, ensureTtsRunning }) {
+    if (!this._isContinuousTourEnabled()) return;
+    if (!this._active) return;
+    const cur = Number.isFinite(currentStopIndex) ? Number(currentStopIndex) : -1;
+    if (cur < 0) return;
+    this.setCurrentStopIndex(cur);
+
+    const stops = Array.isArray(this._getStops()) ? this._getStops() : [];
+    const n = stops.length;
+    const nextIndex = cur + 1;
+    if (!n || nextIndex < 0 || nextIndex >= n) return;
+    if (this._maxPrefetchAhead >= 0 && nextIndex > cur + this._maxPrefetchAhead) return;
+    if (this._prefetchStore.has(nextIndex)) return;
+
+    const tail =
+      (this._prefetchStore.get(cur) && this._prefetchStore.get(cur).tail) ||
+      String(this._getLastAnswerTail() || '').trim().slice(-80);
+
     const token = this._token;
     setTimeout(() => {
       this.prefetchStopTextToQueue({ stopIndex: nextIndex, tail, token, enqueueSegment, ensureTtsRunning });
@@ -265,15 +330,19 @@ export class TourPipelineManager {
       if (!this._active || this._token !== token) return;
 
       const tailOut = String(answerText || '').trim().slice(-80);
-      this._prefetchStore.set(idx, { answerText: String(answerText || ''), tail: tailOut, createdAt: Date.now() });
-      this._log('[PREFETCH] ready', `stopIndex=${idx}`, `segments=${gotAnySegment ? 'yes' : 'no'}`);
+    this._prefetchStore.set(idx, { answerText: String(answerText || ''), tail: tailOut, createdAt: Date.now() });
+    this._log('[PREFETCH] ready', `stopIndex=${idx}`, `segments=${gotAnySegment ? 'yes' : 'no'}`);
 
-      // Chain prefetch: once stop idx text is ready, start prefetching idx+1 (one-by-one) without waiting for TTS.
+      // Limited chain prefetch: keep at most `_maxPrefetchAhead` stops ahead of current playback.
+      const cur = this.getCurrentStopIndex();
       const nextIndex = idx + 1;
       if (nextIndex < stops.length) {
-        setTimeout(() => {
-          this.prefetchStopTextToQueue({ stopIndex: nextIndex, tail: tailOut, token, enqueueSegment, ensureTtsRunning });
-        }, 0);
+        const base = cur >= 0 ? cur : idx;
+        if (nextIndex <= base + this._maxPrefetchAhead && !this._prefetchStore.has(nextIndex)) {
+          setTimeout(() => {
+            this.prefetchStopTextToQueue({ stopIndex: nextIndex, tail: tailOut, token, enqueueSegment, ensureTtsRunning });
+          }, 0);
+        }
       }
     } catch (e) {
       if (ctl.signal.aborted || String(e && e.name) === 'AbortError') return;

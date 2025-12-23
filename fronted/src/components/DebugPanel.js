@@ -3,11 +3,14 @@ import React from 'react';
 export function DebugPanel({
   debugInfo,
   ttsEnabled,
+  serverStatus,
+  serverStatusErr,
   questionQueue,
   onAnswerQueuedNow,
   onRemoveQueuedQuestion,
 }) {
   const q = Array.isArray(questionQueue) ? questionQueue : [];
+  const requestId = debugInfo && debugInfo.requestId ? String(debugInfo.requestId) : '';
   return (
     <aside className="debug-panel">
       <div className="debug-title">调试面板</div>
@@ -15,6 +18,10 @@ export function DebugPanel({
         <div className="debug-muted">点击发送后显示耗时</div>
       ) : (
         <>
+          <div className="debug-row">
+            <div className="debug-k">request_id</div>
+            <div className="debug-v">{requestId || '—'}</div>
+          </div>
           <div className="debug-row">
             <div className="debug-k">触发</div>
             <div className="debug-v">{debugInfo.trigger}</div>
@@ -49,6 +56,38 @@ export function DebugPanel({
               {debugInfo.ttsAllDoneAt ? `${(debugInfo.ttsAllDoneAt - debugInfo.submitAt).toFixed(0)} ms` : ttsEnabled ? '—' : '已关闭'}
             </div>
           </div>
+
+          <div className="debug-subtitle">后端状态</div>
+          {!requestId ? (
+            <div className="debug-muted">等待 request_id…</div>
+          ) : serverStatusErr ? (
+            <div className="debug-muted">{serverStatusErr}</div>
+          ) : !serverStatus ? (
+            <div className="debug-muted">查询中…</div>
+          ) : (
+            <>
+              <div className="debug-row">
+                <div className="debug-k">取消</div>
+                <div className="debug-v">{serverStatus.cancelled ? '是' : '否'}</div>
+              </div>
+              <div className="debug-row">
+                <div className="debug-k">submit→rag首chunk</div>
+                <div className="debug-v">{serverStatus.derived_ms && serverStatus.derived_ms.submit_to_rag_first_chunk_ms != null ? `${serverStatus.derived_ms.submit_to_rag_first_chunk_ms} ms` : '—'}</div>
+              </div>
+              <div className="debug-row">
+                <div className="debug-k">submit→rag首字</div>
+                <div className="debug-v">{serverStatus.derived_ms && serverStatus.derived_ms.submit_to_rag_first_text_ms != null ? `${serverStatus.derived_ms.submit_to_rag_first_text_ms} ms` : '—'}</div>
+              </div>
+              <div className="debug-row">
+                <div className="debug-k">submit→首段</div>
+                <div className="debug-v">{serverStatus.derived_ms && serverStatus.derived_ms.submit_to_first_segment_ms != null ? `${serverStatus.derived_ms.submit_to_first_segment_ms} ms` : '—'}</div>
+              </div>
+              <div className="debug-row">
+                <div className="debug-k">tts_seen</div>
+                <div className="debug-v">{serverStatus.tts_state && serverStatus.tts_state.count != null ? `${serverStatus.tts_state.count}` : '—'}</div>
+              </div>
+            </>
+          )}
 
           <div className="debug-subtitle">围观队列</div>
           <div className="debug-list">
@@ -102,4 +141,3 @@ export function DebugPanel({
     </aside>
   );
 }
-

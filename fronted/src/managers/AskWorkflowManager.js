@@ -1,3 +1,5 @@
+import { tourStateOnInterrupt, tourStateOnReady, tourStateOnTourAction, tourStateOnUserQuestion } from './TourStateMachine';
+
 export class AskWorkflowManager {
   constructor(deps) {
     this.deps = deps || {};
@@ -86,10 +88,7 @@ export class AskWorkflowManager {
 
     try {
       if (typeof setTourState === 'function') {
-        setTourState((prev) => {
-          if (!prev || prev.mode === 'idle') return prev;
-          return { ...prev, mode: 'interrupted', lastAction: 'interrupt' };
-        });
+        setTourState((prev) => tourStateOnInterrupt(prev));
       }
     } catch (_) {
       // ignore
@@ -157,6 +156,14 @@ export class AskWorkflowManager {
     const runId = runIdRef ? ++runIdRef.current : Date.now();
     const requestId = `ask_${runId}_${Date.now()}`;
     if (activeAskRequestIdRef) activeAskRequestIdRef.current = requestId;
+    try {
+      if (debugRef && debugRef.current) {
+        debugRef.current.requestId = requestId;
+        if (typeof this.deps.debugRefresh === 'function') this.deps.debugRefresh();
+      }
+    } catch (_) {
+      // ignore
+    }
 
     const abortController = new AbortController();
     if (askAbortRef) askAbortRef.current = abortController;
@@ -185,20 +192,13 @@ export class AskWorkflowManager {
             ? tourStateRef.current.stopIndex
             : 0;
         const stopName = typeof getTourStopName === 'function' ? getTourStopName(stopIndex) : '';
-        setTourState((prev) => ({
-          ...(prev || {}),
-          mode: 'running',
-          stopIndex: Number.isFinite(stopIndex) ? stopIndex : (prev && prev.stopIndex) || 0,
-          stopName: stopName || (prev && prev.stopName) || '',
-          lastAction: action,
-        }));
+        setTourState((prev) =>
+          tourStateOnTourAction(prev, { action, stopIndex: Number.isFinite(stopIndex) ? stopIndex : 0, stopName })
+        );
         // eslint-disable-next-line no-console
         console.log('[TOUR]', `action=${action}`, `stopIndex=${stopIndex}`, stopName ? `stop=${stopName}` : '');
       } else {
-        setTourState((prev) => {
-          if (!prev || prev.mode === 'idle') return prev;
-          return { ...prev, lastAction: 'user_question' };
-        });
+        setTourState((prev) => tourStateOnUserQuestion(prev));
       }
     }
 
@@ -397,16 +397,8 @@ export class AskWorkflowManager {
       }
       try {
         if (runIdRef && runIdRef.current === runId && typeof setTourState === 'function') {
-          setTourState((prev) => {
-            if (!prev || prev.mode === 'idle') return prev;
-            if (prev.mode === 'running') {
-              const tail = String(fullAnswer || '')
-                .trim()
-                .slice(-80);
-              return { ...prev, mode: 'ready', lastAnswerTail: tail || prev.lastAnswerTail };
-            }
-            return prev;
-          });
+          const tail = String(fullAnswer || '').trim().slice(-80);
+          setTourState((prev) => tourStateOnReady(prev, { fullAnswerTail: tail }));
         }
       } catch (_) {
         // ignore
@@ -436,4 +428,3 @@ export class AskWorkflowManager {
     return fullAnswer;
   }
 }
-
