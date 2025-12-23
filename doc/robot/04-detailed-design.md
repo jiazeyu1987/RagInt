@@ -1,93 +1,341 @@
-# 详细设计（展厅机器人：架构 / 状态机 / 数据流 / 接口）
+# 系统详细设计（展厅机器人：硬件 / 物料 / 部署 / 接口）
+
+## 0. 设计说明与交付目标
+
+本文面向第三方集成方，目标是按本文即可完成一套“单房间展厅机器人”的交付：能在房间内按预设站点移动，到站自动讲解；观众提问可打断并问答；全程有语音播报；出现异常可降级并可定位问题。
+
+适用边界（与需求一致）：
+- 场地：单房间、站点固定（建议 3~8 个站点），不做跨楼层/跨场馆。
+- 移动：优先使用底盘/第三方导航能力（无需自研 SLAM），采用“命名站点点位”方式移动。
+- 交互：中文为主；不做人脸/身份识别；不扩展多语种/大屏联动/统计分析。
 
 ## 1. 总体架构
 
-### 1.1 组件
-- **前端（React）**
-  - 讲解控制（开始/继续/跳站/队列）
-  - 音频：录音（MediaRecorder）+ 播放（WebAudio）
-  - 调试面板：展示后端 `/api/status`
-- **后端（Flask）**
-  - ConversationOrchestrator：/api/ask 的流式编排
-  - CancellationRegistry：request_id 统一取消
-  - ASR/TTS/RAG services：provider 抽象与日志/指标
-- **外部平台**
-  - RAGFlow（chat/agent）
-  - ASR provider（默认 FunASR，备用 DashScope/其他）
-  - TTS provider（Bailian/DashScope streaming）
+### 1.1 组成模块
 
-### 1.2 数据流（核心）
+- **机器人硬件**
+  - 移动底盘（含驱动、电机、里程计/激光或其他定位传感器、安全急停）
+  - 工控机/边缘计算（运行前端+后端）
+  - 音频（麦克风、扬声器/功放）
+  - 人机提示（指示灯/小屏，至少一种）
+  - 电源（电池、充电器/可选充电桩）
 
-```
-观众语音 -> 前端录音 -> /api/speech_to_text -> 文本回填输入框
-用户提交 -> /api/ask (SSE) -> 前端分段 -> /api/text_to_speech_stream -> WebAudio 播放
-取消 -> /api/cancel -> 后端 token -> RAG/TTS/ASR 退出
-```
+- **本项目软件**
+  - 前端（React）：讲解控制、录音、播放、状态面板
+  - 后端（Flask）：问答编排、ASR/TTS/RAG 对接、取消/状态、配置/日志
+  - **导航/底盘适配器（新增交付件）**：把“站点移动”的统一接口转换为具体底盘 SDK/ROS/HTTP 调用
 
-## 2. 状态机设计
+- **外部服务（可部署在内网或本机）**
+  - 知识库/问答：RAG（当前对接 RAGFlow）
+  - ASR：语音识别（可本地或云）
+  - TTS：语音合成（可本地或云）
 
-### 2.1 Tour 状态机（前端）
+### 1.2 网络与进程边界
 
-状态：`idle` | `running` | `ready` | `interrupted`
+- 推荐网络：机器人内部局域网即可（工控机与底盘控制器同网段）。
+- 进程建议：
+  - `frontend`（浏览器访问 `http://<robot-ip>:3000` 或打包静态站点）
+  - `backend`（Flask，默认 `http://0.0.0.0:8000`）
+  - `nav-adapter`（导航适配器服务，默认 `http://127.0.0.1:9001`，由后端调用）
 
-事件：
-- `start`：开始讲解（stopIndex=0）
-- `continue`：从当前 stopIndex 继续
-- `next/prev/jump`：切换站点
-- `user_question`：观众提问（不改变 stopIndex，只改变 lastAction）
-- `interrupt`：停止当前播放/生成并进入 interrupted
+## 2. 硬件与物料清单（BOM）
 
-关键规则：
-- 任何新 ask 都会触发 interrupt（前端停止播放 + 后端 cancel）
-- `ready` 表示“本轮回答已完成，可继续讲解/下一站”，保存 `lastAnswerTail` 用于过渡承接
+> 说明：型号可替换，但“接口与能力”必须满足。集成方需在交付时提供具体品牌/型号清单、参数表与接线图。
 
-### 2.2 预取策略（连续讲解）
+### 2.1 必选物料（P0）
 
-目标：上一站 TTS 播放过程中，提前获取下一站文本段落，减少停顿。
+| 模块 | 数量 | 关键指标（必须满足） | 备注 |
+|---|---:|---|---|
+| 移动底盘（室内） | 1 | 支持室内导航/点位到达；提供 `go_to/cancel/state` 能力；具备避障/碰撞保护；支持急停 | 可为 ROS/SDK/HTTP 任一方案，但需提供开发接口与文档 |
+| 工控机/边缘计算 | 1 | 可稳定运行浏览器+Python 后端；建议 x86_64；有 USB 口与网口；至少 8GB 内存 | Windows/Linux 均可，建议提供开机自启方案 |
+| 麦克风 | 1 | USB 麦克风或阵列；支持 AEC/降噪更佳；采样率可转 16k mono | 需在展厅噪声下可用 |
+| 扬声器/功放 | 1 | 音量足够、失真低；可连续播报不卡顿 | 若为无源喇叭需配功放 |
+| 物理急停按钮 | 1 | 急停后立即停止移动并锁定 | 通常底盘自带；若无需补配 |
+| 指示灯或小屏 | 1 | 至少能区分：移动/讲解/听取中 | 可选 RGB 灯条或 3 色灯 |
+| 电池与充电 | 1 | 续航满足现场（建议 ≥ 4h）；低电量提示 | 充电桩可选，若无则人工充电 |
+| 网络（Wi‑Fi/有线） | 1 | 稳定连接内网与外部服务 | 建议预留有线口便于调试 |
 
-策略：
-- 预取窗口：`ahead=1`（最多比当前播放站点超前 1 站，避免主线程压力与抖动）
-- 触发点：
-  - RAG done 时触发下一站预取（不等待 TTS 播放完）
-  - 播放进入新 stopIndex 时，检查并补齐下一站预取
-- 取消：`interrupt`/新问题提交会 abort prefetch
+### 2.2 可选物料（按现场决定）
 
-## 3. 关键接口（建议保持稳定）
+| 模块 | 数量 | 用途 |
+|---|---:|---|
+| 扩声音箱 | 1 | 展厅更嘈杂或人群更多时提升可听性 |
+| 充电桩（自动回充） | 1 | 需要长时间无人值守运行时使用 |
+| 避障传感器补强 | 1 | 人群密集、通道窄时加强安全（如增加超声/深度传感器） |
 
-### 3.1 问答
+## 3. 场地与站点准备
+
+### 3.1 站点规划
+
+- 每个展区定义一个“讲解站点”，站点数量建议控制在 3~8 个。
+- 每个站点需要：
+  - `station_id`（稳定英文/数字 ID，用于系统内部配置）
+  - `name`（展示给运营的中文名称）
+  - `pose/goal`（底盘导航目标：坐标或命名点）
+  - `arrive_tolerance`（可选，到站阈值）
+
+### 3.2 到站判定
+
+到站判定由底盘/导航系统给出为主（推荐），适配器将其统一为标准状态：
+- `moving`：正在前往
+- `arrived`：到站
+- `failed`：失败（含超时/不可达/急停）
+- `cancelled`：已取消
+
+到站判定必须可靠，否则会出现“没到位开始讲解”的体验问题。
+
+## 4. 软件模块详细设计
+
+### 4.1 前端（React）
+
+职责：
+- 讲解控制：开始/暂停/继续/上一站/下一站/跳站
+- 录音：将音频上传至 `/api/speech_to_text`，识别结果回填输入框
+- 问答：提交问题到 `/api/ask`（SSE），接收 `chunk/segment` 并触发 TTS 播放
+- 状态面板：轮询 `/api/status?request_id=...` 与导航状态（可选）用于运维
+
+关键行为：
+- 新问题/新操作触发“打断”：停止播放、取消后端 request、取消移动（若在移动）
+- 站点切换以“到站为准”：收到到站事件后再触发该站讲解请求
+
+### 4.2 后端（Flask）
+
+职责：
+- `/api/ask`：问答/讲解的流式编排（输出 SSE）
+- `/api/speech_to_text`：ASR 上传识别
+- `/api/text_to_speech_stream`：TTS 流式音频输出
+- `/api/cancel`：统一取消（request_id 维度）
+- `/api/status`：关键阶段耗时与状态（用于调试/运维）
+- 配置加载：统一从配置文件读取（RAG/ASR/TTS/站点/导航）
+
+打断原则：
+- 任何新请求进入后，旧请求必须能被取消（RAG 流、TTS 流、ASR 处理、导航移动）。
+- 取消以 `request_id` 为主，且需兼容“同一 client_id 的替换”。
+
+### 4.3 导航/底盘适配器（Nav Adapter）
+
+定位：这是交付给第三方必须实现/对接的“薄适配层”，把底盘 SDK/ROS/HTTP 接口统一为本项目可调用的接口。
+
+职责：
+- 维护“站点列表”与底盘目标的映射（`station_id -> goal`）
+- 提供 `go_to/cancel/state` 的 HTTP API（建议）
+- 处理异常（急停、不可达、超时）并返回明确错误码/原因
+
+建议实现方式（任选其一，最终以底盘能力为准）：
+- **ROS/ROS2**：适配器订阅/发布 ROS topic 或调用 action，再对外提供 HTTP
+- **底盘 SDK**：适配器直接调用厂商 SDK，对外提供 HTTP
+- **底盘原生 HTTP**：若厂商已有 HTTP，则适配器可做薄封装（统一字段与状态）
+
+## 5. 接口定义（第三方按此实现）
+
+### 5.1 本项目后端接口（摘要）
+
+> 本部分为第三方联调所需，具体以实际实现为准。
+
+#### 5.1.1 问答/讲解（SSE）
+
 - `POST /api/ask`
-  - 输入：`question, request_id, client_id, conversation_name|agent_id, guide{enabled,duration_s,style,continuous}`
-  - 输出：SSE：`chunk/segment/done/meta`
+  - 请求（JSON）：
+    ```json
+    {
+      "question": "请开始讲解第1站……",
+      "request_id": "ask_xxx",
+      "client_id": "cid_xxx",
+      "kind": "ask",
+      "conversation_name": "展厅聊天",
+      "agent_id": "",
+      "guide": {
+        "enabled": true,
+        "duration_s": 60,
+        "style": "friendly",
+        "continuous": false,
+        "stop_name": "公司介绍区",
+        "target_chars": 260
+      }
+    }
+    ```
+  - 返回：`text/event-stream`，每行形如 `data: {...}\n\n`
+  - SSE payload（示例）：
+    - `meta`（意图/上下文，仅在开头出现一次或少量出现）：
+      ```json
+      {"meta":{"intent":"qa","intent_confidence":0.45},"done":false}
+      ```
+    - `chunk`（显示在聊天窗口的增量文本）：
+      ```json
+      {"chunk":"……","done":false}
+      ```
+    - `segment`（建议用于 TTS 的分段文本，按段落输出）：
+      ```json
+      {"segment":"……","segment_seq":1,"done":false}
+      ```
+    - 结束帧：
+      ```json
+      {"chunk":"","done":true}
+      ```
 
-### 3.2 取消
-- `POST /api/cancel`
-  - 输入：`request_id, reason, client_id`
-  - 行为：标记取消并让 in-flight 流式循环尽快退出
+#### 5.1.2 语音识别（ASR）
 
-### 3.3 语音识别
 - `POST /api/speech_to_text`
-  - form-data：`audio` + `client_id` + `request_id`
-  - 输出：`{text}`
+  - `multipart/form-data`：
+    - `audio`：音频文件（前端录音后上传；后端会做必要的预处理）
+    - `client_id`（可选）
+    - `request_id`（可选）
+  - 返回：
+    ```json
+    {"text":"识别结果"}
+    ```
 
-### 3.4 语音合成（流式）
-- `GET /api/text_to_speech_stream?text=...&request_id=...&segment_index=...`
-  - 输出：wav 流（chunked）
+#### 5.1.3 语音合成（TTS，流式）
 
-### 3.5 状态查询（调试/运维）
-- `GET /api/status?request_id=...`
-  - 输出：timeline + cancel/tts state
+- `GET /api/text_to_speech_stream`
+  - 参数：`text`、`request_id`、`segment_index`（可选）
+  - 返回：`audio/wav`（建议为 16k mono），chunked 传输
+  - 说明：前端播放需支持“随时中断”，避免打断后继续播放旧音频。
 
-## 4. 关键工程约束与防坑
+#### 5.1.4 取消与状态
 
-### 4.1 白噪音与播放卡顿
-- 统一采样率（建议 16k），避免连续段落重建 AudioContext 导致重采样
-- 对流式 wav：只保留首个 header，后续只喂 PCM；对异常 RMS/ZCR 做告警与回退
+- `POST /api/cancel`：输入 `request_id/client_id/reason`，后端尽快让 in-flight 流退出
+- `GET /api/status?request_id=...`：返回关键耗时、取消信息、TTS 状态（用于运维面板）
 
-### 4.2 并发与抖动
-- 取消必须贯穿后端（不仅是前端停止播放）
-- 预取要限流，避免同时多个 `/api/ask` 抢占主线程与网络
+### 5.2 导航适配器 HTTP API（建议标准）
 
-### 4.3 观众体验
-- 过渡语压缩（上一站尾句若含“接下来/欢迎来到”则下一站开头避免重复）
-- 多人模式下提供“队列面板”，支持主持人手动提问优先级
+#### 5.2.1 站点列表
 
+- `GET /nav/stations`
+  - 返回：
+    ```json
+    {
+      "stations": [
+        {"station_id": "s1", "name": "公司介绍区"},
+        {"station_id": "s2", "name": "心脏介入展区"}
+      ]
+    }
+    ```
+
+#### 5.2.2 发起移动
+
+- `POST /nav/go_to`
+  - 请求：
+    ```json
+    {
+      "task_id": "nav_20251223_001",
+      "station_id": "s2",
+      "timeout_s": 60
+    }
+    ```
+  - 返回：
+    ```json
+    {"ok": true, "task_id": "nav_20251223_001"}
+    ```
+  - 约定：
+    - `task_id` 由调用方生成，用于追踪一次移动
+    - `timeout_s` 超时后应返回失败并进入 `failed`
+
+#### 5.2.3 取消移动
+
+- `POST /nav/cancel`
+  - 请求：
+    ```json
+    {"task_id": "nav_20251223_001", "reason": "interrupt"}
+    ```
+  - 返回：
+    ```json
+    {"ok": true}
+    ```
+
+#### 5.2.4 查询状态
+
+- `GET /nav/state?task_id=nav_20251223_001`
+  - 返回：
+    ```json
+    {
+      "task_id": "nav_20251223_001",
+      "state": "moving",
+      "station_id": "s2",
+      "progress": 0.35,
+      "message": ""
+    }
+    ```
+  - `state` 枚举：`idle | moving | arrived | failed | cancelled | estop`
+  - `progress`：0~1，若无法提供可为 `null`
+
+#### 5.2.5 错误码约定
+
+- `station_not_found`：站点不存在或未配置
+- `nav_unavailable`：底盘/导航服务不可用
+- `timeout`：超时
+- `estop`：急停触发
+- `obstacle_blocked`：障碍物持续阻塞导致失败
+
+### 5.3 可选：指示灯/提示接口（如需）
+
+若采用外接指示灯控制器，可由适配器或后端提供统一接口：
+- `POST /io/indicator`：`{"mode":"moving|speaking|listening|idle"}`
+
+## 6. 配置文件与字段（统一交付）
+
+建议配置集中在一个 JSON 文件中（便于交付与运维），至少包含：
+- RAG/ASR/TTS 配置
+- 站点顺序与讲解时长
+- 导航适配器地址与站点映射
+
+示例（片段，字段可按实现调整）：
+```json
+{
+  "tour": {
+    "stops": ["公司介绍区", "心脏介入展区"],
+    "stop_ids": ["s1", "s2"]
+  },
+  "navigation": {
+    "base_url": "http://127.0.0.1:9001",
+    "timeout_s": 60
+  }
+}
+```
+
+约定：
+- `stop_ids` 与 `stops` 一一对应（同索引）
+- 站点名称用于展示，站点 ID 用于移动
+
+## 7. 关键流程（端到端）
+
+### 7.1 开始讲解（自动到站）
+1. 前端选择起始站点，发起移动（调用导航适配器 `go_to`）
+2. 适配器返回 `moving`，前端显示“正在前往…”
+3. 到站后状态变为 `arrived`，前端触发该站讲解请求：
+   - `POST /api/ask`，问题为“请开始讲解第 N 站…”
+4. 后端 SSE 输出 `segment`，前端依次请求 `/api/text_to_speech_stream` 并播放
+5. 该站讲解结束后，进入下一站（重复步骤 1~4）
+
+### 7.2 观众提问打断
+1. 观众提问（语音或手动输入）
+2. 前端触发打断：停止播放 + `POST /api/cancel`（旧 request）+ `POST /nav/cancel`（如在移动）
+3. 前端提交新问题到 `/api/ask` 并播放回答
+4. 回答结束后，允许继续当前站补充或进入下一站
+
+### 7.3 降级模式
+- 外部服务不可用时：
+  - 讲解：直接播报本地脚本（或至少展示文本）
+  - 问答：提示“暂时不可用，建议咨询工作人员”，避免胡编
+
+## 8. 部署与交付清单（第三方需要提供）
+
+### 8.1 交付件
+- 机器人硬件整机 + BOM + 接线图 + 维护手册
+- 场地地图/站点清单（站点名称、站点 ID、站点目标/坐标）
+- 导航适配器服务（可执行程序/容器）及其 API 文档
+- 本项目软件（前端+后端）部署包与启动方式
+- 一键自启动配置（Windows 服务或 systemd）
+
+### 8.2 联调检查表（最小）
+- 能调用 `GET /nav/stations` 返回站点列表
+- `go_to` 能在 3~8 个站点之间稳定到达
+- 打断时：旧移动/旧播报能在短时间内停止
+- 网络断开时：系统能进入降级并给出明确提示，不死循环重试
+
+## 9. 需要补充确认的输入（第三方开始工作前）
+
+- 场地平面与站点位置（草图即可），确定站点数量与顺序
+- 走廊/通道最窄宽度、人流密度（用于限速与避障策略）
+- 底盘厂商与可用接口形式（ROS/SDK/HTTP），以及是否支持地图与命名点位
+- 现场网络条件（是否允许访问外部服务、是否必须内网部署）
