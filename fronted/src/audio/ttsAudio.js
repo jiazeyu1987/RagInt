@@ -202,34 +202,17 @@ export async function playWavStreamViaWebAudio(url, audioContextRef, currentAudi
 
   const abortController = new AbortController();
   let audioCtx = null;
-  let processor = null;
-  let processorChannels = null;
   let pcmQueue = [];
   let pcmQueueIndex = 0;
   let pcmQueueOffset = 0;
   let ended = false;
+  let queuedSamples = 0; // interleaved samples at audioCtx.sampleRate
+  let scheduledCount = 0;
+  let endedCount = 0;
+  let playbackStarted = false;
+  let nextStartTime = 0;
   let drainedResolver = null;
   let drainedPromise = new Promise((resolve) => (drainedResolver = resolve));
-
-  const stopPlayback = () => {
-    try {
-      abortController.abort();
-    } catch (_) {
-      // ignore
-    }
-    try {
-      if (processor) processor.disconnect();
-    } catch (_) {
-      // ignore
-    }
-    try {
-      if (drainedResolver) drainedResolver();
-    } catch (_) {
-      // ignore
-    }
-  };
-
-  currentAudioRef.current = { stop: stopPlayback };
 
   const sources = [];
   const stopAllSources = () => {
@@ -242,6 +225,22 @@ export async function playWavStreamViaWebAudio(url, audioContextRef, currentAudi
       }
     }
   };
+
+  const stopPlayback = () => {
+    try {
+      abortController.abort();
+    } catch (_) {
+      // ignore
+    }
+    stopAllSources();
+    try {
+      if (drainedResolver) drainedResolver();
+    } catch (_) {
+      // ignore
+    }
+  };
+
+  currentAudioRef.current = { stop: stopPlayback };
 
   const parseWavHeader = (headerBytes) => {
     const view = new DataView(headerBytes.buffer, headerBytes.byteOffset, headerBytes.byteLength);
@@ -377,56 +376,98 @@ export async function playWavStreamViaWebAudio(url, audioContextRef, currentAudi
       return new Float32Array(out);
     };
 
-    const ensureProcessor = () => {
+    const scheduleAudioIfPossible = () => {
       if (!audioCtx || !wavInfo) return;
-      if (processor) return;
-      const bufferSize = 4096;
-      processor = audioCtx.createScriptProcessor(bufferSize, 0, wavInfo.channels);
-      processorChannels = wavInfo.channels;
-      processor.onaudioprocess = (e) => {
-        if (!wavInfo) return;
-        const channels = wavInfo.channels;
-        for (let ch = 0; ch < channels; ch++) {
-          const out = e.outputBuffer.getChannelData(ch);
-          for (let i = 0; i < out.length; i++) out[i] = 0;
-        }
+      if (abortController.signal.aborted) return;
 
-        let filled = 0;
-        while (filled < e.outputBuffer.length) {
-          const cur = pcmQueue[pcmQueueIndex];
-          if (!cur) break;
-          const remain = cur.length - pcmQueueOffset;
-          const take = Math.min(remain, (e.outputBuffer.length - filled) * wavInfo.channels);
-          for (let i = 0; i < take; i++) {
-            const idx = pcmQueueOffset + i;
-            const ch = idx % wavInfo.channels;
-            const frame = Math.floor(idx / wavInfo.channels);
-            const out = e.outputBuffer.getChannelData(ch);
-            if (filled + frame < out.length) out[filled + frame] = cur[idx];
-          }
-          pcmQueueOffset += take;
-          const framesTaken = Math.floor(take / wavInfo.channels);
-          filled += framesTaken;
-          if (pcmQueueOffset >= cur.length) {
-            pcmQueueIndex += 1;
-            pcmQueueOffset = 0;
-            if (pcmQueueIndex > 32) {
-              pcmQueue = pcmQueue.slice(pcmQueueIndex);
-              pcmQueueIndex = 0;
-            }
-          }
-        }
+      const channels = wavInfo.channels;
+      const sr = audioCtx.sampleRate;
+      const prebufferFrames = Math.max(1, Math.round(sr * 0.25)); // 250ms jitter buffer
+      const scheduleFrames = Math.max(1, Math.round(sr * 0.12)); // ~120ms chunks
 
-        if (ended && pcmQueueIndex >= pcmQueue.length) {
-          try {
-            if (drainedResolver) drainedResolver();
-          } catch (_) {
-            // ignore
-          }
+      const ensureQueueCompaction = () => {
+        if (pcmQueueIndex > 32) {
+          pcmQueue = pcmQueue.slice(pcmQueueIndex);
+          pcmQueueIndex = 0;
         }
       };
 
-      processor.connect(audioCtx.destination);
+      const pullNextSample = () => {
+        const cur = pcmQueue[pcmQueueIndex];
+        if (!cur) return 0;
+        const v = cur[pcmQueueOffset];
+        pcmQueueOffset += 1;
+        queuedSamples -= 1;
+        if (pcmQueueOffset >= cur.length) {
+          pcmQueueIndex += 1;
+          pcmQueueOffset = 0;
+          ensureQueueCompaction();
+        }
+        return v;
+      };
+
+      const maybeResolveDrain = () => {
+        if (!ended) return;
+        if (queuedSamples > 0) return;
+        if (endedCount < scheduledCount) return;
+        try {
+          if (drainedResolver) drainedResolver();
+        } catch (_) {
+          // ignore
+        }
+      };
+
+      const scheduleOne = (frames) => {
+        if (frames <= 0) return;
+        const buffer = audioCtx.createBuffer(channels, frames, sr);
+        const outs = [];
+        for (let ch = 0; ch < channels; ch++) outs.push(buffer.getChannelData(ch));
+        for (let f = 0; f < frames; f++) {
+          for (let ch = 0; ch < channels; ch++) {
+            outs[ch][f] = pullNextSample();
+          }
+        }
+
+        const now = audioCtx.currentTime;
+        const minDelay = playbackStarted ? 0.01 : 0.06;
+        let startAt = playbackStarted ? nextStartTime : Math.max(now + minDelay, nextStartTime);
+        if (playbackStarted && startAt < now - 0.02) {
+          console.warn('[TTS] audio_schedule_underrun resetting', { behind_s: (now - startAt).toFixed(3) });
+          startAt = now + 0.06;
+        }
+        playbackStarted = true;
+        nextStartTime = startAt + buffer.duration;
+
+        const src = audioCtx.createBufferSource();
+        src.buffer = buffer;
+        src.connect(audioCtx.destination);
+        scheduledCount += 1;
+        src.onended = () => {
+          endedCount += 1;
+          maybeResolveDrain();
+        };
+        sources.push(src);
+        try {
+          src.start(startAt);
+        } catch (_) {
+          // ignore
+        }
+      };
+
+      if (!playbackStarted && !ended) {
+        if (queuedSamples < prebufferFrames * channels) return;
+      }
+
+      while (queuedSamples >= scheduleFrames * channels) {
+        scheduleOne(scheduleFrames);
+      }
+
+      if (ended && queuedSamples > 0) {
+        const remainingFrames = Math.floor(queuedSamples / channels);
+        scheduleOne(Math.max(1, remainingFrames));
+      }
+
+      maybeResolveDrain();
     };
 
     const enqueuePcmChunk = (pcmBytes) => {
@@ -485,8 +526,11 @@ export async function playWavStreamViaWebAudio(url, audioContextRef, currentAudi
         floats[i] = int16[i] / 32768;
       }
       const resampled = resampleState ? resampleInterleaved(floats) : floats;
-      if (resampled.length) pcmQueue.push(resampled);
-      ensureProcessor();
+      if (resampled.length) {
+        pcmQueue.push(resampled);
+        queuedSamples += resampled.length;
+      }
+      scheduleAudioIfPossible();
     };
 
     while (true) {
@@ -513,12 +557,9 @@ export async function playWavStreamViaWebAudio(url, audioContextRef, currentAudi
         }
 
         if (wavInfo.audioFormatCode !== 1) throw new Error(`Unsupported WAV audioFormat: ${wavInfo.audioFormatCode}`);
-        if (processor && processorChannels != null && processorChannels !== wavInfo.channels) {
-          throw new Error(`WAV channel count changed mid-stream: ${processorChannels} -> ${wavInfo.channels}`);
-        }
         await ensureAudioContext(wavInfo.sampleRate);
         ensureResampler();
-        ensureProcessor();
+        scheduleAudioIfPossible();
 
         const dataStart = wavInfo.dataOffset;
         if (headerBuffer.byteLength > dataStart) {
@@ -577,6 +618,7 @@ export async function playWavStreamViaWebAudio(url, audioContextRef, currentAudi
     }
 
     ended = true;
+    scheduleAudioIfPossible();
     await drainedPromise;
   } catch (err) {
     stopAllSources();

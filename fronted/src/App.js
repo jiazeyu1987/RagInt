@@ -8,6 +8,7 @@ import { cancelRequest as cancelBackendRequestExt, fetchJson } from './api/backe
 import { RecorderManager } from './managers/RecorderManager';
 import { TtsQueueManager } from './managers/TtsQueueManager';
 import { TourPipelineManager } from './managers/TourPipelineManager';
+import { AskWorkflowManager } from './managers/AskWorkflowManager';
 import { HistoryPanel } from './components/HistoryPanel';
 import { DebugPanel } from './components/DebugPanel';
 import { ControlBar } from './components/ControlBar';
@@ -566,6 +567,7 @@ function App() {
   const recordCanceledRef = useRef(false);
   const inputElRef = useRef(null);
   const recorderManagerRef = useRef(null);
+  const askWorkflowRef = useRef(null);
 
   const POINTER_SUPPORTED = typeof window !== 'undefined' && 'PointerEvent' in window;
   const MIN_RECORD_MS = 900;
@@ -1258,66 +1260,59 @@ function App() {
     stopRecording();
   };
 
-  const interruptCurrentRun = (reason) => {
-    try {
-      if (tourPipelineRef.current) tourPipelineRef.current.interrupt('interrupt');
-    } catch (_) {
-      // ignore
-    }
-    try {
-      if (activeAskRequestIdRef.current) {
-        cancelBackendRequest(activeAskRequestIdRef.current, reason || 'interrupt');
-      }
-    } catch (_) {
-      // ignore
-    }
-    try {
-      if (askAbortRef.current) askAbortRef.current.abort();
-    } catch (_) {
-      // ignore
-    } finally {
-      askAbortRef.current = null;
-    }
-
-    // Make all in-flight loops exit (SSE + TTS generator/player).
-    runIdRef.current += 1;
-
-    // Stop audio playback / in-flight audio fetch.
-    try {
-      if (currentAudioRef.current) {
-        if (typeof currentAudioRef.current.stop === 'function') {
-          currentAudioRef.current.stop();
-        } else if (typeof currentAudioRef.current.pause === 'function') {
-          currentAudioRef.current.pause();
-          currentAudioRef.current.src = '';
-        }
-      }
-    } catch (_) {
-      // ignore
-    } finally {
-      currentAudioRef.current = null;
-    }
-
-    receivedSegmentsRef.current = false;
-    if (ttsManagerRef.current) {
-      ttsManagerRef.current.stop(reason || 'interrupt');
-    }
-
-    try {
-      setQueueStatus('');
-      setIsLoading(false);
-    } catch (_) {
-      // ignore
-    }
-    try {
-      setTourState((prev) => {
-        if (!prev || prev.mode === 'idle') return prev;
-        return { ...prev, mode: 'interrupted', lastAction: 'interrupt' };
+  const getAskWorkflow = () => {
+    if (!askWorkflowRef.current) {
+      askWorkflowRef.current = new AskWorkflowManager({
+        baseUrl: 'http://localhost:8000',
+        getIsLoading: () => isLoading,
+        runIdRef,
+        askAbortRef,
+        activeAskRequestIdRef,
+        cancelBackendRequest,
+        clientIdRef,
+        debugRef,
+        beginDebugRun,
+        debugMark,
+        setLastQuestion,
+        setAnswer,
+        setIsLoading,
+        setQueueStatus,
+        setTourState,
+        setCurrentIntent,
+        receivedSegmentsRef,
+        ttsEnabledRef,
+        ttsManagerRef,
+        getTtsManager,
+        abortPrefetch,
+        tourPipelineRef,
+        getTourPipeline,
+        tourStateRef,
+        getTourStopName,
+        startStatusMonitor,
+        guideEnabledRef,
+        guideDurationRef,
+        guideStyleRef,
+        useAgentModeRef,
+        selectedChatRef,
+        selectedAgentIdRef,
+        tourStopDurationsRef,
+        tourStopTargetCharsRef,
+        currentAudioRef,
+        getHistorySort: () => historySort,
+        fetchHistory,
+        maybeStartNextQueuedQuestion,
       });
-    } catch (_) {
-      // ignore
+    } else {
+      askWorkflowRef.current.setDeps({
+        getIsLoading: () => isLoading,
+        getHistorySort: () => historySort,
+      });
     }
-    console.log('[INTERRUPT]', reason || 'manual');
+    return askWorkflowRef.current;
+  };
+
+  const interruptCurrentRun = (reason) => {
+    getAskWorkflow().interrupt(reason);
   };
 
   const runContinuousTour = async ({ startIndex, firstAction, stopsOverride }) => {
@@ -1333,6 +1328,10 @@ function App() {
   };
 
   const askQuestion = async (text, opts) => {
+    try {
+      const wf = getAskWorkflow();
+      if (wf && typeof wf.ask === 'function') return wf.ask(text, opts);
+    } catch (_) {}
     // Interrupt any previous in-flight /api/ask stream.
     const hasActiveRun =
       !!askAbortRef.current ||
