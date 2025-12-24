@@ -14,6 +14,7 @@ import { ControlBar } from './components/ControlBar';
 import { Composer } from './components/Composer';
 import { ChatPanel } from './components/ChatPanel';
 import { useBackendStatus } from './hooks/useBackendStatus';
+import { useBackendEvents } from './hooks/useBackendEvents';
 import { useLocalStorageState } from './hooks/useLocalStorageState';
 import { useTourBootstrap } from './hooks/useTourBootstrap';
 import { useRagflowBootstrap } from './hooks/useRagflowBootstrap';
@@ -94,6 +95,7 @@ function App() {
   const [questionPriority, setQuestionPriority] = useState('normal'); // 'normal' | 'high'
   const [questionQueue, setQuestionQueue] = useState([]);
   const { status: serverStatus, error: serverStatusErr } = useBackendStatus(debugInfo && debugInfo.requestId);
+  const { items: serverEvents, lastError: serverLastError, error: serverEventsErr } = useBackendEvents(debugInfo && debugInfo.requestId);
   const [currentIntent, setCurrentIntent] = useState(null);
   const [tourSelectedStopIndex, setTourSelectedStopIndex] = useLocalStorageState('tourSelectedStopIndex', 0, {
     serialize: (v) => String(Number.isFinite(Number(v)) ? Number(v) : 0),
@@ -797,6 +799,9 @@ function App() {
             ttsEnabled={ttsEnabled}
             serverStatus={serverStatus}
             serverStatusErr={serverStatusErr}
+            serverEvents={serverEvents}
+            serverEventsErr={serverEventsErr}
+            serverLastError={serverLastError}
             questionQueue={questionQueue}
             onAnswerQueuedNow={(item) => answerQueuedNow(item)}
             onRemoveQueuedQuestion={(id) => removeQueuedQuestion(id)}

@@ -90,6 +90,7 @@ from services.ragflow_service import RagflowService
 from services.tour_planner import TourPlanner
 from services.tts_service import TTSSvc
 from infra.cancellation import CancellationRegistry
+from infra.event_store import EventStore
 from orchestrators.conversation_orchestrator import AskInput, ConversationOrchestrator
 
 ragflow_service = RagflowService(Path(__file__).parent.parent / "ragflow_demo" / "ragflow_config.json", logger=logger)
@@ -100,6 +101,7 @@ tts_service = TTSSvc(logger=logger)
 intent_service = IntentService()
 tour_planner = TourPlanner()
 request_registry = CancellationRegistry()
+event_store = EventStore()
 asr_model_loaded = asr_service.funasr_loaded
 
 class SuppressOutput:
@@ -302,7 +304,43 @@ def api_cancel():
         cancelled = bool(cancelled_id)
 
     logger.info(f"[{request_id or '-'}] cancel_request client_id={client_id} cancelled={cancelled} target={cancelled_id} reason={reason}")
+    if cancelled_id:
+        event_store.emit(
+            request_id=cancelled_id,
+            client_id=client_id,
+            kind="cancel",
+            name="cancel",
+            level="info",
+            reason=reason,
+        )
     return jsonify({"ok": True, "cancelled": cancelled, "request_id": cancelled_id, "client_id": client_id})
+
+@app.route('/api/events', methods=['GET'])
+def api_events():
+    request_id = str((request.args.get("request_id") or request.headers.get("X-Request-ID") or "")).strip()
+    try:
+        limit = int(request.args.get("limit") or 200)
+    except Exception:
+        limit = 200
+    try:
+        since_ms = int(request.args.get("since_ms")) if request.args.get("since_ms") is not None else None
+    except Exception:
+        since_ms = None
+
+    fmt = str((request.args.get("format") or "json")).strip().lower()
+
+    if request_id:
+        items = event_store.list_events(request_id=request_id, limit=limit, since_ms=since_ms)
+        last_error = event_store.last_error(request_id=request_id)
+    else:
+        items = event_store.list_recent(limit=limit, since_ms=since_ms)
+        last_error = None
+
+    if fmt in ("ndjson", "jsonl"):
+        body = "\n".join(json.dumps(it, ensure_ascii=False) for it in items) + ("\n" if items else "")
+        return Response(body, mimetype="application/x-ndjson", headers={"Cache-Control": "no-cache"})
+
+    return jsonify({"request_id": request_id or None, "items": items, "last_error": last_error})
 
 @app.route('/api/status', methods=['GET'])
 def api_status():
@@ -342,6 +380,7 @@ def api_status():
             "timing": timing,
             "derived_ms": derived,
             "tts_state": tts_state,
+            "last_error": event_store.last_error(request_id=request_id),
         }
     )
 
@@ -362,9 +401,19 @@ def speech_to_text():
 
     request_id = str((request.form.get("request_id") or request.headers.get("X-Request-ID") or f"asr_{uuid.uuid4().hex[:12]}")).strip()
     client_id = str((request.form.get("client_id") or request.headers.get("X-Client-ID") or request.remote_addr or "-")).strip() or "-"
+    event_store.emit(
+        request_id=request_id,
+        client_id=client_id,
+        kind="asr",
+        name="asr_received",
+        bytes=len(raw_bytes),
+        filename=getattr(audio_file, "filename", None),
+        mimetype=getattr(audio_file, "mimetype", None),
+    )
 
     if not request_registry.rate_allow(client_id, "asr", limit=6, window_s=3.0):
         logger.warning(f"[{request_id}] asr_rate_limited client_id={client_id}")
+        event_store.emit(request_id=request_id, client_id=client_id, kind="asr", name="asr_rate_limited", level="warn")
         return jsonify({"text": ""})
 
     cancel_event = request_registry.register(
@@ -376,12 +425,14 @@ def speech_to_text():
     )
     if cancel_event.is_set():
         logger.info(f"[{request_id}] asr_cancelled_before_start client_id={client_id}")
+        event_store.emit(request_id=request_id, client_id=client_id, kind="asr", name="asr_cancelled_before_start", level="info")
         request_registry.clear_active(client_id=client_id, kind="asr", request_id=request_id)
         return jsonify({"text": ""})
 
     app_config = load_app_config()
     t0 = time.perf_counter()
     try:
+        event_store.emit(request_id=request_id, client_id=client_id, kind="asr", name="asr_start")
         text = asr_service.transcribe(
             raw_bytes,
             app_config,
@@ -389,10 +440,27 @@ def speech_to_text():
             src_filename=getattr(audio_file, "filename", None),
             src_mime=getattr(audio_file, "mimetype", None),
         )
-        logger.info(f"asr_done dt={time.perf_counter()-t0:.3f}s chars={len(text)}")
+        dt_s = time.perf_counter() - t0
+        logger.info(f"asr_done dt={dt_s:.3f}s chars={len(text)}")
+        event_store.emit(
+            request_id=request_id,
+            client_id=client_id,
+            kind="asr",
+            name="asr_done",
+            dt_ms=int(dt_s * 1000.0),
+            chars=len(text or ""),
+        )
         return jsonify({"text": text})
     except Exception as e:
         logger.error(f"asr_failed err={e}", exc_info=True)
+        event_store.emit(
+            request_id=request_id,
+            client_id=client_id,
+            kind="asr",
+            name="asr_failed",
+            level="error",
+            err=str(e),
+        )
         return jsonify({"text": ""})
     finally:
         request_registry.clear_active(client_id=client_id, kind="asr", request_id=request_id)
@@ -422,6 +490,16 @@ def ask_question():
         or request.headers.get("X-Request-ID")
         or f"ask_{uuid.uuid4().hex[:12]}"
     )
+    event_store.emit(
+        request_id=request_id,
+        client_id=client_id,
+        kind="ask",
+        name="ask_received",
+        ask_kind=kind,
+        agent_id=agent_id,
+        chat_name=conversation_name,
+        question_preview=str(question or "")[:120],
+    )
     # Rate limit to avoid jitter (best-effort, per client). Prefetch is stricter.
     rl_limit = 3
     rl_window_s = 2.5
@@ -430,6 +508,16 @@ def ask_question():
         rl_window_s = 2.5
     if not request_registry.rate_allow(client_id, kind, limit=rl_limit, window_s=rl_window_s):
         logger.warning(f"[{request_id}] ask_rate_limited client_id={client_id} kind={kind}")
+        event_store.emit(
+            request_id=request_id,
+            client_id=client_id,
+            kind="ask",
+            name="ask_rate_limited",
+            level="warn",
+            ask_kind=kind,
+            limit=rl_limit,
+            window_s=rl_window_s,
+        )
         def _rl():
             payload = {"chunk": "请求过于频繁，请稍等 1-2 秒再提问。", "done": True, "request_id": request_id}
             return Response(f"data: {json.dumps(payload, ensure_ascii=False)}\n\n", mimetype="text/event-stream")
@@ -438,6 +526,14 @@ def ask_question():
     cancel_previous = kind in ("ask", "chat", "agent")
     cancel_event = request_registry.register(
         client_id=client_id, request_id=request_id, kind=kind, cancel_previous=cancel_previous
+    )
+    event_store.emit(
+        request_id=request_id,
+        client_id=client_id,
+        kind="ask",
+        name="ask_registered",
+        ask_kind=kind,
+        cancel_previous=bool(cancel_previous),
     )
     if agent_id:
         conversation_name = ""
@@ -475,20 +571,62 @@ def ask_question():
             return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
         try:
+            event_store.emit(request_id=request_id, client_id=client_id, kind="ask", name="ask_stream_start")
+            seen_first_text = False
+            seen_first_segment = False
             for payload in orchestrator.stream_ask(
                 inp=inp,
                 ragflow_config=ragflow_config,
                 cancel_event=cancel_event,
                 t_submit=t_submit,
             ):
+                try:
+                    if not seen_first_text and isinstance(payload, dict) and (payload.get("chunk") or "").strip():
+                        seen_first_text = True
+                        event_store.emit(
+                            request_id=request_id,
+                            client_id=client_id,
+                            kind="ask",
+                            name="rag_first_text",
+                            chars=len(str(payload.get("chunk") or "")),
+                        )
+                    if not seen_first_segment and isinstance(payload, dict) and (payload.get("segment") or "").strip():
+                        seen_first_segment = True
+                        seg = str(payload.get("segment") or "")
+                        event_store.emit(
+                            request_id=request_id,
+                            client_id=client_id,
+                            kind="ask",
+                            name="first_tts_segment",
+                            chars=len(seg),
+                            segment_seq=payload.get("segment_seq"),
+                        )
+                except Exception:
+                    pass
                 yield sse_event(payload)
+            event_store.emit(request_id=request_id, client_id=client_id, kind="ask", name="ask_done")
             return
         except GeneratorExit:
             logger.info(f"[{request_id}] ask_stream_generator_exit (client_disconnect?)")
             request_registry.cancel(request_id, reason="client_disconnect")
+            event_store.emit(
+                request_id=request_id,
+                client_id=client_id,
+                kind="ask",
+                name="ask_client_disconnect",
+                level="warn",
+            )
             return
         except Exception as e:
             logger.error(f"[{request_id}] 流式响应异常: {e}", exc_info=True)
+            event_store.emit(
+                request_id=request_id,
+                client_id=client_id,
+                kind="ask",
+                name="ask_stream_failed",
+                level="error",
+                err=str(e),
+            )
             if agent_id and "ragflow_agent_completion_no_data" in str(e):
                 msg = (
                     f"智能体接口暂时不可用（RAGFlow /api/v1/agents/{agent_id}/completions 无输出）。"
@@ -527,9 +665,26 @@ def text_to_speech():
         or f"tts_{uuid.uuid4().hex[:12]}"
     )
     client_id = str((data.get("client_id") or request.headers.get("X-Client-ID") or request.remote_addr or "-")).strip() or "-"
+    event_store.emit(
+        request_id=request_id,
+        client_id=client_id,
+        kind="tts",
+        name="tts_request_received",
+        endpoint="/api/text_to_speech",
+        chars=len(text or ""),
+        segment_index=data.get("segment_index", None),
+    )
     cancel_event = request_registry.get_cancel_event(request_id)
     if cancel_event.is_set():
         logger.info(f"[{request_id}] tts_cancelled_before_start endpoint=/api/text_to_speech client_id={client_id}")
+        event_store.emit(
+            request_id=request_id,
+            client_id=client_id,
+            kind="tts",
+            name="tts_cancelled_before_start",
+            level="info",
+            endpoint="/api/text_to_speech",
+        )
         return Response(b"", status=204, mimetype=_get_nested(load_app_config(), ["tts", "mimetype"], "audio/wav"))
     logger.info(f"[{request_id}] tts_request_received endpoint=/api/text_to_speech chars={len(text)} preview={text[:60]!r}")
 
@@ -561,9 +716,26 @@ def text_to_speech():
             )
         except GeneratorExit:
             logger.info(f"[{request_id}] tts_generator_exit endpoint=/api/text_to_speech (client_disconnect?)")
+            event_store.emit(
+                request_id=request_id,
+                client_id=client_id,
+                kind="tts",
+                name="tts_client_disconnect",
+                level="warn",
+                endpoint="/api/text_to_speech",
+            )
             raise
         except Exception as e:
             logger.error(f"[{request_id}] TTS音频生成异常: {e}", exc_info=True)
+            event_store.emit(
+                request_id=request_id,
+                client_id=client_id,
+                kind="tts",
+                name="tts_failed",
+                level="error",
+                endpoint="/api/text_to_speech",
+                err=str(e),
+            )
 
     return Response(
         generate_audio(),
@@ -596,6 +768,16 @@ def text_to_speech_stream():
         or f"tts_{uuid.uuid4().hex[:12]}"
     )
     client_id = str((data.get("client_id") or request.headers.get("X-Client-ID") or request.remote_addr or "-")).strip() or "-"
+    event_store.emit(
+        request_id=request_id,
+        client_id=client_id,
+        kind="tts",
+        name="tts_request_received",
+        endpoint="/api/text_to_speech_stream",
+        method=request.method,
+        chars=len(text or ""),
+        segment_index=data.get("segment_index", None),
+    )
     cancel_event = request_registry.get_cancel_event(request_id)
     segment_index = data.get("segment_index", None)
     logger.info(
@@ -603,6 +785,15 @@ def text_to_speech_stream():
     )
     if cancel_event.is_set():
         logger.info(f"[{request_id}] tts_cancelled_before_start endpoint=/api/text_to_speech_stream client_id={client_id} seg={segment_index}")
+        event_store.emit(
+            request_id=request_id,
+            client_id=client_id,
+            kind="tts",
+            name="tts_cancelled_before_start",
+            level="info",
+            endpoint="/api/text_to_speech_stream",
+            segment_index=segment_index,
+        )
         return Response(b"", status=204, mimetype=_get_nested(load_app_config(), ["tts", "mimetype"], "audio/wav"))
     ask_timing = _timings_get(request_id)
     if ask_timing and isinstance(ask_timing.get("t_submit"), (int, float)):
@@ -632,6 +823,7 @@ def text_to_speech_stream():
             total_size = 0
             chunk_count = 0
             first_audio_chunk_at = None
+            first_emitted = False
 
             for chunk in tts_service.stream(
                 text=text,
@@ -644,6 +836,15 @@ def text_to_speech_stream():
             ):
                 if cancel_event.is_set():
                     logger.info(f"[{request_id}] tts_cancelled_during_stream endpoint=/api/text_to_speech_stream client_id={client_id} seg={segment_index}")
+                    event_store.emit(
+                        request_id=request_id,
+                        client_id=client_id,
+                        kind="tts",
+                        name="tts_cancelled_during_stream",
+                        level="info",
+                        endpoint="/api/text_to_speech_stream",
+                        segment_index=segment_index,
+                    )
                     break
                 if not chunk:
                     continue
@@ -651,6 +852,17 @@ def text_to_speech_stream():
                 total_size += len(chunk)
                 if first_audio_chunk_at is None:
                     first_audio_chunk_at = time.perf_counter()
+                    if not first_emitted:
+                        first_emitted = True
+                        event_store.emit(
+                            request_id=request_id,
+                            client_id=client_id,
+                            kind="tts",
+                            name="tts_first_audio_chunk",
+                            endpoint="/api/text_to_speech_stream",
+                            segment_index=segment_index,
+                            bytes=len(chunk),
+                        )
                     logger.info(
                         f"[{request_id}] tts_first_audio_chunk dt={first_audio_chunk_at - t_received:.3f}s bytes={len(chunk)}"
                     )
@@ -671,13 +883,42 @@ def text_to_speech_stream():
             logger.info(
                 f"[{request_id}] 流式TTS音频生成完成 total_dt={time.perf_counter() - t_received:.3f}s 总大小: {total_size} bytes, chunk数量: {chunk_count}"
             )
+            event_store.emit(
+                request_id=request_id,
+                client_id=client_id,
+                kind="tts",
+                name="tts_stream_done",
+                endpoint="/api/text_to_speech_stream",
+                segment_index=segment_index,
+                bytes=int(total_size),
+                chunks=int(chunk_count),
+            )
             return
 
         except GeneratorExit:
             logger.info(f"[{request_id}] tts_stream_generator_exit endpoint=/api/text_to_speech_stream (client_disconnect?)")
+            event_store.emit(
+                request_id=request_id,
+                client_id=client_id,
+                kind="tts",
+                name="tts_client_disconnect",
+                level="warn",
+                endpoint="/api/text_to_speech_stream",
+                segment_index=segment_index,
+            )
             raise
         except Exception as e:
             logger.error(f"[{request_id}] tts_stream_exception {e} provider={provider}", exc_info=True)
+            event_store.emit(
+                request_id=request_id,
+                client_id=client_id,
+                kind="tts",
+                name="tts_stream_failed",
+                level="error",
+                endpoint="/api/text_to_speech_stream",
+                segment_index=segment_index,
+                err=str(e),
+            )
 
     return Response(
         generate_streaming_audio(),

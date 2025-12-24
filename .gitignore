@@ -174,3 +174,4 @@ resource/
 /tts_demo
 /.claude
 /backend/data/qa_history.db
+/fronted/node_modules

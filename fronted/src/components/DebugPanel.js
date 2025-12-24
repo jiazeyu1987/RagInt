@@ -1,16 +1,22 @@
 import React from 'react';
+import { backendUrl } from '../api/backendClient';
 
 export function DebugPanel({
   debugInfo,
   ttsEnabled,
   serverStatus,
   serverStatusErr,
+  serverEvents,
+  serverEventsErr,
+  serverLastError,
   questionQueue,
   onAnswerQueuedNow,
   onRemoveQueuedQuestion,
 }) {
   const q = Array.isArray(questionQueue) ? questionQueue : [];
   const requestId = debugInfo && debugInfo.requestId ? String(debugInfo.requestId) : '';
+  const events = Array.isArray(serverEvents) ? serverEvents : [];
+  const lastErr = serverLastError || null;
   return (
     <aside className="debug-panel">
       <div className="debug-title">调试面板</div>
@@ -85,6 +91,52 @@ export function DebugPanel({
               <div className="debug-row">
                 <div className="debug-k">tts_seen</div>
                 <div className="debug-v">{serverStatus.tts_state && serverStatus.tts_state.count != null ? `${serverStatus.tts_state.count}` : '—'}</div>
+              </div>
+            </>
+          )}
+
+          <div className="debug-subtitle">事件时间线</div>
+          {!requestId ? (
+            <div className="debug-muted">等待 request_id…</div>
+          ) : serverEventsErr ? (
+            <div className="debug-muted">{serverEventsErr}</div>
+          ) : !serverEvents ? (
+            <div className="debug-muted">查询中…</div>
+          ) : (
+            <>
+              {lastErr ? (
+                <div className="debug-row">
+                  <div className="debug-k">最近错误</div>
+                  <div className="debug-v">{`${lastErr.name || 'error'} ${(lastErr.fields && lastErr.fields.err) ? String(lastErr.fields.err).slice(0, 80) : ''}`}</div>
+                </div>
+              ) : null}
+              <div className="debug-row">
+                <div className="debug-k">导出</div>
+                <div className="debug-v">
+                  <a href={backendUrl(`/api/events?request_id=${encodeURIComponent(requestId)}&limit=500&format=ndjson`)} target="_blank" rel="noreferrer">
+                    NDJSON
+                  </a>
+                </div>
+              </div>
+              <div className="debug-list">
+                {!events.length ? (
+                  <div className="debug-muted">无事件</div>
+                ) : (
+                  events.slice(-18).map((e, idx) => (
+                    <div key={`${e.ts_ms || 0}_${idx}`} className="debug-item">
+                      <div className="debug-item-h">
+                        <span>{e.level || 'info'}</span>
+                        <span>{e.kind || 'app'}</span>
+                      </div>
+                      <div className="debug-item-b">
+                        <div>{e.name || 'event'}</div>
+                        <div className="debug-muted">
+                          {e.ts_ms ? new Date(Number(e.ts_ms)).toLocaleTimeString() : '—'}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </>
           )}
