@@ -49,3 +49,22 @@ export function cancelRequest({ requestId, clientId, reason }) {
   }
 }
 
+export async function emitClientEvent({ requestId, clientId, kind, name, level, fields } = {}) {
+  const rid = String(requestId || '').trim();
+  if (!rid) return { ok: false, error: 'request_id_required' };
+  const payload = {
+    request_id: rid,
+    client_id: String(clientId || '').trim(),
+    kind: String(kind || 'client'),
+    name: String(name || '').trim(),
+    level: String(level || 'info'),
+    fields: fields && typeof fields === 'object' ? fields : {},
+  };
+  if (!payload.name) return { ok: false, error: 'name_required' };
+  return fetchJson('/api/client_events', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Client-ID': payload.client_id },
+    body: JSON.stringify(payload),
+  });
+}
+

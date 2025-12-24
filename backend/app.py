@@ -342,6 +342,41 @@ def api_events():
 
     return jsonify({"request_id": request_id or None, "items": items, "last_error": last_error})
 
+@app.route('/api/client_events', methods=['POST'])
+def api_client_events():
+    """
+    Frontend -> backend event ingest for observability.
+    Used for client-only timeline points like playback end and nav UI state.
+    """
+    data = request.get_json() or {}
+    request_id = str((data.get("request_id") or data.get("rid") or request.headers.get("X-Request-ID") or "")).strip()
+    client_id = str((data.get("client_id") or data.get("cid") or request.headers.get("X-Client-ID") or "")).strip() or "-"
+    kind = str((data.get("kind") or "client")).strip() or "client"
+    name = str((data.get("name") or data.get("event") or "")).strip()
+    level = str((data.get("level") or "info")).strip() or "info"
+    fields = data.get("fields") if isinstance(data.get("fields"), dict) else {}
+    if not request_id or not name:
+        return jsonify({"ok": False, "error": "request_id_and_name_required"}), 400
+
+    # Emit to event store (best-effort).
+    with contextlib.suppress(Exception):
+        event_store.emit(
+            request_id=request_id,
+            client_id=client_id,
+            kind=kind,
+            name=name,
+            level=level,
+            **(fields or {}),
+        )
+
+    # Mirror selected events into perf-counter timings for /api/status derived_ms.
+    with contextlib.suppress(Exception):
+        now_perf = time.perf_counter()
+        if name in ("play_end", "tts_play_end", "playback_end"):
+            _timings_set(request_id, t_play_end=now_perf)
+
+    return jsonify({"ok": True})
+
 @app.route('/api/status', methods=['GET'])
 def api_status():
     request_id = str((request.args.get("request_id") or request.headers.get("X-Request-ID") or "")).strip()
@@ -363,14 +398,32 @@ def api_status():
     t_rag_first_chunk = timing.get("t_ragflow_first_chunk")
     t_rag_first_text = timing.get("t_ragflow_first_text")
     t_first_seg = timing.get("t_first_tts_segment")
+    t_tts_first_audio = timing.get("t_tts_first_audio")
+    t_play_end = timing.get("t_play_end")
 
     derived = {
         "submit_to_rag_first_chunk_ms": _dt(t_rag_first_chunk, t_submit),
         "submit_to_rag_first_text_ms": _dt(t_rag_first_text, t_submit),
         "submit_to_first_segment_ms": _dt(t_first_seg, t_submit),
+        "submit_to_tts_first_audio_ms": _dt(t_tts_first_audio, t_submit),
+        "submit_to_play_end_ms": _dt(t_play_end, t_submit),
         "now_since_submit_ms": _dt(now, t_submit),
     }
     derived = {k: v for k, v in derived.items() if v is not None}
+
+    # Best-effort: infer SD-6 "stop/action" metadata from ask_received event.
+    stop_id = None
+    stop_name = None
+    action_type = None
+    with contextlib.suppress(Exception):
+        for e in reversed(event_store.list_events(request_id=request_id, limit=200)):
+            if e.get("name") != "ask_received":
+                continue
+            f = e.get("fields") if isinstance(e.get("fields"), dict) else {}
+            stop_id = f.get("stop_id") or f.get("stop_index")
+            stop_name = f.get("stop_name")
+            action_type = f.get("action_type")
+            break
 
     return jsonify(
         {
@@ -381,6 +434,7 @@ def api_status():
             "derived_ms": derived,
             "tts_state": tts_state,
             "last_error": event_store.last_error(request_id=request_id),
+            "context": {"stop_id": stop_id, "stop_name": stop_name, "action_type": action_type},
         }
     )
 
@@ -490,6 +544,23 @@ def ask_question():
         or request.headers.get("X-Request-ID")
         or f"ask_{uuid.uuid4().hex[:12]}"
     )
+    # SD-6 stop/action metadata (best-effort, provided by frontend guide context).
+    stop_name = str((guide.get("stop_name") or "")).strip() or None
+    stop_index = guide.get("stop_index", None)
+    try:
+        stop_index = int(stop_index) if stop_index is not None and str(stop_index).strip() != "" else None
+    except Exception:
+        stop_index = None
+    tour_action = str((guide.get("tour_action") or "")).strip() or None
+    action_type = str((guide.get("action_type") or "")).strip() or None
+    if not action_type:
+        if tour_action in ("next", "prev", "jump"):
+            action_type = "切站"
+        elif tour_action:
+            action_type = "讲解"
+        else:
+            action_type = "问答"
+
     event_store.emit(
         request_id=request_id,
         client_id=client_id,
@@ -499,6 +570,11 @@ def ask_question():
         agent_id=agent_id,
         chat_name=conversation_name,
         question_preview=str(question or "")[:120],
+        stop_name=stop_name,
+        stop_index=stop_index,
+        stop_id=(f"stop_{stop_index}" if stop_index is not None else None),
+        tour_action=tour_action,
+        action_type=action_type,
     )
     # Rate limit to avoid jitter (best-effort, per client). Prefetch is stricter.
     rl_limit = 3
@@ -583,6 +659,8 @@ def ask_question():
                 try:
                     if not seen_first_text and isinstance(payload, dict) and (payload.get("chunk") or "").strip():
                         seen_first_text = True
+                        with contextlib.suppress(Exception):
+                            _timings_set(request_id, t_ragflow_first_text=time.perf_counter())
                         event_store.emit(
                             request_id=request_id,
                             client_id=client_id,
@@ -852,6 +930,8 @@ def text_to_speech_stream():
                 total_size += len(chunk)
                 if first_audio_chunk_at is None:
                     first_audio_chunk_at = time.perf_counter()
+                    with contextlib.suppress(Exception):
+                        _timings_set(request_id, t_tts_first_audio=first_audio_chunk_at)
                     if not first_emitted:
                         first_emitted = True
                         event_store.emit(

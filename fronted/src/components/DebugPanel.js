@@ -4,6 +4,7 @@ import { backendUrl } from '../api/backendClient';
 export function DebugPanel({
   debugInfo,
   ttsEnabled,
+  tourState,
   serverStatus,
   serverStatusErr,
   serverEvents,
@@ -17,6 +18,21 @@ export function DebugPanel({
   const requestId = debugInfo && debugInfo.requestId ? String(debugInfo.requestId) : '';
   const events = Array.isArray(serverEvents) ? serverEvents : [];
   const lastErr = serverLastError || null;
+  const tour = tourState && typeof tourState === 'object' ? tourState : null;
+  const tourStopName = tour && tour.stopName ? String(tour.stopName) : '';
+  const tourStopIndex = tour && Number.isFinite(Number(tour.stopIndex)) ? Number(tour.stopIndex) : null;
+  const tourMode = tour && tour.mode ? String(tour.mode) : '';
+  let navState = '—';
+  try {
+    for (let i = events.length - 1; i >= 0; i -= 1) {
+      const e = events[i];
+      if (!e || e.kind !== 'nav') continue;
+      navState = String(e.name || 'nav');
+      break;
+    }
+  } catch (_) {
+    // ignore
+  }
   return (
     <aside className="debug-panel">
       <div className="debug-title">调试面板</div>
@@ -24,6 +40,20 @@ export function DebugPanel({
         <div className="debug-muted">点击发送后显示耗时</div>
       ) : (
         <>
+          <div className="debug-subtitle">讲解/移动</div>
+          <div className="debug-row">
+            <div className="debug-k">当前站点</div>
+            <div className="debug-v">{tourStopName ? `${tourStopIndex != null ? `#${tourStopIndex} ` : ''}${tourStopName}` : '—'}</div>
+          </div>
+          <div className="debug-row">
+            <div className="debug-k">移动状态</div>
+            <div className="debug-v">{navState}</div>
+          </div>
+          <div className="debug-row">
+            <div className="debug-k">tour_mode</div>
+            <div className="debug-v">{tourMode || '—'}</div>
+          </div>
+
           <div className="debug-row">
             <div className="debug-k">request_id</div>
             <div className="debug-v">{requestId || '—'}</div>
@@ -92,6 +122,22 @@ export function DebugPanel({
                 <div className="debug-k">tts_seen</div>
                 <div className="debug-v">{serverStatus.tts_state && serverStatus.tts_state.count != null ? `${serverStatus.tts_state.count}` : '—'}</div>
               </div>
+              <div className="debug-row">
+                <div className="debug-k">submit→tts首包</div>
+                <div className="debug-v">{serverStatus.derived_ms && serverStatus.derived_ms.submit_to_tts_first_audio_ms != null ? `${serverStatus.derived_ms.submit_to_tts_first_audio_ms} ms` : '—'}</div>
+              </div>
+              <div className="debug-row">
+                <div className="debug-k">submit→播报结束</div>
+                <div className="debug-v">{serverStatus.derived_ms && serverStatus.derived_ms.submit_to_play_end_ms != null ? `${serverStatus.derived_ms.submit_to_play_end_ms} ms` : '—'}</div>
+              </div>
+              {serverStatus.last_error ? (
+                <div className="debug-row">
+                  <div className="debug-k">失败原因</div>
+                  <div className="debug-v">
+                    {`${(serverStatus.last_error.kind || 'error')}:${(serverStatus.last_error.name || 'error')}`}
+                  </div>
+                </div>
+              ) : null}
             </>
           )}
 

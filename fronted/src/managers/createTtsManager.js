@@ -11,6 +11,7 @@ export function createOrGetTtsManager({
   useSavedTts,
   maxPreGenerateCount,
   onStopIndexChange,
+  emitClientEvent,
   debugRef,
   debugMark,
   debugRefresh,
@@ -33,6 +34,7 @@ export function createOrGetTtsManager({
     useSavedTts: !!useSavedTts,
     maxPreGenerateCount,
     onStopIndexChange,
+    emitClientEvent: typeof emitClientEvent === 'function' ? emitClientEvent : null,
     onDebug: (evt) => {
       if (!evt || !debugRef || !debugRef.current) return;
       const cur = debugRef.current;

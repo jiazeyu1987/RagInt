@@ -60,6 +60,7 @@ export class TtsQueueManager {
 
     this._onStopIndexChange = typeof options.onStopIndexChange === 'function' ? options.onStopIndexChange : null;
     this._onDebug = typeof options.onDebug === 'function' ? options.onDebug : null;
+    this._emitClientEvent = typeof options.emitClientEvent === 'function' ? options.emitClientEvent : null;
 
     this._token = 0;
     this._requestId = null;
@@ -74,6 +75,23 @@ export class TtsQueueManager {
 
     this._generatorPromise = null;
     this._playerPromise = null;
+  }
+
+  _emit(name, fields, kind) {
+    if (!this._emitClientEvent) return;
+    const requestId = this._requestId;
+    if (!requestId) return;
+    try {
+      this._emitClientEvent({
+        requestId,
+        clientId: this._getClientId(),
+        kind: String(kind || 'client'),
+        name: String(name || '').trim(),
+        fields: fields && typeof fields === 'object' ? fields : {},
+      });
+    } catch (_) {
+      // ignore
+    }
   }
 
   resetForRun({ requestId } = {}) {
@@ -99,6 +117,7 @@ export class TtsQueueManager {
     this._playerPromise = null;
     safeStopCurrentAudio(this._currentAudioRef);
     if (reason) this._log('[TTSQ] stopped', reason);
+    this._emit('play_cancelled', { reason: String(reason || 'stop') }, 'client');
   }
 
   markRagDone() {
@@ -335,6 +354,10 @@ export class TtsQueueManager {
       })
       .finally(() => {
         if (this._token === token) this._playerPromise = null;
+        // SD-6: t_play_end (client-side playback end). Best-effort.
+        if (this._token === token && this._ragDone && !this._generatorPromise && this._audioQueue.length === 0) {
+          this._emit('play_end', { t_client_ms: this._nowMs() }, 'client');
+        }
       });
   }
 }

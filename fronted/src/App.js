@@ -4,7 +4,7 @@ import {
   decodeAndConvertToWav16kMono as decodeAndConvertToWav16kMonoExt,
   unlockAudio as unlockAudioExt,
 } from './audio/ttsAudio';
-import { cancelRequest as cancelBackendRequestExt, fetchJson } from './api/backendClient';
+import { cancelRequest as cancelBackendRequestExt, emitClientEvent as emitClientEventExt, fetchJson } from './api/backendClient';
 import { TourController } from './managers/TourController';
 import { createTtsOnStopIndexChange } from './managers/createTtsOnStopIndexChange';
 import { createOrGetTtsManager } from './managers/createTtsManager';
@@ -186,6 +186,7 @@ function App() {
       baseUrl: 'http://localhost:8000',
       useSavedTts: USE_SAVED_TTS,
       maxPreGenerateCount: MAX_PRE_GENERATE_COUNT,
+      emitClientEvent: (evt) => emitClientEventExt({ ...(evt || {}), clientId: clientIdRef.current }),
       onStopIndexChange: createTtsOnStopIndexChange({
         guideEnabledRef,
         tourStateRef,
@@ -521,6 +522,7 @@ function App() {
     askAbortRef,
     activeAskRequestIdRef,
     cancelBackendRequest,
+    emitClientEvent: (evt) => emitClientEventExt({ ...(evt || {}), clientId: clientIdRef.current }),
     clientIdRef,
     debugRef,
     beginDebugRun,
@@ -797,6 +799,7 @@ function App() {
           <DebugPanel
             debugInfo={debugInfo}
             ttsEnabled={ttsEnabled}
+            tourState={tourState}
             serverStatus={serverStatus}
             serverStatusErr={serverStatusErr}
             serverEvents={serverEvents}

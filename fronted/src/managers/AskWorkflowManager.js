@@ -39,7 +39,9 @@ export class AskWorkflowManager {
       setQueueStatus,
       setIsLoading,
       setTourState,
+      clientIdRef,
     } = this.deps;
+    const emitClientEvent = typeof this.deps.emitClientEvent === 'function' ? this.deps.emitClientEvent : null;
 
     try {
       if (tourPipelineRef && tourPipelineRef.current) tourPipelineRef.current.interrupt('interrupt');
@@ -50,6 +52,19 @@ export class AskWorkflowManager {
     try {
       if (activeAskRequestIdRef && activeAskRequestIdRef.current && typeof cancelBackendRequest === 'function') {
         cancelBackendRequest(activeAskRequestIdRef.current, reason || 'interrupt');
+        if (emitClientEvent) {
+          try {
+            emitClientEvent({
+              requestId: activeAskRequestIdRef.current,
+              clientId: clientIdRef ? clientIdRef.current : '',
+              kind: 'nav',
+              name: 'nav_cancelled',
+              fields: { reason: String(reason || 'interrupt') },
+            });
+          } catch (_) {
+            // ignore
+          }
+        }
       }
     } catch (_) {
       // ignore
@@ -248,6 +263,39 @@ export class AskWorkflowManager {
       }
 
       const base = String(baseUrl || '').replace(/\/+$/, '');
+      const emitClientEvent = typeof this.deps.emitClientEvent === 'function' ? this.deps.emitClientEvent : null;
+      const tourAction = options.tourAction ? String(options.tourAction || '').trim() : '';
+      const stopIndex = options.tourAction
+        ? (Number.isFinite(options.tourStopIndex)
+          ? Number(options.tourStopIndex)
+          : tourStateRef && tourStateRef.current
+            ? Number(tourStateRef.current.stopIndex)
+            : 0)
+        : null;
+      const actionType = tourAction
+        ? (tourAction === 'next' || tourAction === 'prev' || tourAction === 'jump' ? '切站' : '讲解')
+        : '问答';
+
+      // SD-6 navigation events (this repo currently has no real chassis adapter; mark as skipped).
+      if (emitClientEvent && tourAction && Number.isFinite(stopIndex)) {
+        try {
+          emitClientEvent({
+            requestId,
+            kind: 'nav',
+            name: 'nav_start',
+            fields: { stop_index: stopIndex, stop_id: `stop_${stopIndex}`, tour_action: tourAction, mode: 'skipped' },
+          });
+          emitClientEvent({
+            requestId,
+            kind: 'nav',
+            name: 'nav_arrived',
+            fields: { stop_index: stopIndex, stop_id: `stop_${stopIndex}`, tour_action: tourAction, mode: 'skipped' },
+          });
+        } catch (_) {
+          // ignore
+        }
+      }
+
       const response = await fetch(`${base}/api/ask`, {
         method: 'POST',
         headers: {
@@ -265,6 +313,9 @@ export class AskWorkflowManager {
             duration_s: guideDurationS,
             target_chars: guideTargetChars,
             stop_name: guideStopName,
+            stop_index: Number.isFinite(stopIndex) ? stopIndex : null,
+            tour_action: tourAction || null,
+            action_type: actionType,
             continuous: !!options.continuous,
             style: String((guideStyleRef && guideStyleRef.current) || 'friendly'),
           },
