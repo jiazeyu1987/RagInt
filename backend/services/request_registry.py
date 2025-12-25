@@ -145,6 +145,20 @@ class RequestRegistry:
         self.cancel(rid, reason=reason)
         return rid
 
+    def cancel_all_active(self, *, client_id: str, reason: str = "cancelled") -> list[str]:
+        """
+        Cancel all active requests for a given client_id across all kinds.
+        Returns the list of cancelled request_ids.
+        """
+        client_id = str(client_id or "-").strip() or "-"
+        with self._lock:
+            targets = [rid for (cid, _kind), rid in self._active.items() if cid == client_id and rid]
+        cancelled: list[str] = []
+        for rid in targets:
+            if self.cancel(rid, reason=reason):
+                cancelled.append(rid)
+        return cancelled
+
     def get_cancel_event(self, request_id: str) -> threading.Event:
         rid = str(request_id or "").strip()
         if not rid:

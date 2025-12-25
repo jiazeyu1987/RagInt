@@ -2,11 +2,11 @@ import { useCallback } from 'react';
 import { useLocalStorageState } from './useLocalStorageState';
 
 const DEFAULT_TOUR_STATE = {
-  mode: 'idle', // 'idle' | 'ready' | 'running' | 'interrupted'
+  mode: 'idle', // 'idle' | 'ready' | 'running' | 'interrupted' | 'paused'
   stopIndex: -1,
   stopName: '',
   lastAnswerTail: '',
-  lastAction: null, // 'start' | 'continue' | 'next' | 'user_question' | 'interrupt'
+  lastAction: null, // 'start' | 'continue' | 'next' | 'user_question' | 'interrupt' | 'pause'
 };
 
 function normalizeTourState(raw) {

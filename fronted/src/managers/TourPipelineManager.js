@@ -160,11 +160,28 @@ export class TourPipelineManager {
       }
       return `现在进入${title}${suffix}：请开始讲解，先概括本站主题，再分点说明。${durHint}${tailHint}${profileHint}`;
     }
+    if (action === 'prev') {
+      if (isContinuous) {
+        return `返回上一站继续讲解：${title}${suffix}。\n请承接上一段内容，补充关键细节。${durHint}${tailHint}${profileHint}${continuityHint}`;
+      }
+      return `返回到${title}${suffix}：请继续讲解并补充要点。${durHint}${tailHint}${profileHint}`;
+    }
+    if (action === 'jump') {
+      if (isContinuous) {
+        return `跳转并继续讲解：${title}${suffix}。\n请直接进入本站主题并分点说明。${durHint}${tailHint}${profileHint}${continuityHint}`;
+      }
+      return `现在跳转到${title}${suffix}：请开始讲解并分点说明。${durHint}${tailHint}${profileHint}`;
+    }
     return '继续讲解';
   }
 
   async startContinuousTour({ startIndex, firstAction, askQuestion, stopsOverride }) {
-    this._stopsOverride = Array.isArray(stopsOverride) && stopsOverride.length ? stopsOverride : null;
+    // Start (or resume) a continuous tour session.
+    // Important: keep `_active` true beyond a single /api/ask call so that:
+    // - buildTourPrompt() can apply continuity rules for subsequent manual actions (next/prev/jump/continue)
+    // - prefetch can continue after the first stop finishes
+    // The session ends only when `interrupt()` is called or the user disables continuous mode.
+    this._stopsOverride = Array.isArray(stopsOverride) && stopsOverride.length ? stopsOverride : this._stopsOverride;
     const stops = this._stops();
     if (!stops.length) {
       this._warn('[TOUR] continuous: no stops loaded');
@@ -173,22 +190,22 @@ export class TourPipelineManager {
 
     const token = ++this._token;
     this._active = true;
+    this.clearPrefetchStore();
     this.abortPrefetch('continuous_start');
 
     const start = Math.max(0, Math.min(Number(startIndex) || 0, stops.length - 1));
+    this.setCurrentStopIndex(start);
     this._log('[TOUR] continuous start', `token=${token}`, `from=${start}`);
 
     try {
       const action = String(firstAction || 'start');
       const prompt = this.buildTourPrompt(action === 'continue' ? 'continue' : 'start', start);
       await askQuestion(prompt, { tourAction: action, tourStopIndex: start, continuous: true, continuousRoot: true });
+    } catch (e) {
+      this._warn('[TOUR] continuous ask failed', e);
+      throw e;
     } finally {
-      if (this._token === token) {
-        this._active = false;
-        this._stopsOverride = null;
-        this.abortPrefetch('continuous_end');
-        this._log('[TOUR] continuous end', `token=${token}`);
-      }
+      // Keep session active; do not end here.
     }
   }
 

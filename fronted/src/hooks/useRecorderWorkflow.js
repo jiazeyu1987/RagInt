@@ -15,6 +15,7 @@ export function useRecorderWorkflow({
   const [isRecording, setIsRecording] = useState(false);
   const recorderManagerRef = useRef(null);
   const recordPointerIdRef = useRef(null);
+  const asrAbortRef = useRef(null);
 
   const asrEndpoint = useMemo(() => {
     const base = String(baseUrl || 'http://localhost:8000').replace(/\/+$/, '');
@@ -50,10 +51,20 @@ export function useRecorderWorkflow({
         formData.append('client_id', clientIdRef ? clientIdRef.current : '');
         formData.append('request_id', `asr_${Date.now()}_${Math.random().toString(16).slice(2)}`);
 
+        if (asrAbortRef.current) {
+          try {
+            asrAbortRef.current.abort();
+          } catch (_) {
+            // ignore
+          }
+        }
+        const abortController = new AbortController();
+        asrAbortRef.current = abortController;
         const response = await fetch(asrEndpoint, {
           method: 'POST',
           headers: { 'X-Client-ID': clientIdRef ? clientIdRef.current : '' },
           body: formData,
+          signal: abortController.signal,
         });
 
         const result = await response.json();
@@ -73,6 +84,14 @@ export function useRecorderWorkflow({
         // eslint-disable-next-line no-console
         console.error('Error processing audio:', err);
       } finally {
+        if (asrAbortRef.current) {
+          try {
+            asrAbortRef.current.abort();
+          } catch (_) {
+            // ignore
+          }
+          asrAbortRef.current = null;
+        }
         if (typeof setIsLoading === 'function') setIsLoading(false);
       }
     },
@@ -167,10 +186,28 @@ export function useRecorderWorkflow({
     stopRecording();
   }, [stopRecording]);
 
+  const cancelAsr = useCallback(() => {
+    if (asrAbortRef.current) {
+      try {
+        asrAbortRef.current.abort();
+      } catch (_) {
+        // ignore
+      } finally {
+        asrAbortRef.current = null;
+      }
+    }
+    try {
+      if (recorderManagerRef.current && recorderManagerRef.current.isRecording) recorderManagerRef.current.cancel();
+    } catch (_) {
+      // ignore
+    }
+  }, []);
+
   return {
     isRecording,
     startRecording,
     stopRecording,
+    cancelAsr,
     onRecordPointerDown,
     onRecordPointerUp,
     onRecordPointerCancel,

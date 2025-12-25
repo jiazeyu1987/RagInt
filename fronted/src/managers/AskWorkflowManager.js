@@ -276,23 +276,116 @@ export class AskWorkflowManager {
         ? (tourAction === 'next' || tourAction === 'prev' || tourAction === 'jump' ? '切站' : '讲解')
         : '问答';
 
-      // SD-6 navigation events (this repo currently has no real chassis adapter; mark as skipped).
-      if (emitClientEvent && tourAction && Number.isFinite(stopIndex)) {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+      // SD-5: real nav/chassis integration lives on backend (/api/nav/*).
+      // For tour actions, require arrival before starting the guide ask (no "fake arrived").
+      const needsNav = !!(tourAction && Number.isFinite(stopIndex) && tourAction !== 'continue');
+      if (needsNav) {
+        const stopName = typeof getTourStopName === 'function' ? getTourStopName(stopIndex) : '';
+        const stopId = `stop_${stopIndex}`;
+
+        if (emitClientEvent) {
+          try {
+            emitClientEvent({
+              requestId,
+              kind: 'nav',
+              name: 'nav_start',
+              fields: { stop_index: stopIndex, stop_id: stopId, stop_name: stopName, tour_action: tourAction, mode: 'backend' },
+            });
+          } catch (_) {
+            // ignore
+          }
+        }
+
         try {
-          emitClientEvent({
-            requestId,
-            kind: 'nav',
-            name: 'nav_start',
-            fields: { stop_index: stopIndex, stop_id: `stop_${stopIndex}`, tour_action: tourAction, mode: 'skipped' },
+          const navResp = await fetch(`${base}/api/nav/go_to`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Client-ID': clientIdRef ? clientIdRef.current : '',
+              'X-Request-ID': requestId,
+            },
+            body: JSON.stringify({
+              request_id: requestId,
+              client_id: clientIdRef ? clientIdRef.current : '',
+              stop_id: stopId,
+              stop_name: stopName,
+              timeout_s: 60,
+            }),
+            signal: abortController.signal,
           });
-          emitClientEvent({
-            requestId,
-            kind: 'nav',
-            name: 'nav_arrived',
-            fields: { stop_index: stopIndex, stop_id: `stop_${stopIndex}`, tour_action: tourAction, mode: 'skipped' },
-          });
-        } catch (_) {
-          // ignore
+          if (!navResp.ok) throw new Error(`NAV HTTP error: ${navResp.status}`);
+          await navResp.json().catch(() => null);
+
+          const deadline = Date.now() + 60 * 1000;
+          let arrived = false;
+          let lastState = '';
+          while (Date.now() < deadline) {
+            if (runIdRef && runIdRef.current !== runId) throw new Error('nav_cancelled_by_new_run');
+            const s = await fetch(
+              `${base}/api/nav/state?client_id=${encodeURIComponent(String(clientIdRef ? clientIdRef.current : ''))}&request_id=${encodeURIComponent(requestId)}`,
+              {
+                method: 'GET',
+                headers: { 'X-Client-ID': clientIdRef ? clientIdRef.current : '', 'X-Request-ID': requestId },
+                signal: abortController.signal,
+              }
+            );
+            if (!s.ok) throw new Error(`NAV state error: ${s.status}`);
+            const st = await s.json().catch(() => ({}));
+            const state = String((st && st.state) || '').toLowerCase();
+            const reason = String((st && (st.reason || st.error)) || '').trim();
+            lastState = state;
+            if (state === 'arrived') {
+              arrived = true;
+              break;
+            }
+            if (state && state !== 'moving' && state !== 'idle') throw new Error(`nav_${state}${reason ? `:${reason}` : ''}`);
+            await sleep(300);
+          }
+          if (!arrived) throw new Error(`nav_timeout${lastState ? `:${lastState}` : ''}`);
+
+          if (emitClientEvent) {
+            try {
+              emitClientEvent({
+                requestId,
+                kind: 'nav',
+                name: 'nav_arrived',
+                fields: { stop_index: stopIndex, stop_id: stopId, stop_name: stopName, tour_action: tourAction, mode: 'backend' },
+              });
+            } catch (_) {
+              // ignore
+            }
+          }
+        } catch (e) {
+          const msg = e && e.message ? String(e.message) : 'nav_failed';
+          const cancelled =
+            msg.includes('AbortError') ||
+            msg.includes('aborted') ||
+            msg.includes('nav_cancelled_by_new_run') ||
+            msg.includes('nav_cancelled');
+          if (emitClientEvent) {
+            try {
+              emitClientEvent({
+                requestId,
+                kind: 'nav',
+                name: cancelled ? 'nav_cancelled' : 'nav_failed',
+                level: cancelled ? 'info' : 'error',
+                fields: { stop_index: stopIndex, stop_id: stopId, stop_name: stopName, tour_action: tourAction, err: msg },
+              });
+            } catch (_) {
+              // ignore
+            }
+          }
+
+          try {
+            if (typeof setIsLoading === 'function') setIsLoading(false);
+            if (typeof setQueueStatus === 'function') setQueueStatus('');
+            if (!cancelled && typeof setAnswer === 'function') setAnswer(`移动失败：${msg}`);
+          } catch (_) {
+            // ignore
+          }
+          return;
         }
       }
 
@@ -324,7 +417,27 @@ export class AskWorkflowManager {
       });
 
       if (!response.ok || !response.body) {
-        throw new Error(`RAGFlow HTTP error: ${response.status}`);
+        let errPayload = null;
+        try {
+          errPayload = await response.json();
+        } catch (_) {
+          errPayload = null;
+        }
+
+        // SD-9: degrade suggestion (guide mode -> offline; Q&A -> fixed fallback copy).
+        try {
+          const onSuggestOffline = typeof this.deps.onSuggestOffline === 'function' ? this.deps.onSuggestOffline : null;
+          if (onSuggestOffline && options.tourAction) {
+            onSuggestOffline({ reason: `rag_http_${response.status}`, requestId });
+          } else if (!options.tourAction && typeof setAnswer === 'function') {
+            setAnswer('暂时无法联网检索/系统繁忙，请稍后重试或咨询工作人员。');
+          }
+        } catch (_) {
+          // ignore
+        }
+
+        const code = errPayload && typeof errPayload === 'object' ? (errPayload.error || errPayload.message) : null;
+        throw new Error(`RAGFlow HTTP error: ${response.status}${code ? ` (${code})` : ''}`);
       }
 
       const reader = response.body.getReader();

@@ -8,6 +8,8 @@ from pathlib import Path
 import requests
 from ragflow_sdk import RAGFlow
 
+from .env_overrides import apply_env_overrides
+
 
 def _ragflow_chat_to_dict(chat):
     if chat is None:
@@ -74,10 +76,13 @@ class RagflowService:
     def load_config(self) -> dict:
         if self._config_path.exists():
             with open(self._config_path, "r", encoding="utf-8") as f:
-                self._last_loaded_cfg = json.load(f)
-                return self._last_loaded_cfg
-        self._last_loaded_cfg = {}
-        return self._last_loaded_cfg
+                raw = json.load(f)
+                cfg = apply_env_overrides(raw if isinstance(raw, dict) else {})
+                self._last_loaded_cfg = cfg
+                return cfg
+        cfg = apply_env_overrides({})
+        self._last_loaded_cfg = cfg
+        return cfg
 
     def init(self) -> bool:
         cfg = self.load_config()

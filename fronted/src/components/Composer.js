@@ -8,6 +8,12 @@ export function Composer({
   onRecordPointerCancel,
   onRecordClickFallback,
 
+  guideEnabled,
+  continuousTour,
+  tourState,
+  hasActiveRun,
+  guardHint,
+
   groupMode,
   speakerName,
   onChangeSpeakerName,
@@ -27,16 +33,25 @@ export function Composer({
 
   onStartTour,
   onContinueTour,
+  onPauseTour,
   onNextTourStop,
   onPrevTourStop,
   onSubmitTextAuto,
   focusInput,
 }) {
+  const tourMode = tourState && typeof tourState === 'object' && tourState.mode ? String(tourState.mode) : 'idle';
+  const continueLabel = continuousTour && (tourMode === 'interrupted' || tourMode === 'paused') ? '恢复连续讲解' : '继续讲解';
+  const tourDisabled = !guideEnabled;
+  const continueDisabled = tourDisabled || tourMode === 'idle';
+  const navDisabled = tourDisabled || tourMode === 'idle';
+  const pauseDisabled = tourDisabled || tourMode === 'idle' || !hasActiveRun;
+
   const buttons = [
-    { label: '开始讲解', action: 'tour_start', auto: true, primary: true },
-    { label: '继续讲解', action: 'tour_continue', auto: true, primary: true },
-    { label: '下一站', action: 'tour_next', auto: true },
-    { label: '上一站', action: 'tour_prev', auto: true },
+    { label: '开始讲解', action: 'tour_start', auto: true, primary: true, disabled: tourDisabled },
+    { label: continueLabel, action: 'tour_continue', auto: true, primary: true, disabled: continueDisabled },
+    { label: '暂停', action: 'tour_pause', auto: true, disabled: pauseDisabled },
+    { label: '下一站', action: 'tour_next', auto: true, disabled: navDisabled },
+    { label: '上一站', action: 'tour_prev', auto: true, disabled: navDisabled },
     { label: '30秒总结', text: '请用30秒总结刚才的讲解' },
     { label: '更通俗', text: '换个更通俗易懂的说法' },
     { label: '更专业', text: '换个更专业的讲法' },
@@ -113,10 +128,12 @@ export function Composer({
             key={b.label}
             type="button"
             className={b.primary ? 'quick-btn quick-btn-primary' : 'quick-btn'}
+            disabled={!!b.disabled}
             onClick={async () => {
               if (b.auto) {
                 if (b.action === 'tour_start') return onStartTour && onStartTour();
                 if (b.action === 'tour_continue') return onContinueTour && onContinueTour();
+                if (b.action === 'tour_pause') return onPauseTour && onPauseTour();
                 if (b.action === 'tour_next') return onNextTourStop && onNextTourStop();
                 if (b.action === 'tour_prev') return onPrevTourStop && onPrevTourStop();
                 return;
@@ -135,6 +152,8 @@ export function Composer({
           </button>
         ))}
       </div>
+
+      {guardHint ? <div className="debug-muted">{String(guardHint)}</div> : null}
     </div>
   );
 }

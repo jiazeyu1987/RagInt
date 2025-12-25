@@ -11,6 +11,8 @@ from typing import Iterable, Iterator
 import requests
 from requests.exceptions import ChunkedEncodingError, RequestException
 
+from .env_overrides import apply_env_overrides
+
 
 class RagflowAgentService:
     def __init__(self, config_path: Path, logger: logging.Logger | None = None):
@@ -22,8 +24,9 @@ class RagflowAgentService:
     def load_config(self) -> dict:
         if self._config_path.exists():
             with open(self._config_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        return {}
+                raw = json.load(f)
+                return apply_env_overrides(raw if isinstance(raw, dict) else {})
+        return apply_env_overrides({})
 
     def _auth_headers(self) -> tuple[str, dict]:
         cfg = self.load_config() or {}

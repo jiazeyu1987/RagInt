@@ -5,6 +5,8 @@
 // - AudioContext sample-rate safety for streaming TTS
 // - Continuous tour kickoff via TourPipelineManager
 
+import { tourStateOnPause } from './TourStateMachine';
+
 export class TourController {
   constructor(deps) {
     this.deps = deps || {};
@@ -150,9 +152,9 @@ export class TourController {
     const cur = tourStateRef ? tourStateRef.current : null;
     const stopIndexRaw = Number.isFinite(cur && cur.stopIndex) ? cur.stopIndex - 1 : 0;
     const stopIndex = Math.max(0, stopIndexRaw);
-    const prompt = typeof buildTourPrompt === 'function' ? buildTourPrompt('next', stopIndex) : '';
+    const prompt = typeof buildTourPrompt === 'function' ? buildTourPrompt('prev', stopIndex) : '';
     if (typeof beginDebugRun === 'function') beginDebugRun('guide_prev');
-    if (typeof askQuestion === 'function') await askQuestion(prompt, { tourAction: 'next', tourStopIndex: stopIndex });
+    if (typeof askQuestion === 'function') await askQuestion(prompt, { tourAction: 'prev', tourStopIndex: stopIndex });
   }
 
   async nextStop() {
@@ -172,9 +174,23 @@ export class TourController {
     const stops = typeof getTourStops === 'function' ? getTourStops() : [];
     const n = Array.isArray(stops) ? stops.length : 0;
     const stopIndex = n ? Math.max(0, Math.min(Number(idx) || 0, n - 1)) : Math.max(0, Number(idx) || 0);
-    const prompt = typeof buildTourPrompt === 'function' ? buildTourPrompt('next', stopIndex) : '';
+    const prompt = typeof buildTourPrompt === 'function' ? buildTourPrompt('jump', stopIndex) : '';
     if (typeof beginDebugRun === 'function') beginDebugRun('guide_jump');
-    if (typeof askQuestion === 'function') await askQuestion(prompt, { tourAction: 'next', tourStopIndex: stopIndex });
+    if (typeof askQuestion === 'function') await askQuestion(prompt, { tourAction: 'jump', tourStopIndex: stopIndex });
+  }
+
+  pause() {
+    const { interruptCurrentRun, setTourState } = this.deps;
+    try {
+      if (typeof interruptCurrentRun === 'function') interruptCurrentRun('tour_pause');
+    } catch (_) {
+      // ignore
+    }
+    try {
+      if (typeof setTourState === 'function') setTourState((prev) => tourStateOnPause(prev));
+    } catch (_) {
+      // ignore
+    }
   }
 
   reset() {

@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { backendUrl } from '../api/backendClient';
 
 export function DebugPanel({
   debugInfo,
   ttsEnabled,
   tourState,
+  clientId,
   serverStatus,
   serverStatusErr,
   serverEvents,
@@ -22,6 +23,152 @@ export function DebugPanel({
   const tourStopName = tour && tour.stopName ? String(tour.stopName) : '';
   const tourStopIndex = tour && Number.isFinite(Number(tour.stopIndex)) ? Number(tour.stopIndex) : null;
   const tourMode = tour && tour.mode ? String(tour.mode) : '';
+  const [diagLoading, setDiagLoading] = useState(false);
+  const [diagErr, setDiagErr] = useState('');
+  const [diagData, setDiagData] = useState(null);
+  const [deviceInfo, setDeviceInfo] = useState(null);
+  const [cfgLoading, setCfgLoading] = useState(false);
+  const [cfgErr, setCfgErr] = useState('');
+  const [cfgOk, setCfgOk] = useState('');
+  const [cfgBackups, setCfgBackups] = useState([]);
+
+  const runDiag = async () => {
+    setDiagErr('');
+    setDiagLoading(true);
+    try {
+      const headers = {};
+      if (clientId) headers['X-Client-ID'] = String(clientId);
+      const r = await fetch(backendUrl('/api/diag'), { headers });
+      const j = await r.json();
+      setDiagData(j);
+    } catch (e) {
+      setDiagData(null);
+      setDiagErr(String((e && e.message) || e || 'diag_failed'));
+    } finally {
+      setDiagLoading(false);
+    }
+
+    try {
+      const out = {
+        permission: null,
+        devices: [],
+      };
+      if (navigator && navigator.permissions && navigator.permissions.query) {
+        try {
+          const p = await navigator.permissions.query({ name: 'microphone' });
+          out.permission = p && p.state ? String(p.state) : null;
+        } catch (_) {
+          out.permission = null;
+        }
+      }
+      if (navigator && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        out.devices = Array.isArray(devices)
+          ? devices.map((d) => ({ kind: d.kind, deviceId: d.deviceId, label: d.label, groupId: d.groupId }))
+          : [];
+      }
+      setDeviceInfo(out);
+    } catch (_) {
+      setDeviceInfo({ permission: null, devices: [] });
+    }
+  };
+
+  const downloadJson = (obj, filename) => {
+    try {
+      const text = JSON.stringify(obj, null, 2);
+      const blob = new Blob([text], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename || 'config.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (_) {
+      // ignore
+    }
+  };
+
+  const refreshBackups = async () => {
+    setCfgErr('');
+    setCfgOk('');
+    setCfgLoading(true);
+    try {
+      const headers = {};
+      if (clientId) headers['X-Client-ID'] = String(clientId);
+      const r = await fetch(backendUrl('/api/config/backups?limit=30'), { headers });
+      const j = await r.json();
+      setCfgBackups(Array.isArray(j && j.items) ? j.items : []);
+    } catch (e) {
+      setCfgBackups([]);
+      setCfgErr(String((e && e.message) || e || 'config_backups_failed'));
+    } finally {
+      setCfgLoading(false);
+    }
+  };
+
+  const exportConfig = async () => {
+    setCfgErr('');
+    setCfgOk('');
+    setCfgLoading(true);
+    try {
+      const headers = {};
+      if (clientId) headers['X-Client-ID'] = String(clientId);
+      const r = await fetch(backendUrl('/api/config/export'), { headers });
+      const j = await r.json();
+      if (!j || j.ok !== true) throw new Error((j && j.error) || 'config_export_failed');
+      downloadJson(j.config || {}, `ragint_config_export_${Date.now()}.json`);
+      setCfgOk('已导出（已去除密钥）');
+    } catch (e) {
+      setCfgErr(String((e && e.message) || e || 'config_export_failed'));
+    } finally {
+      setCfgLoading(false);
+    }
+  };
+
+  const importConfigFile = async (file) => {
+    if (!file) return;
+    setCfgErr('');
+    setCfgOk('');
+    setCfgLoading(true);
+    try {
+      const text = await file.text();
+      const cfg = JSON.parse(text);
+      const headers = { 'Content-Type': 'application/json' };
+      if (clientId) headers['X-Client-ID'] = String(clientId);
+      const r = await fetch(backendUrl('/api/config/import'), { method: 'POST', headers, body: JSON.stringify({ config: cfg }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j || j.ok !== true) throw new Error((j && (j.error || (j.detail && j.detail.errors && j.detail.errors[0]))) || 'config_import_failed');
+      setCfgOk(`已导入（已自动备份：${j.backup || '—'}）`);
+      await refreshBackups();
+    } catch (e) {
+      setCfgErr(String((e && e.message) || e || 'config_import_failed'));
+    } finally {
+      setCfgLoading(false);
+    }
+  };
+
+  const restoreBackup = async (name) => {
+    const n = String(name || '').trim();
+    if (!n) return;
+    setCfgErr('');
+    setCfgOk('');
+    setCfgLoading(true);
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (clientId) headers['X-Client-ID'] = String(clientId);
+      const r = await fetch(backendUrl('/api/config/restore'), { method: 'POST', headers, body: JSON.stringify({ name: n }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j || j.ok !== true) throw new Error((j && j.error) || 'config_restore_failed');
+      setCfgOk(`已恢复：${n}（已备份当前：${j.backup || '—'}）`);
+      await refreshBackups();
+    } catch (e) {
+      setCfgErr(String((e && e.message) || e || 'config_restore_failed'));
+    } finally {
+      setCfgLoading(false);
+    }
+  };
   let navState = '—';
   try {
     for (let i = events.length - 1; i >= 0; i -= 1) {
@@ -185,6 +332,98 @@ export function DebugPanel({
                 )}
               </div>
             </>
+          )}
+
+          <div className="debug-subtitle">一键诊断</div>
+          <div className="debug-row">
+            <div className="debug-k">操作</div>
+            <div className="debug-v">
+              <button type="button" className="queue-btn" onClick={runDiag} disabled={diagLoading}>
+                {diagLoading ? '诊断中…' : '运行诊断'}
+              </button>{' '}
+              <a href={backendUrl('/api/logs/download')} target="_blank" rel="noreferrer">
+                下载日志
+              </a>{' '}
+              <a href={backendUrl('/api/logs?tail_kb=256')} target="_blank" rel="noreferrer">
+                日志tail
+              </a>
+            </div>
+          </div>
+          {diagErr ? <div className="debug-muted">{diagErr}</div> : null}
+          {diagData ? (
+            <>
+              <div className="debug-row">
+                <div className="debug-k">ffmpeg</div>
+                <div className="debug-v">{diagData.deps && diagData.deps.ffmpeg && diagData.deps.ffmpeg.found ? 'OK' : '缺失'}</div>
+              </div>
+              <div className="debug-row">
+                <div className="debug-k">RAGFlow</div>
+                <div className="debug-v">{diagData.ragflow && diagData.ragflow.connected ? '已连接' : '未连接'}</div>
+              </div>
+              <div className="debug-row">
+                <div className="debug-k">ASR</div>
+                <div className="debug-v">{diagData.asr && diagData.asr.funasr_loaded ? '已加载' : '未加载'}</div>
+              </div>
+              <div className="debug-row">
+                <div className="debug-k">离线脚本</div>
+                <div className="debug-v">{diagData.offline && Number(diagData.offline.items_count || 0) ? `${diagData.offline.items_count}条` : '0条'}</div>
+              </div>
+            </>
+          ) : null}
+          {deviceInfo ? (
+            <div className="debug-row">
+              <div className="debug-k">音频设备</div>
+              <div className="debug-v">
+                {deviceInfo.permission ? `mic:${deviceInfo.permission}` : 'mic:?'} · {Array.isArray(deviceInfo.devices) ? deviceInfo.devices.length : 0}个
+              </div>
+            </div>
+          ) : null}
+
+          <div className="debug-subtitle">配置管理</div>
+          <div className="debug-row">
+            <div className="debug-k">操作</div>
+            <div className="debug-v">
+              <button type="button" className="queue-btn" onClick={exportConfig} disabled={cfgLoading}>
+                导出配置
+              </button>{' '}
+              <label className="queue-btn" style={{ display: 'inline-block' }}>
+                导入配置
+                <input
+                  type="file"
+                  accept="application/json"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const f = e && e.target && e.target.files ? e.target.files[0] : null;
+                    if (e && e.target) e.target.value = '';
+                    importConfigFile(f);
+                  }}
+                />
+              </label>{' '}
+              <button type="button" className="queue-btn" onClick={refreshBackups} disabled={cfgLoading}>
+                刷新备份
+              </button>
+            </div>
+          </div>
+          {cfgErr ? <div className="debug-muted">{cfgErr}</div> : null}
+          {cfgOk ? <div className="debug-muted">{cfgOk}</div> : null}
+          {Array.isArray(cfgBackups) && cfgBackups.length ? (
+            <div className="debug-list">
+              {cfgBackups.slice(0, 10).map((b) => (
+                <div key={b.name} className="debug-item">
+                  <div className="debug-item-h">
+                    <span>{b.name}</span>
+                    <span className="debug-muted">{b.size_bytes != null ? `${b.size_bytes}B` : ''}</span>
+                  </div>
+                  <div className="debug-item-b">
+                    <button type="button" className="queue-btn" onClick={() => restoreBackup(b.name)} disabled={cfgLoading}>
+                      恢复
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="debug-muted">暂无备份（导入配置后会自动生成）</div>
           )}
 
           <div className="debug-subtitle">围观队列</div>

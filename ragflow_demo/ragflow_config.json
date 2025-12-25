@@ -1,5 +1,5 @@
 {
-  "api_key": "ragflow-lmBmCb-T_yV1D8gaV65ThoTLPLWsAr4zKUh72XKFFBs",
+  "api_key": "YOUR_RAGFLOW_API_KEY_HERE",
   "base_url": "http://127.0.0.1",
   "dataset_name": "展厅",
   "default_conversation_name": "展厅聊天",
@@ -131,7 +131,7 @@
       "pitch_rate": 1.0,
       "additional_params": {},
       "url": "",
-      "api_key": "sk-96bb32e240ad40b195207a088d321b90",
+      "api_key": "",
       "method": "POST",
       "timeout_s": 30,
       "text_field": "text",
@@ -140,6 +140,20 @@
       "extra_json": {},
       "json_audio_field": "",
       "json_audio_b64": true
+    }
+  },
+  "nav": {
+    "provider": "http",
+    "timeout_s": 60,
+    "http": {
+      "base_url": "",
+      "go_to_path": "/go_to",
+      "cancel_path": "/cancel",
+      "state_path": "/state",
+      "poll_interval_ms": 400
+    },
+    "mock": {
+      "arrive_delay_ms": 1500
     }
   },
   "timeout": 10,

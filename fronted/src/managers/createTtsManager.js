@@ -12,6 +12,7 @@ export function createOrGetTtsManager({
   maxPreGenerateCount,
   onStopIndexChange,
   emitClientEvent,
+  onAbnormalAudio,
   debugRef,
   debugMark,
   debugRefresh,
@@ -35,6 +36,7 @@ export function createOrGetTtsManager({
     maxPreGenerateCount,
     onStopIndexChange,
     emitClientEvent: typeof emitClientEvent === 'function' ? emitClientEvent : null,
+    onAbnormalAudio: typeof onAbnormalAudio === 'function' ? onAbnormalAudio : null,
     onDebug: (evt) => {
       if (!evt || !debugRef || !debugRef.current) return;
       const cur = debugRef.current;

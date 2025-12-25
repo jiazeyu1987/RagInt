@@ -83,6 +83,9 @@ class CancellationRegistry:
     def cancel_active(self, *, client_id: str, kind: str, reason: str = "cancelled") -> str | None:
         return self._registry.cancel_active(client_id=client_id, kind=kind, reason=reason)
 
+    def cancel_all_active(self, *, client_id: str, reason: str = "cancelled") -> list[str]:
+        return self._registry.cancel_all_active(client_id=client_id, reason=reason)
+
     def get_cancel_event(self, request_id: str) -> threading.Event:
         return self._registry.get_cancel_event(request_id)
 
