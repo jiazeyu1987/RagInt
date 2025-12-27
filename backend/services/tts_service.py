@@ -6,6 +6,7 @@ import logging
 import queue
 import threading
 import time
+import urllib.parse
 
 import numpy as np
 import requests
@@ -140,10 +141,25 @@ class TTSSvc:
         tts_cfg = get_nested(config, ["tts", "local"], {}) or {}
         if tts_cfg.get("enabled") is False:
             raise ValueError("local TTS is disabled by config: tts.local.enabled=false")
-        url = tts_cfg.get("url", "http://127.0.0.1:9880/tts")
+        url = str(tts_cfg.get("url", "http://127.0.0.1:9880")).strip() or "http://127.0.0.1:9880"
         timeout_s = float(tts_cfg.get("timeout_s", 30))
 
-        payload = {
+        # Compatibility:
+        # - Legacy local TTS adapter (historical): POST {text_lang, ref_audio_path, prompt_lang, ...} to /tts
+        # - GPT-SoVITS api.py: GET/POST to / with {text_language, refer_wav_path, prompt_language, ...}
+        def _normalize_to_root(u: str) -> str:
+            try:
+                parsed = urllib.parse.urlparse(u)
+                path = parsed.path or "/"
+                if path.endswith("/tts"):
+                    path = path[: -len("/tts")] or "/"
+                if not path.endswith("/"):
+                    path = path + "/"
+                return urllib.parse.urlunparse(parsed._replace(path=path))
+            except Exception:
+                return u
+
+        payload_legacy = {
             "text": text,
             "text_lang": tts_cfg.get("text_lang", "zh"),
             "ref_audio_path": tts_cfg.get("ref_audio_path", ""),
@@ -153,28 +169,63 @@ class TTSSvc:
             "media_type": tts_cfg.get("media_type", "wav"),
         }
 
+        payload_gpt_sovits = {
+            "text": text,
+            "text_language": tts_cfg.get("text_language", tts_cfg.get("text_lang", "zh")),
+            "refer_wav_path": tts_cfg.get("refer_wav_path", tts_cfg.get("ref_audio_path", "")),
+            "prompt_language": tts_cfg.get("prompt_language", tts_cfg.get("prompt_lang", "zh")),
+            "prompt_text": tts_cfg.get("prompt_text", ""),
+        }
+
         headers = {"X-Request-ID": request_id}
-        self._logger.info(
-            f"[{request_id}] local_tts_request url={url} timeout_s={timeout_s} media_type={payload.get('media_type')} chars={len(text)}"
-        )
         cancel_event = cancel_event or threading.Event()
         if cancel_event.is_set():
             return
-        r = requests.post(url, json=payload, headers=headers, stream=True, timeout=timeout_s)
-        try:
-            self._logger.info(f"[{request_id}] local_tts status={r.status_code} ct={r.headers.get('Content-Type')}")
-            if r.status_code != 200:
-                self._logger.error(f"[{request_id}] local_tts_failed status={r.status_code} body={r.text[:200]}")
+
+        candidates = [
+            ("legacy", url, payload_legacy),
+            ("gpt_sovits", _normalize_to_root(url), payload_gpt_sovits),
+        ]
+        last_err = None
+        for style, target_url, payload in candidates:
+            if cancel_event.is_set():
                 return
-            for chunk in r.iter_content(chunk_size=4096):
-                if cancel_event.is_set():
-                    self._logger.info(f"[{request_id}] local_tts_cancelled")
-                    break
-                if chunk:
-                    yield chunk
-        finally:
-            with contextlib.suppress(Exception):
-                r.close()
+            try:
+                self._logger.info(
+                    f"[{request_id}] local_tts_request style={style} url={target_url} timeout_s={timeout_s} chars={len(text)}"
+                )
+                r = requests.post(target_url, json=payload, headers=headers, stream=True, timeout=timeout_s)
+            except Exception as e:
+                last_err = e
+                self._logger.warning(f"[{request_id}] local_tts_request_failed style={style} err={e}")
+                continue
+
+            try:
+                ct = r.headers.get("Content-Type")
+                self._logger.info(f"[{request_id}] local_tts status={r.status_code} ct={ct} style={style}")
+                if r.status_code != 200:
+                    body_preview = ""
+                    with contextlib.suppress(Exception):
+                        body_preview = (r.text or "")[:200]
+                    self._logger.warning(
+                        f"[{request_id}] local_tts_non_200 style={style} status={r.status_code} body={body_preview!r}"
+                    )
+                    continue
+
+                for chunk in r.iter_content(chunk_size=4096):
+                    if cancel_event.is_set():
+                        self._logger.info(f"[{request_id}] local_tts_cancelled")
+                        break
+                    if chunk:
+                        yield chunk
+                return
+            finally:
+                with contextlib.suppress(Exception):
+                    r.close()
+
+        if last_err is not None:
+            raise RuntimeError(f"local TTS request failed: {last_err}")
+        raise RuntimeError("local TTS request failed: no candidate endpoint succeeded")
 
     def _stream_bailian_tts(self, text: str, request_id: str, config: dict, cancel_event: threading.Event | None = None):
         bailian_cfg = get_nested(config, ["tts", "bailian"], {}) or {}

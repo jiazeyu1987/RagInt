@@ -1,4 +1,4 @@
-import { TtsQueueManager } from './TtsQueueManager';
+import { TtsBroadcastManager } from './TtsBroadcastManager';
 
 export function createOrGetTtsManager({
   ttsManagerRef,
@@ -10,6 +10,7 @@ export function createOrGetTtsManager({
   baseUrl,
   useSavedTts,
   maxPreGenerateCount,
+  ttsMode,
   onStopIndexChange,
   emitClientEvent,
   debugRef,
@@ -24,17 +25,26 @@ export function createOrGetTtsManager({
 
   const now = typeof nowMs === 'function' ? nowMs : () => Date.now();
 
-  ttsManagerRef.current = new TtsQueueManager({
-    audioContextRef,
-    currentAudioRef,
-    getRunId: () => (runIdRef ? runIdRef.current : 0),
-    getClientId: () => (clientIdRef ? clientIdRef.current : ''),
-    nowMs: now,
-    baseUrl: String(baseUrl || 'http://localhost:8000'),
-    useSavedTts: !!useSavedTts,
-    maxPreGenerateCount,
-    onStopIndexChange,
-    emitClientEvent: typeof emitClientEvent === 'function' ? emitClientEvent : null,
+  ttsManagerRef.current = new TtsBroadcastManager({
+    mode: String(ttsMode || 'online'),
+    online: {
+      audioContextRef,
+      currentAudioRef,
+      getRunId: () => (runIdRef ? runIdRef.current : 0),
+      getClientId: () => (clientIdRef ? clientIdRef.current : ''),
+      nowMs: now,
+      baseUrl: String(baseUrl || 'http://localhost:8000'),
+      useSavedTts: !!useSavedTts,
+      maxPreGenerateCount,
+      onStopIndexChange,
+      emitClientEvent: typeof emitClientEvent === 'function' ? emitClientEvent : null,
+    },
+    local: {
+      getClientId: () => (clientIdRef ? clientIdRef.current : ''),
+      nowMs: now,
+      emitClientEvent: typeof emitClientEvent === 'function' ? emitClientEvent : null,
+      voice: { lang: 'zh-CN' },
+    },
     onDebug: (evt) => {
       if (!evt || !debugRef || !debugRef.current) return;
       const cur = debugRef.current;
@@ -87,4 +97,3 @@ export function createOrGetTtsManager({
 
   return ttsManagerRef.current;
 }
-

@@ -30,6 +30,13 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [queueStatus, setQueueStatus] = useState('');
   const [ttsEnabled, setTtsEnabled] = useState(true);
+  const [ttsMode, setTtsMode] = useLocalStorageState('ttsMode', 'online', {
+    serialize: (v) => String(v || 'online'),
+    deserialize: (raw) => {
+      const m = String(raw || 'online').trim().toLowerCase();
+      return m === 'local' ? 'local' : 'online';
+    },
+  });
   const [debugInfo, setDebugInfo] = useState(null);
   const [chatOptions, setChatOptions] = useState([]);
   const [selectedChat, setSelectedChat] = useState('展厅聊天');
@@ -186,6 +193,7 @@ function App() {
       baseUrl: 'http://localhost:8000',
       useSavedTts: USE_SAVED_TTS,
       maxPreGenerateCount: MAX_PRE_GENERATE_COUNT,
+      ttsMode,
       emitClientEvent: (evt) => emitClientEventExt({ ...(evt || {}), clientId: clientIdRef.current }),
       onStopIndexChange: createTtsOnStopIndexChange({
         guideEnabledRef,
@@ -271,6 +279,15 @@ function App() {
       setQueueStatus('');
     }
   }, [ttsEnabled]);
+
+  useEffect(() => {
+    try {
+      const mgr = ttsManagerRef.current;
+      if (mgr && typeof mgr.setMode === 'function') mgr.setMode(ttsMode, 'ui_change');
+    } catch (_) {
+      // ignore
+    }
+  }, [ttsMode]);
 
   useEffect(() => {
     continuousTourRef.current = !!continuousTour;
@@ -707,6 +724,8 @@ function App() {
           onChangeGroupMode={setGroupMode}
           ttsEnabled={ttsEnabled}
           onChangeTtsEnabled={setTtsEnabled}
+          ttsMode={ttsMode}
+          onChangeTtsMode={setTtsMode}
           continuousTour={continuousTour}
           onChangeContinuousTour={setContinuousTour}
           tourState={tourState}

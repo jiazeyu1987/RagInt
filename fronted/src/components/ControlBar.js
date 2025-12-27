@@ -26,6 +26,8 @@ export function ControlBar({
   onChangeGroupMode,
   ttsEnabled,
   onChangeTtsEnabled,
+  ttsMode,
+  onChangeTtsMode,
   continuousTour,
   onChangeContinuousTour,
 
@@ -130,6 +132,16 @@ export function ControlBar({
         <input type="checkbox" checked={!!ttsEnabled} onChange={(e) => onChangeTtsEnabled && onChangeTtsEnabled(e.target.checked)} />
         <span>语音播报</span>
       </label>
+
+      {ttsEnabled ? (
+        <label className="kb-select">
+          <span>TTS</span>
+          <select value={String(ttsMode || 'online')} onChange={(e) => onChangeTtsMode && onChangeTtsMode(e.target.value)}>
+            <option value="online">在线</option>
+            <option value="local">本地</option>
+          </select>
+        </label>
+      ) : null}
 
       {guideEnabled ? (
         <label className="tts-toggle" title="无人打断时自动从第1站讲到最后，并预取下一站减少停顿">
