@@ -30,11 +30,14 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [queueStatus, setQueueStatus] = useState('');
   const [ttsEnabled, setTtsEnabled] = useState(true);
-  const [ttsMode, setTtsMode] = useLocalStorageState('ttsMode', 'online', {
-    serialize: (v) => String(v || 'online'),
+  const [ttsMode, setTtsMode] = useLocalStorageState('ttsMode', 'modelscope', {
+    serialize: (v) => String(v || 'modelscope'),
     deserialize: (raw) => {
-      const m = String(raw || 'online').trim().toLowerCase();
-      return m === 'local' ? 'local' : 'online';
+      const m = String(raw || 'modelscope').trim().toLowerCase();
+      if (m === 'online') return 'modelscope'; // backward compat
+      if (m === 'local') return 'sovtts1'; // backward compat
+      if (m === 'sovtts1' || m === 'sovtts2' || m === 'modelscope') return m;
+      return 'modelscope';
     },
   });
   const [debugInfo, setDebugInfo] = useState(null);
@@ -283,7 +286,7 @@ function App() {
   useEffect(() => {
     try {
       const mgr = ttsManagerRef.current;
-      if (mgr && typeof mgr.setMode === 'function') mgr.setMode(ttsMode, 'ui_change');
+      if (mgr && typeof mgr.setTtsProvider === 'function') mgr.setTtsProvider(ttsMode, 'ui_change');
     } catch (_) {
       // ignore
     }

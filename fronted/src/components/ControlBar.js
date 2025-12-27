@@ -136,9 +136,10 @@ export function ControlBar({
       {ttsEnabled ? (
         <label className="kb-select">
           <span>TTS</span>
-          <select value={String(ttsMode || 'online')} onChange={(e) => onChangeTtsMode && onChangeTtsMode(e.target.value)}>
-            <option value="online">在线</option>
-            <option value="local">本地</option>
+          <select value={String(ttsMode || 'modelscope')} onChange={(e) => onChangeTtsMode && onChangeTtsMode(e.target.value)}>
+            <option value="sovtts1">SOVTTS1</option>
+            <option value="sovtts2">SOVTTS2</option>
+            <option value="modelscope">ModelScope</option>
           </select>
         </label>
       ) : null}

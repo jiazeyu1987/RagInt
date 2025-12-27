@@ -119,28 +119,66 @@ class TTSSvc:
         )
 
     def _stream_tts_provider(self, text: str, request_id: str, provider: str, config: dict, cancel_event: threading.Event | None = None):
-        provider_norm = (provider or "").strip().lower() or "local"
-        if provider_norm == "bailian":
-            self._logger.info(f"[{request_id}] tts_provider_select provider=bailian")
+        provider_norm = (provider or "").strip().lower() or "sovtts1"
+
+        # Provider naming (UI):
+        # - sovtts1: local GPT-SoVITS api.py (root "/")
+        # - sovtts2: local GPT-SoVITS api_v2.py ("/tts")
+        # - modelscope: online (current implementation uses bailian/dashscope)
+        if provider_norm in ("bailian", "dashscope", "modelscope"):
+            self._logger.info(f"[{request_id}] tts_provider_select provider=modelscope(mapped_to=bailian)")
             yield from self._stream_bailian_tts(text=text, request_id=request_id, config=config, cancel_event=cancel_event)
             return
 
-        local_enabled = get_nested(config, ["tts", "local", "enabled"], True)
-        if local_enabled is False:
+        local_provider = provider_norm
+        if local_provider in ("local", "gpt_sovits"):
+            local_provider = "sovtts1"
+
+        if local_provider not in ("sovtts1", "sovtts2"):
+            self._logger.warning(f"[{request_id}] unknown_tts_provider provider={provider_norm} -> fallback_to=sovtts1")
+            local_provider = "sovtts1"
+
+        tts_cfg = self._get_local_tts_cfg(config, local_provider)
+        # For explicitly selected local providers (SOVTTS1/SOVTTS2), we only honor the per-provider
+        # enabled flag (if present). Do not gate on legacy `tts.local.enabled`, otherwise UI switching
+        # would never take effect when the global flag is left false.
+        if tts_cfg.get("enabled") is False:
             bailian_cfg = get_nested(config, ["tts", "bailian"], {}) or {}
             if str(bailian_cfg.get("api_key", "")).strip() and str(bailian_cfg.get("voice", "")).strip():
-                self._logger.info(f"[{request_id}] local_tts_disabled -> fallback_to_bailian")
-                yield from self._stream_bailian_tts(text=text, request_id=request_id, config=config)
+                self._logger.info(f"[{request_id}] local_tts_disabled -> fallback_to_modelscope")
+                yield from self._stream_bailian_tts(text=text, request_id=request_id, config=config, cancel_event=cancel_event)
                 return
-            raise ValueError("local TTS is disabled and bailian is not configured")
+            raise ValueError("local TTS is disabled and modelscope/bailian is not configured")
 
-        self._logger.info(f"[{request_id}] tts_provider_select provider=local")
-        yield from self._stream_local_gpt_sovits(text=text, request_id=request_id, config=config, cancel_event=cancel_event)
+        self._logger.info(f"[{request_id}] tts_provider_select provider={local_provider}")
+        yield from self._stream_local_gpt_sovits(
+            text=text, request_id=request_id, config=config, cancel_event=cancel_event, local_provider=local_provider
+        )
 
-    def _stream_local_gpt_sovits(self, text: str, request_id: str, config: dict, cancel_event: threading.Event | None = None):
-        tts_cfg = get_nested(config, ["tts", "local"], {}) or {}
+    def _get_local_tts_cfg(self, config: dict, local_provider: str) -> dict:
+        lp = (local_provider or "").strip().lower()
+        if lp == "sovtts2":
+            return (
+                get_nested(config, ["tts", "sovtts2"], None)
+                or get_nested(config, ["tts", "local_v2"], None)
+                or get_nested(config, ["tts", "local"], {})
+                or {}
+            )
+        if lp == "sovtts1":
+            return (get_nested(config, ["tts", "sovtts1"], None) or get_nested(config, ["tts", "local"], {}) or {})
+        return get_nested(config, ["tts", "local"], {}) or {}
+
+    def _stream_local_gpt_sovits(
+        self,
+        text: str,
+        request_id: str,
+        config: dict,
+        cancel_event: threading.Event | None = None,
+        local_provider: str = "sovtts1",
+    ):
+        tts_cfg = self._get_local_tts_cfg(config, local_provider)
         if tts_cfg.get("enabled") is False:
-            raise ValueError("local TTS is disabled by config: tts.local.enabled=false")
+            raise ValueError(f"local TTS is disabled by config for provider={local_provider}")
         url = str(tts_cfg.get("url", "http://127.0.0.1:9880")).strip() or "http://127.0.0.1:9880"
         timeout_s = float(tts_cfg.get("timeout_s", 30))
 
@@ -159,6 +197,17 @@ class TTSSvc:
             except Exception:
                 return u
 
+        def _ensure_tts_endpoint(u: str) -> str:
+            try:
+                parsed = urllib.parse.urlparse(u)
+                path = parsed.path or ""
+                # api_v2 expects /tts
+                if not path.endswith("/tts"):
+                    path = (path.rstrip("/") + "/tts") if path else "/tts"
+                return urllib.parse.urlunparse(parsed._replace(path=path))
+            except Exception:
+                return u.rstrip("/") + "/tts"
+
         payload_legacy = {
             "text": text,
             "text_lang": tts_cfg.get("text_lang", "zh"),
@@ -167,6 +216,8 @@ class TTSSvc:
             "prompt_text": tts_cfg.get("prompt_text", ""),
             "low_latency": bool(tts_cfg.get("low_latency", True)),
             "media_type": tts_cfg.get("media_type", "wav"),
+            # api_v2 supports streaming_mode; set truthy to encourage chunked responses when enabled.
+            "streaming_mode": tts_cfg.get("streaming_mode", True),
         }
 
         payload_gpt_sovits = {
@@ -182,10 +233,25 @@ class TTSSvc:
         if cancel_event.is_set():
             return
 
-        candidates = [
-            ("legacy", url, payload_legacy),
-            ("gpt_sovits", _normalize_to_root(url), payload_gpt_sovits),
-        ]
+        candidates = []
+        lp = (local_provider or "").strip().lower()
+        if lp == "sovtts2":
+            candidates.append(("api_v2", url, payload_legacy))
+        elif lp == "sovtts1":
+            # If sovtts1 is configured to point to /tts, try api_v2 first to avoid a noisy POST / 400.
+            try:
+                parsed = urllib.parse.urlparse(url)
+                path = (parsed.path or "").lower()
+            except Exception:
+                path = ""
+            if path.endswith("/tts"):
+                candidates.append(("api_v2_compat", _ensure_tts_endpoint(url), payload_legacy))
+                candidates.append(("api_v1", _normalize_to_root(url), payload_gpt_sovits))
+            else:
+                candidates.append(("api_v1", _normalize_to_root(url), payload_gpt_sovits))
+                candidates.append(("api_v2_compat", _ensure_tts_endpoint(url), payload_legacy))
+        else:
+            candidates.extend([("legacy", url, payload_legacy), ("gpt_sovits", _normalize_to_root(url), payload_gpt_sovits)])
         last_err = None
         for style, target_url, payload in candidates:
             if cancel_event.is_set():

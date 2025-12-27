@@ -770,7 +770,7 @@ def text_to_speech():
     provider = (
         data.get("tts_provider")
         or request.headers.get("X-TTS-Provider")
-        or _get_nested(app_config, ["tts", "provider"], "local")
+        or _get_nested(app_config, ["tts", "provider"], "modelscope")
     )
     tts_service.tts_state_update(
         request_id,
@@ -882,7 +882,7 @@ def text_to_speech_stream():
     provider = (
         data.get("tts_provider")
         or request.headers.get("X-TTS-Provider")
-        or _get_nested(app_config, ["tts", "provider"], "local")
+        or _get_nested(app_config, ["tts", "provider"], "modelscope")
     )
     tts_service.tts_state_update(
         request_id,
