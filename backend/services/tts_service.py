@@ -12,6 +12,8 @@ import numpy as np
 import requests
 
 from .config_utils import get_nested
+from .sapi_tts import stream_sapi
+from .edge_tts_service import stream_edge_tts
 
 _DASHSCOPE_POOL = None
 _DASHSCOPE_POOL_LOCK = threading.Lock()
@@ -125,6 +127,16 @@ class TTSSvc:
         # - sovtts1: local GPT-SoVITS api.py (root "/")
         # - sovtts2: local GPT-SoVITS api_v2.py ("/tts")
         # - modelscope: online (current implementation uses bailian/dashscope)
+        # - sapi: Windows SAPI (System.Speech)
+        # - edge: Edge TTS (Microsoft)
+        if provider_norm == "sapi":
+            self._logger.info(f"[{request_id}] tts_provider_select provider=sapi")
+            yield from stream_sapi(text=text, request_id=request_id, config=config, logger=self._logger, cancel_event=cancel_event)
+            return
+        if provider_norm == "edge":
+            self._logger.info(f"[{request_id}] tts_provider_select provider=edge")
+            yield from stream_edge_tts(text=text, request_id=request_id, config=config, logger=self._logger, cancel_event=cancel_event)
+            return
         if provider_norm in ("bailian", "dashscope", "modelscope"):
             self._logger.info(f"[{request_id}] tts_provider_select provider=modelscope(mapped_to=bailian)")
             yield from self._stream_bailian_tts(text=text, request_id=request_id, config=config, cancel_event=cancel_event)

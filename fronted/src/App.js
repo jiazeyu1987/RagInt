@@ -36,7 +36,7 @@ function App() {
       const m = String(raw || 'modelscope').trim().toLowerCase();
       if (m === 'online') return 'modelscope'; // backward compat
       if (m === 'local') return 'sovtts1'; // backward compat
-      if (m === 'sovtts1' || m === 'sovtts2' || m === 'modelscope') return m;
+      if (m === 'sovtts1' || m === 'sovtts2' || m === 'modelscope' || m === 'sapi' || m === 'edge') return m;
       return 'modelscope';
     },
   });

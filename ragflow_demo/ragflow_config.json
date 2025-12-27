@@ -138,6 +138,23 @@
       "streaming_mode": true,
       "media_type": "wav"
     },
+    "sapi": {
+      "enabled": true,
+      "voice": "",
+      "rate": 0,
+      "volume": 100,
+      "timeout_s": 30
+    },
+    "edge": {
+      "enabled": true,
+      "voice": "zh-CN-XiaoxiaoNeural",
+      "output_format": "riff-16khz-16bit-mono-pcm",
+      "rate": "+0%",
+      "volume": "+0%",
+      "first_audio_timeout_s": 12,
+      "timeout_s": 30,
+      "queue_max_chunks": 256
+    },
     "bailian": {
       "mode": "dashscope",
       "model": "cosyvoice-v3-plus",
