@@ -25,10 +25,14 @@ export async function fetchJson(path, { method = 'GET', headers = {}, body, sign
   }
 }
 
-export function cancelRequest({ requestId, clientId, reason }) {
+export function cancelRequest({ requestId, clientId, reason, kind } = {}) {
   const rid = String(requestId || '').trim();
-  if (!rid) return;
-  const payload = JSON.stringify({ request_id: rid, client_id: String(clientId || '').trim(), reason: String(reason || 'client_cancel') });
+  const payload = JSON.stringify({
+    request_id: rid,
+    client_id: String(clientId || '').trim(),
+    reason: String(reason || 'client_cancel'),
+    kind: String(kind || '').trim() || undefined,
+  });
 
   try {
     if (navigator && typeof navigator.sendBeacon === 'function') {
@@ -38,6 +42,24 @@ export function cancelRequest({ requestId, clientId, reason }) {
   } catch (_) {
     // ignore
   }
+  try {
+    fetch(backendUrl('/api/cancel'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Client-ID': String(clientId || '').trim() },
+      body: payload,
+    }).catch(() => {});
+  } catch (_) {
+    // ignore
+  }
+}
+
+export function cancelActive({ clientId, kind, reason } = {}) {
+  const payload = JSON.stringify({
+    request_id: '',
+    client_id: String(clientId || '').trim(),
+    reason: String(reason || 'client_cancel'),
+    kind: String(kind || 'ask').trim(),
+  });
   try {
     fetch(backendUrl('/api/cancel'), {
       method: 'POST',
@@ -65,6 +87,50 @@ export async function emitClientEvent({ requestId, clientId, kind, name, level, 
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Client-ID': payload.client_id },
     body: JSON.stringify(payload),
+  });
+}
+
+export async function navGoTo({ requestId, clientId, stopId, stopName, timeoutS } = {}) {
+  const rid = String(requestId || '').trim();
+  const cid = String(clientId || '').trim();
+  const sid = String(stopId || '').trim();
+  if (!rid || !sid) throw new Error('navGoTo: requestId/stopId required');
+  return fetchJson('/api/nav/go_to', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Client-ID': cid, 'X-Request-ID': rid },
+    body: JSON.stringify({
+      request_id: rid,
+      client_id: cid,
+      stop_id: sid,
+      stop_name: String(stopName || '').trim(),
+      timeout_s: Number.isFinite(Number(timeoutS)) ? Number(timeoutS) : undefined,
+    }),
+  });
+}
+
+export async function navState({ requestId, clientId } = {}) {
+  const rid = String(requestId || '').trim();
+  const cid = String(clientId || '').trim();
+  const qs = new URLSearchParams();
+  if (cid) qs.set('client_id', cid);
+  if (rid) qs.set('request_id', rid);
+  return fetchJson(`/api/nav/state?${qs.toString()}`, {
+    method: 'GET',
+    headers: { 'X-Client-ID': cid, 'X-Request-ID': rid },
+  });
+}
+
+export async function navCancel({ requestId, clientId, reason } = {}) {
+  const rid = String(requestId || '').trim();
+  const cid = String(clientId || '').trim();
+  return fetchJson('/api/nav/cancel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Client-ID': cid, 'X-Request-ID': rid },
+    body: JSON.stringify({
+      request_id: rid || undefined,
+      client_id: cid,
+      reason: String(reason || 'client_cancel').trim(),
+    }),
   });
 }
 

@@ -1,9 +1,9 @@
 export const DEFAULT_TOUR_STATE = {
-  mode: 'idle', // 'idle' | 'ready' | 'running' | 'interrupted'
+  mode: 'idle', // 'idle' | 'ready' | 'running' | 'interrupted' | 'paused'
   stopIndex: -1,
   stopName: '',
   lastAnswerTail: '',
-  lastAction: null, // 'start' | 'continue' | 'next' | 'user_question' | 'interrupt'
+  lastAction: null, // 'start' | 'continue' | 'next' | 'user_question' | 'interrupt' | 'pause'
 };
 
 export function tourStateOnTourAction(prev, { action, stopIndex, stopName }) {
@@ -31,6 +31,12 @@ export function tourStateOnInterrupt(prev) {
   const p = prev && typeof prev === 'object' ? prev : DEFAULT_TOUR_STATE;
   if (!p || p.mode === 'idle') return p;
   return { ...p, mode: 'interrupted', lastAction: 'interrupt' };
+}
+
+export function tourStateOnPause(prev) {
+  const p = prev && typeof prev === 'object' ? prev : DEFAULT_TOUR_STATE;
+  if (!p || p.mode === 'idle') return p;
+  return { ...p, mode: 'paused', lastAction: 'pause' };
 }
 
 export function tourStateOnReady(prev, { fullAnswerTail }) {

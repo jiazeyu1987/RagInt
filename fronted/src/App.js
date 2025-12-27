@@ -4,10 +4,11 @@ import {
   decodeAndConvertToWav16kMono as decodeAndConvertToWav16kMonoExt,
   unlockAudio as unlockAudioExt,
 } from './audio/ttsAudio';
-import { cancelRequest as cancelBackendRequestExt, emitClientEvent as emitClientEventExt, fetchJson } from './api/backendClient';
+import { cancelActive as cancelActiveExt, cancelRequest as cancelBackendRequestExt, emitClientEvent as emitClientEventExt, fetchJson } from './api/backendClient';
 import { TourController } from './managers/TourController';
 import { createTtsOnStopIndexChange } from './managers/createTtsOnStopIndexChange';
 import { createOrGetTtsManager } from './managers/createTtsManager';
+import { OfflineScriptPlayer } from './managers/OfflineScriptPlayer';
 import { HistoryPanel } from './components/HistoryPanel';
 import { DebugPanel } from './components/DebugPanel';
 import { ControlBar } from './components/ControlBar';
@@ -29,6 +30,7 @@ function App() {
   const [answer, setAnswer] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [queueStatus, setQueueStatus] = useState('');
+  const [guardHint, setGuardHint] = useState('');
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const [debugInfo, setDebugInfo] = useState(null);
   const [chatOptions, setChatOptions] = useState([]);
@@ -97,6 +99,12 @@ function App() {
   const { status: serverStatus, error: serverStatusErr } = useBackendStatus(debugInfo && debugInfo.requestId);
   const { items: serverEvents, lastError: serverLastError, error: serverEventsErr } = useBackendEvents(debugInfo && debugInfo.requestId);
   const [currentIntent, setCurrentIntent] = useState(null);
+  const [offlinePlaying, setOfflinePlaying] = useState(false);
+  const [offlineErr, setOfflineErr] = useState('');
+  const [autoOffline, setAutoOffline] = useLocalStorageState('autoOffline', true, {
+    serialize: (v) => (v ? '1' : '0'),
+    deserialize: (raw) => String(raw) === '1',
+  });
   const [tourSelectedStopIndex, setTourSelectedStopIndex] = useLocalStorageState('tourSelectedStopIndex', 0, {
     serialize: (v) => String(Number.isFinite(Number(v)) ? Number(v) : 0),
     deserialize: (raw) => {
@@ -121,6 +129,7 @@ function App() {
   const messagesEndRef = useRef(null);
   const PREFERRED_TTS_SAMPLE_RATE = 16000;
   const ttsEnabledRef = useRef(true);
+  const autoOfflineRef = useRef(!!autoOffline);
   const continuousTourRef = useRef(continuousTour);
   const guideEnabledRef = useRef(guideEnabled);
   const tourStopsRef = useRef(tourStops);
@@ -142,6 +151,8 @@ function App() {
   const groupModeRef = useRef(groupMode);
   const queueRef = useRef([]);
   const lastSpeakerRef = useRef('');
+  const lastHighPriorityInterruptAtRef = useRef(0);
+  const tourGuardRef = useRef({ name: '', ts: 0 });
 
   const ttsManagerRef = useRef(null);
   const { tourPipelineRef, getTourPipeline, abortPrefetch } = useTourPipelineManager({
@@ -171,9 +182,50 @@ function App() {
   const USE_SAVED_TTS = false;
   const inputElRef = useRef(null);
   const tourControllerRef = useRef(null);
+  const offlinePlayerRef = useRef(null);
 
   const POINTER_SUPPORTED = typeof window !== 'undefined' && 'PointerEvent' in window;
   const MIN_RECORD_MS = 900;
+  const emitClientEvent = (evt) => emitClientEventExt({ ...(evt || {}), clientId: clientIdRef.current });
+
+  const clearGuardHintSoon = () => {
+    try {
+      setTimeout(() => {
+        const cur = tourGuardRef.current || { name: '', ts: 0 };
+        if (!cur.name) setGuardHint('');
+      }, 1600);
+    } catch (_) {
+      // ignore
+    }
+  };
+
+  const requireTourConfirmIfActive = (name, active) => {
+    if (!active) return true;
+    const now = Date.now();
+    const cur = tourGuardRef.current || { name: '', ts: 0 };
+    const ok = cur.name === name && now - (cur.ts || 0) < 1500;
+    if (ok) {
+      tourGuardRef.current = { name: '', ts: 0 };
+      setGuardHint('');
+      return true;
+    }
+    tourGuardRef.current = { name, ts: now };
+    setGuardHint(`再次点击确认：${name}（会打断当前播报/回答）`);
+    clearGuardHintSoon();
+    return false;
+  };
+
+  const hasActiveRun = () => {
+    const ttsBusy = ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false;
+    return (
+      !!offlinePlaying ||
+      !!askAbortRef.current ||
+      !!isLoading ||
+      !!currentAudioRef.current ||
+      !!ttsBusy ||
+      (tourPipelineRef.current && tourPipelineRef.current.isActive())
+    );
+  };
 
   const getTtsManager = () =>
     createOrGetTtsManager({
@@ -186,7 +238,22 @@ function App() {
       baseUrl: 'http://localhost:8000',
       useSavedTts: USE_SAVED_TTS,
       maxPreGenerateCount: MAX_PRE_GENERATE_COUNT,
-      emitClientEvent: (evt) => emitClientEventExt({ ...(evt || {}), clientId: clientIdRef.current }),
+      emitClientEvent,
+      onAbnormalAudio: () => {
+        try {
+          setQueueStatus('音频异常：已降级为仅文本（可重试）');
+        } catch (_) {
+          // ignore
+        }
+        try {
+          if (autoOfflineRef.current && guideEnabledRef.current) {
+            setGuardHint('音频异常：已自动切换到离线播报（可停止离线后重试在线）');
+            playOfflineAll();
+          }
+        } catch (_) {
+          // ignore
+        }
+      },
       onStopIndexChange: createTtsOnStopIndexChange({
         guideEnabledRef,
         tourStateRef,
@@ -216,26 +283,81 @@ function App() {
     cancelBackendRequestExt({ requestId, clientId: clientIdRef.current, reason });
   };
 
+  const getOfflinePlayer = () => {
+    if (offlinePlayerRef.current) return offlinePlayerRef.current;
+    offlinePlayerRef.current = new OfflineScriptPlayer({ clientIdRef, emitClientEvent });
+    return offlinePlayerRef.current;
+  };
+
+  const stopOffline = (reason) => {
+    try {
+      if (offlinePlayerRef.current) offlinePlayerRef.current.stop(reason || 'stop');
+    } catch (_) {
+      // ignore
+    } finally {
+      setOfflinePlaying(false);
+    }
+  };
+
   /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     const onKeyDown = (e) => {
-      if (!e || e.key !== 'Escape') return;
-      const hasActiveRun =
-        !!askAbortRef.current ||
-        isLoading ||
-        (ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false) ||
-        !!currentAudioRef.current;
-      if (!hasActiveRun) return;
-      try {
-        e.preventDefault();
-      } catch (_) {
-        // ignore
+      if (!e || !e.key) return;
+      const key = String(e.key || '');
+      const keyLower = key.toLowerCase();
+
+      const target = e.target;
+      const tag = target && target.tagName ? String(target.tagName).toLowerCase() : '';
+      const typing =
+        tag === 'input' ||
+        tag === 'textarea' ||
+        tag === 'select' ||
+        (target && typeof target.isContentEditable === 'boolean' && target.isContentEditable);
+
+      if (key === 'Escape') {
+        if (!hasActiveRun()) return;
+        try {
+          e.preventDefault();
+        } catch (_) {
+          // ignore
+        }
+        interruptCurrentRun('escape');
+        return;
       }
-      interruptCurrentRun('escape');
+
+      if (typing) return;
+      if (!guideEnabledRef.current) return;
+
+      const controller = getTourController();
+      const active = hasActiveRun();
+
+      const runNav = async (name, fn) => {
+        if (!requireTourConfirmIfActive(name, active)) return;
+        if (active) interruptAll(`tour_${name}`);
+        try {
+          await fn();
+        } catch (_) {
+          // ignore
+        }
+      };
+
+      if (keyLower === 'p') {
+        try {
+          e.preventDefault();
+        } catch (_) {
+          // ignore
+        }
+        controller.pause();
+        return;
+      }
+      if (keyLower === 'c') return runNav('continue', () => controller.continue());
+      if (keyLower === 's') return runNav('start', () => controller.start());
+      if (keyLower === 'n') return runNav('next', () => controller.nextStop());
+      if (keyLower === 'b') return runNav('prev', () => controller.prevStop());
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isLoading]);
+  }, [isLoading, offlinePlaying, guideEnabled]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
   const decodeAndConvertToWav16kMono = async (blob) => {
@@ -275,6 +397,10 @@ function App() {
   useEffect(() => {
     continuousTourRef.current = !!continuousTour;
   }, [continuousTour]);
+
+  useEffect(() => {
+    autoOfflineRef.current = !!autoOffline;
+  }, [autoOffline]);
 
   useEffect(() => {
     guideEnabledRef.current = !!guideEnabled;
@@ -405,7 +531,22 @@ function App() {
         isLoading ||
         !!currentAudioRef.current ||
         (ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false);
-      if (active) interruptCurrentRun('queue_takeover');
+      if (active) {
+        if (item.priority === 'high') {
+          const now = Date.now();
+          const COOLDOWN_MS = 4000;
+          const since = now - (lastHighPriorityInterruptAtRef.current || 0);
+          if (since < COOLDOWN_MS) {
+            const left = Math.max(0, COOLDOWN_MS - since);
+            setGuardHint(`高优先打断冷却中（${Math.ceil(left / 1000)}s），稍后再试`);
+            clearGuardHintSoon();
+            enqueueQuestion({ speaker: item.speaker, text: item.text, priority: item.priority });
+            return;
+          }
+          lastHighPriorityInterruptAtRef.current = now;
+        }
+        interruptCurrentRun('queue_takeover');
+      }
       beginDebugRun(item.priority === 'high' ? 'group_high' : 'group_takeover');
       await askQuestion(prefixed, { fromQueue: true });
     } catch (e) {
@@ -500,6 +641,7 @@ function App() {
     isRecording,
     startRecording,
     stopRecording,
+    cancelAsr,
     onRecordPointerDown,
     onRecordPointerUp,
     onRecordPointerCancel,
@@ -522,7 +664,7 @@ function App() {
     askAbortRef,
     activeAskRequestIdRef,
     cancelBackendRequest,
-    emitClientEvent: (evt) => emitClientEventExt({ ...(evt || {}), clientId: clientIdRef.current }),
+    emitClientEvent,
     clientIdRef,
     debugRef,
     beginDebugRun,
@@ -555,7 +697,78 @@ function App() {
     getHistorySort: () => historySort,
     fetchHistory,
     maybeStartNextQueuedQuestion,
+    onSuggestOffline: ({ reason } = {}) => {
+      try {
+        if (!autoOfflineRef.current) return;
+        if (!guideEnabledRef.current) return;
+        if (offlinePlaying) return;
+        setGuardHint(`在线链路异常：已自动切换离线播报（${String(reason || 'offline')}）`);
+        playOfflineAll();
+      } catch (_) {
+        // ignore
+      }
+    },
   });
+
+  const interruptAll = (reason) => {
+    try {
+      if (typeof cancelAsr === 'function') cancelAsr();
+    } catch (_) {
+      // ignore
+    }
+    stopOffline(reason || 'interrupt');
+    try {
+      interruptCurrentRun(reason || 'interrupt');
+    } catch (_) {
+      // ignore
+    }
+    try {
+      cancelActiveExt({ clientId: clientIdRef.current, kind: 'all', reason: String(reason || 'interrupt') });
+    } catch (_) {
+      // ignore
+    }
+  };
+
+  const playOfflineAll = async () => {
+    if (offlinePlaying) return;
+    setOfflineErr('');
+    interruptAll('offline_play');
+    setOfflinePlaying(true);
+    try {
+      const res = await getOfflinePlayer().playAll();
+      if (!res || res.ok !== true) {
+        if (res && res.cancelled) return;
+        setOfflineErr((res && res.error) || 'offline_play_failed');
+      }
+    } catch (e) {
+      setOfflineErr(String((e && e.message) || e || 'offline_play_failed'));
+    } finally {
+      setOfflinePlaying(false);
+    }
+  };
+
+  // SD-9: recovery probe (best-effort). When offline is playing, periodically check health and hint operator.
+  useEffect(() => {
+    if (!offlinePlaying) return undefined;
+    if (!autoOfflineRef.current) return undefined;
+    let stopped = false;
+    const tick = async () => {
+      try {
+        const j = await fetchJson('/api/health', { headers: { 'X-Client-ID': clientIdRef.current } });
+        if (!stopped && j && j.ragflow_connected) {
+          setGuardHint('检测到在线已恢复：可停止离线播报后继续在线讲解/问答');
+        }
+      } catch (_) {
+        // ignore
+      }
+    };
+    const id = setInterval(tick, 5000);
+    tick();
+    return () => {
+      stopped = true;
+      clearInterval(id);
+    };
+  }, [offlinePlaying]);
 
 
   const handleTextSubmit = async (e) => {
@@ -583,11 +796,21 @@ function App() {
       if (groupMode) {
         const item = enqueueQuestion({ speaker: speakerName, text, priority: questionPriority });
         if (item && item.priority === 'high' && active) {
+          const now = Date.now();
+          const COOLDOWN_MS = 4000;
+          const since = now - (lastHighPriorityInterruptAtRef.current || 0);
+          if (since < COOLDOWN_MS) {
+            const left = Math.max(0, COOLDOWN_MS - since);
+            setGuardHint(`高优先打断冷却中（${Math.ceil(left / 1000)}s），已加入队列`);
+            clearGuardHintSoon();
+            return;
+          }
           try {
             interruptCurrentRun('high_priority');
           } catch (_) {
             // ignore
           }
+          lastHighPriorityInterruptAtRef.current = now;
           removeQueuedQuestion(item.id);
           lastSpeakerRef.current = String(item.speaker || '');
           await askQuestion(`【提问人：${item.speaker}】${item.text}`, { fromQueue: true });
@@ -648,18 +871,20 @@ function App() {
       tourStateRef,
       getTourStops: () => (tourStopsRef.current || []),
       buildTourPrompt,
-      beginDebugRun,
-      askQuestion,
-      getTourPipeline,
-      interruptCurrentRun,
-      setTourState,
-    });
-    return tourControllerRef.current;
-  };
+       beginDebugRun,
+       askQuestion,
+       getTourPipeline,
+       interruptCurrentRun: interruptAll,
+       setTourState,
+     });
+     return tourControllerRef.current;
+   };
 
   const startTour = async () => getTourController().start();
 
   const continueTour = async () => getTourController().continue();
+
+  const pauseTour = () => getTourController().pause();
 
   const prevTourStop = async () => getTourController().prevStop();
 
@@ -668,6 +893,13 @@ function App() {
   const jumpTourStop = async (idx) => getTourController().jumpTo(idx);
 
   const resetTour = () => getTourController().reset();
+
+  const runTourNavAction = async (name, fn) => {
+    const active = hasActiveRun();
+    if (!requireTourConfirmIfActive(name, active)) return;
+    if (active) interruptAll(`tour_${name}`);
+    await fn();
+  };
 
   useEffect(() => {
     if (!messagesEndRef.current) return;
@@ -716,12 +948,18 @@ function App() {
           onChangeTourSelectedStopIndex={setTourSelectedStopIndex}
           onJump={async () => {
             try {
-              await jumpTourStop(tourSelectedStopIndex);
+              await runTourNavAction(`跳转到第${Number(tourSelectedStopIndex || 0) + 1}站`, () => jumpTourStop(tourSelectedStopIndex));
             } catch (e) {
               console.error('[TOUR] jump failed', e);
             }
           }}
-          onReset={resetTour}
+          onReset={() => runTourNavAction('重置讲解', () => resetTour())}
+          offlinePlaying={offlinePlaying}
+          offlineErr={offlineErr}
+          onOfflinePlayAll={playOfflineAll}
+          onOfflineStop={() => stopOffline('user_stop')}
+          autoOffline={autoOffline}
+          onChangeAutoOffline={setAutoOffline}
         />
 
         <Composer
@@ -744,17 +982,23 @@ function App() {
           onChangeInputText={setInputText}
           inputElRef={inputElRef}
           questionQueueLength={(questionQueue || []).length}
-          onInterrupt={() => interruptCurrentRun('user_stop')}
+          onInterrupt={() => interruptAll('user_stop')}
           interruptDisabled={
-            !isLoading && !((ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false) || currentAudioRef.current)
+            !offlinePlaying && !isLoading && !((ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false) || currentAudioRef.current)
           }
           useAgentMode={useAgentMode}
           selectedAgentId={selectedAgentId}
           onSubmit={handleTextSubmit}
-          onStartTour={startTour}
-          onContinueTour={continueTour}
-          onNextTourStop={nextTourStop}
-          onPrevTourStop={prevTourStop}
+          guideEnabled={guideEnabled}
+          continuousTour={continuousTour}
+          tourState={tourState}
+          hasActiveRun={hasActiveRun()}
+          guardHint={guardHint}
+          onStartTour={() => runTourNavAction('开始讲解', () => startTour())}
+          onContinueTour={() => runTourNavAction('继续讲解', () => continueTour())}
+          onPauseTour={pauseTour}
+          onNextTourStop={() => runTourNavAction('下一站', () => nextTourStop())}
+          onPrevTourStop={() => runTourNavAction('上一站', () => prevTourStop())}
           onSubmitTextAuto={submitTextAuto}
           focusInput={() => {
             try {
@@ -800,6 +1044,7 @@ function App() {
             debugInfo={debugInfo}
             ttsEnabled={ttsEnabled}
             tourState={tourState}
+            clientId={clientId}
             serverStatus={serverStatus}
             serverStatusErr={serverStatusErr}
             serverEvents={serverEvents}

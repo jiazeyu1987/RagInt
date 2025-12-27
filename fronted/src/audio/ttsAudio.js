@@ -514,9 +514,17 @@ export async function playWavStreamViaWebAudio(url, audioContextRef, currentAudi
           sanityDone = true;
           const avgRms = sanitySamples.reduce((a, b) => a + b.rms, 0) / sanitySamples.length;
           const avgZcr = sanitySamples.reduce((a, b) => a + b.zcr, 0) / sanitySamples.length;
+          const avgPeak = sanitySamples.reduce((a, b) => a + b.peak, 0) / sanitySamples.length;
           console.log(`[TTS][Sanity] rms=${avgRms.toFixed(3)} zcr=${avgZcr.toFixed(3)} sr=${wavInfo.sampleRate}`);
           if (avgZcr > 0.35 && avgRms > 0.05) {
             throw new Error(`PCM sanity check failed (white-noise suspected): rms=${avgRms.toFixed(3)} zcr=${avgZcr.toFixed(3)}`);
+          }
+          // SD-4.3 abnormal audio detection: silence/clipping -> degrade to text-only.
+          if (avgRms < 0.002 && avgPeak < 0.02) {
+            throw new Error(`PCM sanity check failed (silence suspected): peak=${avgPeak.toFixed(3)} rms=${avgRms.toFixed(4)}`);
+          }
+          if (avgPeak > 0.98 && avgRms > 0.20) {
+            throw new Error(`PCM sanity check failed (clipping suspected): peak=${avgPeak.toFixed(3)} rms=${avgRms.toFixed(3)}`);
           }
         }
       }

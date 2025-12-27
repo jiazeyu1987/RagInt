@@ -1,0 +1,17 @@
+{
+  "version": "1.0",
+  "title": "离线预录音讲解脚本（示例）",
+  "notes": "把音频文件放到 backend/data/offline/audio/ 下，并在 items 里配置 filename；前端点击“离线播报”会按 order 顺序播放。",
+  "items": [
+    {
+      "id": "stop_0",
+      "order": 0,
+      "stop_id": "stop_0",
+      "stop_name": "第1站（示例）",
+      "title": "第1站 离线讲解（示例）",
+      "filename": "stop_0.wav",
+      "duration_ms": 18000
+    }
+  ]
+}
+

@@ -36,6 +36,13 @@ export function ControlBar({
   onChangeTourSelectedStopIndex,
   onJump,
   onReset,
+
+  offlinePlaying,
+  offlineErr,
+  onOfflinePlayAll,
+  onOfflineStop,
+  autoOffline,
+  onChangeAutoOffline,
 }) {
   return (
     <div className="controls">
@@ -143,7 +150,13 @@ export function ControlBar({
         <span className="tour-status-v">
           {tourState && tourState.mode === 'idle'
             ? '未开始'
-            : `${tourState && tourState.mode === 'running' ? '进行中' : tourState && tourState.mode === 'interrupted' ? '已打断' : '就绪'}${
+            : `${tourState && tourState.mode === 'running'
+                ? '进行中'
+                : tourState && tourState.mode === 'interrupted'
+                  ? '已打断'
+                  : tourState && tourState.mode === 'paused'
+                    ? '已暂停'
+                    : '就绪'}${
                 tourState && tourState.stopIndex >= 0 ? ` · 第${tourState.stopIndex + 1}站` : ''
               }${tourState && tourState.stopName ? ` · ${tourState.stopName}` : ''}`}
           {currentIntent && currentIntent.intent ? ` · 意图:${currentIntent.intent}` : ''}
@@ -167,6 +180,20 @@ export function ControlBar({
           </button>
         </div>
       ) : null}
+
+      <div className="tour-controls">
+        <button type="button" className="tour-jump-btn" onClick={onOfflinePlayAll} disabled={!!offlinePlaying} title="离线模式：按预录音脚本顺序播放整套讲解">
+          {offlinePlaying ? '离线播报中…' : '离线播报'}
+        </button>
+        <button type="button" className="tour-reset-btn" onClick={onOfflineStop} disabled={!offlinePlaying} title="停止离线播报">
+          停止离线
+        </button>
+        <label className="tts-toggle" title="当在线链路异常时自动切换到离线播报（仅影响讲解/切站动作）">
+          <input type="checkbox" checked={!!autoOffline} onChange={(e) => onChangeAutoOffline && onChangeAutoOffline(e.target.checked)} />
+          <span>自动离线</span>
+        </label>
+        {offlineErr ? <span className="debug-muted">{String(offlineErr)}</span> : null}
+      </div>
     </div>
   );
 }

@@ -4,7 +4,7 @@
 
 ```json
 {
-  "api_key": "ragflow-lmBmCb-T_yV1D8gaV65ThoTLPLWsAr4zKUh72XKFFBs",
+  "api_key": "YOUR_RAGFLOW_API_KEY_HERE",
   "base_url": "http://127.0.0.1",
   "dataset_name": "知识库调研",
   "default_conversation_name": "知识库问答",
@@ -15,6 +15,8 @@
   "retry_delay": 1.0
 }
 ```
+
+> 交付建议：`api_key` 等密钥请使用环境变量注入（例如 `RAGFLOW_API_KEY`、`BAILIAN_API_KEY`），配置文件保留占位符即可。
 
 ### 新增字段说明
 

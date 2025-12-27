@@ -61,6 +61,7 @@ export class TtsQueueManager {
     this._onStopIndexChange = typeof options.onStopIndexChange === 'function' ? options.onStopIndexChange : null;
     this._onDebug = typeof options.onDebug === 'function' ? options.onDebug : null;
     this._emitClientEvent = typeof options.emitClientEvent === 'function' ? options.emitClientEvent : null;
+    this._onAbnormalAudio = typeof options.onAbnormalAudio === 'function' ? options.onAbnormalAudio : null;
 
     this._token = 0;
     this._requestId = null;
@@ -279,58 +280,92 @@ export class TtsQueueManager {
         }
 
         try {
-          if (audioItem && audioItem.wavBytes) {
-            try {
-              await playWavBytesViaDecodeAudioData(audioItem.wavBytes, this._audioContextRef, this._currentAudioRef);
-            } catch (err) {
-              this._warn('[TTSQ] prefetched_wav_playback_failed_fallback_to_stream', err);
-              if (audioItem.url) {
-                await playWavStreamViaWebAudio(
-                  audioItem.url,
-                  this._audioContextRef,
-                  this._currentAudioRef,
-                  () => playAudioElementUrl(audioItem.url, this._currentAudioRef),
-                  () => {
-                    if (!this._onDebug) return;
-                    try {
-                      this._onDebug({
-                        type: 'tts_first_audio',
-                        t: this._nowMs(),
-                        seq: typeof audioItem.seq === 'number' ? audioItem.seq : null,
-                      });
-                    } catch (_) {
-                      // ignore
+          try {
+            if (audioItem && audioItem.wavBytes) {
+              try {
+                await playWavBytesViaDecodeAudioData(audioItem.wavBytes, this._audioContextRef, this._currentAudioRef);
+              } catch (err) {
+                this._warn('[TTSQ] prefetched_wav_playback_failed_fallback_to_stream', err);
+                if (audioItem.url) {
+                  await playWavStreamViaWebAudio(
+                    audioItem.url,
+                    this._audioContextRef,
+                    this._currentAudioRef,
+                    () => playAudioElementUrl(audioItem.url, this._currentAudioRef),
+                    () => {
+                      if (!this._onDebug) return;
+                      try {
+                        this._onDebug({
+                          type: 'tts_first_audio',
+                          t: this._nowMs(),
+                          seq: typeof audioItem.seq === 'number' ? audioItem.seq : null,
+                        });
+                      } catch (_) {
+                        // ignore
+                      }
                     }
-                  }
-                );
+                  );
+                }
               }
+            } else if (this._useSavedTts) {
+              try {
+                await playWavViaDecodeAudioData(audioItem.url, this._audioContextRef, this._currentAudioRef);
+              } catch (err) {
+                this._warn('[TTSQ] saved_wav_playback_failed_fallback_to_audio', err);
+                await playAudioElementUrl(audioItem.url, this._currentAudioRef);
+              }
+            } else {
+              await playWavStreamViaWebAudio(
+                audioItem.url,
+                this._audioContextRef,
+                this._currentAudioRef,
+                () => playAudioElementUrl(audioItem.url, this._currentAudioRef),
+                () => {
+                  if (!this._onDebug) return;
+                  try {
+                    this._onDebug({
+                      type: 'tts_first_audio',
+                      t: this._nowMs(),
+                      seq: typeof audioItem.seq === 'number' ? audioItem.seq : null,
+                    });
+                  } catch (_) {
+                    // ignore
+                  }
+                }
+              );
             }
-          } else if (this._useSavedTts) {
-            try {
-              await playWavViaDecodeAudioData(audioItem.url, this._audioContextRef, this._currentAudioRef);
-            } catch (err) {
-              this._warn('[TTSQ] saved_wav_playback_failed_fallback_to_audio', err);
-              await playAudioElementUrl(audioItem.url, this._currentAudioRef);
-            }
-          } else {
-            await playWavStreamViaWebAudio(
-              audioItem.url,
-              this._audioContextRef,
-              this._currentAudioRef,
-              () => playAudioElementUrl(audioItem.url, this._currentAudioRef),
-              () => {
-                if (!this._onDebug) return;
+          } catch (err) {
+            const msg = String((err && err.message) || err || '');
+            const isAbnormal =
+              msg.includes('PCM sanity check failed') ||
+              msg.includes('white-noise') ||
+              msg.includes('white noise') ||
+              msg.includes('silence suspected') ||
+              msg.includes('clipping suspected');
+
+            this._warn('[TTSQ] audio_play_failed', err);
+            if (isAbnormal) {
+              this._emit(
+                'tts_audio_abnormal',
+                {
+                  err: msg.slice(0, 200),
+                  seq: typeof audioItem.seq === 'number' ? audioItem.seq : null,
+                  stop_index: Number.isFinite(audioItem.stopIndex) ? Number(audioItem.stopIndex) : null,
+                },
+                'tts'
+              );
+              if (this._onAbnormalAudio) {
                 try {
-                  this._onDebug({
-                    type: 'tts_first_audio',
-                    t: this._nowMs(),
-                    seq: typeof audioItem.seq === 'number' ? audioItem.seq : null,
-                  });
+                  this._onAbnormalAudio({ err: msg, seq: audioItem.seq, stopIndex: audioItem.stopIndex });
                 } catch (_) {
                   // ignore
                 }
               }
-            );
+              // SD-4.3: degrade to text-only for this run by stopping further audio.
+              this.stop('audio_abnormal');
+              break;
+            }
+            throw err;
           }
         } finally {
           if (this._currentAudioRef && this._currentAudioRef.current) this._currentAudioRef.current = null;
