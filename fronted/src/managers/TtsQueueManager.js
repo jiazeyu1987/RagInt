@@ -57,6 +57,7 @@ export class TtsQueueManager {
     this._baseUrl = String(options.baseUrl || 'http://localhost:8000');
     this._useSavedTts = !!options.useSavedTts;
     this._ttsProvider = String(options.ttsProvider || '').trim();
+    this._ttsVoice = String(options.ttsVoice || '').trim();
     this._maxPreGenerateCount = Math.max(0, Number(options.maxPreGenerateCount || 2) || 2);
 
     this._onStopIndexChange = typeof options.onStopIndexChange === 'function' ? options.onStopIndexChange : null;
@@ -205,6 +206,7 @@ export class TtsQueueManager {
     const cid = this._getClientId();
     if (cid) url.searchParams.set('client_id', cid);
     if (this._ttsProvider) url.searchParams.set('tts_provider', this._ttsProvider);
+    if (this._ttsVoice) url.searchParams.set('tts_voice', this._ttsVoice);
     url.searchParams.set('segment_index', String(this._segmentIndex++));
     return url.toString();
   }
@@ -217,6 +219,17 @@ export class TtsQueueManager {
     // Stop current playback/fetch to avoid mixing providers mid-run.
     const rid = this._requestId;
     this.stop('tts_provider_changed');
+    if (rid) this._resetStateForRun(rid);
+  }
+
+  setTtsVoice(next, reason) {
+    const val = String(next || '').trim();
+    if (val === this._ttsVoice) return;
+    this._ttsVoice = val;
+    if (reason) this._log('[TTSQ] tts_voice_changed', val, reason);
+    // Stop current playback/fetch to avoid mixing voices mid-run.
+    const rid = this._requestId;
+    this.stop('tts_voice_changed');
     if (rid) this._resetStateForRun(rid);
   }
 

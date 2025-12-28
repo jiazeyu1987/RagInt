@@ -11,6 +11,7 @@ export function createOrGetTtsManager({
   useSavedTts,
   maxPreGenerateCount,
   ttsMode,
+  ttsVoice,
   onStopIndexChange,
   emitClientEvent,
   debugRef,
@@ -35,6 +36,7 @@ export function createOrGetTtsManager({
     useSavedTts: !!useSavedTts,
     maxPreGenerateCount,
     ttsProvider: String(ttsMode || ''),
+    ttsVoice: String(ttsVoice || ''),
     onStopIndexChange,
     emitClientEvent: typeof emitClientEvent === 'function' ? emitClientEvent : null,
     onDebug: (evt) => {

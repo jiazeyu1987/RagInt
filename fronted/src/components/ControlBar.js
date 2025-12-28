@@ -140,6 +140,7 @@ export function ControlBar({
             <option value="sovtts1">SOVTTS1</option>
             <option value="sovtts2">SOVTTS2</option>
             <option value="modelscope">ModelScope</option>
+            <option value="flash">Flash(cosyvoice-v3-flash)</option>
             <option value="sapi">SAPI</option>
             <option value="edge">Edge</option>
           </select>

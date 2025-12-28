@@ -127,6 +127,7 @@ class TTSSvc:
         # - sovtts1: local GPT-SoVITS api.py (root "/")
         # - sovtts2: local GPT-SoVITS api_v2.py ("/tts")
         # - modelscope: online (current implementation uses bailian/dashscope)
+        # - flash: cosyvoice-v3-flash (mapped to bailian/dashscope)
         # - sapi: Windows SAPI (System.Speech)
         # - edge: Edge TTS (Microsoft)
         if provider_norm == "sapi":
@@ -137,7 +138,7 @@ class TTSSvc:
             self._logger.info(f"[{request_id}] tts_provider_select provider=edge")
             yield from stream_edge_tts(text=text, request_id=request_id, config=config, logger=self._logger, cancel_event=cancel_event)
             return
-        if provider_norm in ("bailian", "dashscope", "modelscope"):
+        if provider_norm in ("bailian", "dashscope", "modelscope", "flash"):
             self._logger.info(f"[{request_id}] tts_provider_select provider=modelscope(mapped_to=bailian)")
             yield from self._stream_bailian_tts(text=text, request_id=request_id, config=config, cancel_event=cancel_event)
             return

@@ -11,8 +11,8 @@ import { createOrGetTtsManager } from './managers/createTtsManager';
 import { HistoryPanel } from './components/HistoryPanel';
 import { DebugPanel } from './components/DebugPanel';
 import { ControlBar } from './components/ControlBar';
-import { Composer } from './components/Composer';
 import { ChatPanel } from './components/ChatPanel';
+import { SettingsDrawer } from './components/SettingsDrawer';
 import { useBackendStatus } from './hooks/useBackendStatus';
 import { useBackendEvents } from './hooks/useBackendEvents';
 import { useLocalStorageState } from './hooks/useLocalStorageState';
@@ -36,9 +36,13 @@ function App() {
       const m = String(raw || 'modelscope').trim().toLowerCase();
       if (m === 'online') return 'modelscope'; // backward compat
       if (m === 'local') return 'sovtts1'; // backward compat
-      if (m === 'sovtts1' || m === 'sovtts2' || m === 'modelscope' || m === 'sapi' || m === 'edge') return m;
+      if (m === 'sovtts1' || m === 'sovtts2' || m === 'modelscope' || m === 'flash' || m === 'sapi' || m === 'edge') return m;
       return 'modelscope';
     },
+  });
+  const [modelscopeVoice, setModelscopeVoice] = useLocalStorageState('ttsModelscopeVoice', '', {
+    serialize: (v) => String(v || ''),
+    deserialize: (raw) => String(raw || ''),
   });
   const [debugInfo, setDebugInfo] = useState(null);
   const [chatOptions, setChatOptions] = useState([]);
@@ -64,6 +68,15 @@ function App() {
   });
   const [historySort, setHistorySort] = useState('time'); // 'time' | 'count'
   const [historyItems, setHistoryItems] = useState([]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [showHistoryPanel, setShowHistoryPanel] = useLocalStorageState('uiShowHistory', false, {
+    serialize: (v) => (v ? '1' : '0'),
+    deserialize: (raw) => String(raw) === '1',
+  });
+  const [showDebugPanel, setShowDebugPanel] = useLocalStorageState('uiShowDebug', false, {
+    serialize: (v) => (v ? '1' : '0'),
+    deserialize: (raw) => String(raw) === '1',
+  });
   const [clientId] = useState(() => {
     try {
       const existing = localStorage.getItem('clientId');
@@ -197,6 +210,7 @@ function App() {
       useSavedTts: USE_SAVED_TTS,
       maxPreGenerateCount: MAX_PRE_GENERATE_COUNT,
       ttsMode,
+      ttsVoice: ttsMode === 'modelscope' ? modelscopeVoice : '',
       emitClientEvent: (evt) => emitClientEventExt({ ...(evt || {}), clientId: clientIdRef.current }),
       onStopIndexChange: createTtsOnStopIndexChange({
         guideEnabledRef,
@@ -291,6 +305,15 @@ function App() {
       // ignore
     }
   }, [ttsMode]);
+
+  useEffect(() => {
+    try {
+      const mgr = ttsManagerRef.current;
+      if (mgr && typeof mgr.setTtsVoice === 'function') mgr.setTtsVoice(ttsMode === 'modelscope' ? modelscopeVoice : '', 'ui_change');
+    } catch (_) {
+      // ignore
+    }
+  }, [ttsMode, modelscopeVoice]);
 
   useEffect(() => {
     continuousTourRef.current = !!continuousTour;
@@ -446,9 +469,10 @@ function App() {
   };
 
   useEffect(() => {
+    if (!showHistoryPanel) return;
     fetchHistory(historySort);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [historySort]);
+  }, [historySort, showHistoryPanel]);
 
   const nowMs = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
 
@@ -620,7 +644,7 @@ function App() {
       }
       await askQuestion(text);
     } else if (text && useAgentMode && !selectedAgentId) {
-      alert('请选择智能体后再提问');
+      alert('请先选择智能体再提问');
     }
   };
 
@@ -628,7 +652,7 @@ function App() {
     const q = String(text || '').trim();
     if (!q) return;
     if (useAgentMode && !selectedAgentId) {
-      alert('请选择智能体后再提问');
+      alert('请先选择智能体再提问');
       return;
     }
     if (ttsEnabledRef.current) {
@@ -698,117 +722,33 @@ function App() {
     }
   }, [lastQuestion, answer, isLoading, queueStatus]);
 
+  const submitDisabled = !String(inputText || '').trim() || (useAgentMode && !selectedAgentId);
+  const interruptDisabled =
+    !isLoading && !((ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false) || currentAudioRef.current);
+
   return (
     <div className="app">
       <div className="container">
-        <h1>AI语音问答</h1>
-
-        <ControlBar
-          useAgentMode={useAgentMode}
-          onChangeUseAgentMode={setUseAgentMode}
-          agentOptions={agentOptions}
-          selectedAgentId={selectedAgentId}
-          onChangeSelectedAgentId={setSelectedAgentId}
-          chatOptions={chatOptions}
-          selectedChat={selectedChat}
-          onChangeSelectedChat={setSelectedChat}
-          guideEnabled={guideEnabled}
-          onChangeGuideEnabled={setGuideEnabled}
-          guideDuration={guideDuration}
-          onChangeGuideDuration={setGuideDuration}
-          guideStyle={guideStyle}
-          onChangeGuideStyle={setGuideStyle}
-          tourMeta={tourMeta}
-          tourZone={tourZone}
-          onChangeTourZone={setTourZone}
-          audienceProfile={audienceProfile}
-          onChangeAudienceProfile={setAudienceProfile}
-          groupMode={groupMode}
-          onChangeGroupMode={setGroupMode}
-          ttsEnabled={ttsEnabled}
-          onChangeTtsEnabled={setTtsEnabled}
-          ttsMode={ttsMode}
-          onChangeTtsMode={setTtsMode}
-          continuousTour={continuousTour}
-          onChangeContinuousTour={setContinuousTour}
-          tourState={tourState}
-          currentIntent={currentIntent}
-          tourStops={tourStops}
-          tourSelectedStopIndex={tourSelectedStopIndex}
-          onChangeTourSelectedStopIndex={setTourSelectedStopIndex}
-          onJump={async () => {
-            try {
-              await jumpTourStop(tourSelectedStopIndex);
-            } catch (e) {
-              console.error('[TOUR] jump failed', e);
-            }
-          }}
-          onReset={resetTour}
-        />
-
-        <Composer
-          isRecording={isRecording}
-          pointerSupported={POINTER_SUPPORTED}
-          onRecordPointerDown={onRecordPointerDown}
-          onRecordPointerUp={onRecordPointerUp}
-          onRecordPointerCancel={onRecordPointerCancel}
-          onRecordClickFallback={() => {
-            if (POINTER_SUPPORTED) return;
-            if (isRecording) stopRecording();
-            else startRecording();
-          }}
-          groupMode={groupMode}
-          speakerName={speakerName}
-          onChangeSpeakerName={setSpeakerName}
-          questionPriority={questionPriority}
-          onChangeQuestionPriority={setQuestionPriority}
-          inputText={inputText}
-          onChangeInputText={setInputText}
-          inputElRef={inputElRef}
-          questionQueueLength={(questionQueue || []).length}
-          onInterrupt={() => interruptCurrentRun('user_stop')}
-          interruptDisabled={
-            !isLoading && !((ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false) || currentAudioRef.current)
-          }
-          useAgentMode={useAgentMode}
-          selectedAgentId={selectedAgentId}
-          onSubmit={handleTextSubmit}
-          onStartTour={startTour}
-          onContinueTour={continueTour}
-          onNextTourStop={nextTourStop}
-          onPrevTourStop={prevTourStop}
-          onSubmitTextAuto={submitTextAuto}
-          focusInput={() => {
-            try {
-              setTimeout(() => {
-                if (inputElRef.current && typeof inputElRef.current.focus === 'function') {
-                  inputElRef.current.focus();
-                }
-              }, 0);
-            } catch (_) {
-              // ignore
-            }
-          }}
-        />
-
         <div className="layout">
-          <HistoryPanel
-            historySort={historySort}
-            onChangeSort={(v) => setHistorySort(v)}
-            items={historyItems}
-            onPickQuestion={(q) => {
-              setInputText(q);
-              try {
-                setTimeout(() => {
-                  if (inputElRef.current && typeof inputElRef.current.focus === 'function') {
-                    inputElRef.current.focus();
-                  }
-                }, 0);
-              } catch (_) {
-                // ignore
-              }
-            }}
-          />
+          {showHistoryPanel ? (
+            <HistoryPanel
+              historySort={historySort}
+              onChangeSort={(v) => setHistorySort(v)}
+              items={historyItems}
+              onPickQuestion={(q) => {
+                setInputText(q);
+                try {
+                  setTimeout(() => {
+                    if (inputElRef.current && typeof inputElRef.current.focus === 'function') {
+                      inputElRef.current.focus();
+                    }
+                  }, 0);
+                } catch (_) {
+                  // ignore
+                }
+              }}
+            />
+          ) : null}
 
           <ChatPanel
             lastQuestion={lastQuestion}
@@ -818,20 +758,185 @@ function App() {
             messagesEndRef={messagesEndRef}
           />
 
-          <DebugPanel
-            debugInfo={debugInfo}
-            ttsEnabled={ttsEnabled}
-            tourState={tourState}
-            serverStatus={serverStatus}
-            serverStatusErr={serverStatusErr}
-            serverEvents={serverEvents}
-            serverEventsErr={serverEventsErr}
-            serverLastError={serverLastError}
-            questionQueue={questionQueue}
-            onAnswerQueuedNow={(item) => answerQueuedNow(item)}
-            onRemoveQueuedQuestion={(id) => removeQueuedQuestion(id)}
-          />
+          {showDebugPanel ? (
+            <DebugPanel
+              debugInfo={debugInfo}
+              ttsEnabled={ttsEnabled}
+              tourState={tourState}
+              serverStatus={serverStatus}
+              serverStatusErr={serverStatusErr}
+              serverEvents={serverEvents}
+              serverEventsErr={serverEventsErr}
+              serverLastError={serverLastError}
+              questionQueue={questionQueue}
+              onAnswerQueuedNow={(item) => answerQueuedNow(item)}
+              onRemoveQueuedQuestion={(id) => removeQueuedQuestion(id)}
+            />
+          ) : null}
         </div>
+
+        <div className="input-section">
+          <div className="home-actions">
+            <button type="button" className="home-action-btn home-action-primary" onClick={startTour}>
+              开始讲解
+            </button>
+            <button
+              type="button"
+              className="home-action-btn home-action-danger"
+              onClick={() => interruptCurrentRun('user_stop')}
+              disabled={!!interruptDisabled}
+            >
+              打断
+            </button>
+            <button type="button" className="home-action-btn" onClick={continueTour}>
+              继续讲解
+            </button>
+          </div>
+
+          <form className="text-input text-input-minimal" onSubmit={handleTextSubmit}>
+            <button
+              className={`record-btn ${isRecording ? 'recording' : ''}`}
+              onPointerDown={onRecordPointerDown}
+              onPointerUp={onRecordPointerUp}
+              onPointerCancel={onRecordPointerCancel}
+              onPointerLeave={onRecordPointerCancel}
+              onClick={() => {
+                if (POINTER_SUPPORTED) return;
+                if (isRecording) stopRecording();
+                else startRecording();
+              }}
+              type="button"
+              title="按住说话，松开后识别并填入输入框"
+              aria-label={isRecording ? '录音中' : '语音输入'}
+            >
+              {isRecording ? '■' : '🎙'}
+            </button>
+
+            <input
+              type="text"
+              ref={inputElRef}
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              placeholder="输入问题…"
+              disabled={false}
+            />
+
+            <button type="submit" disabled={submitDisabled} title="提交">
+              发送
+            </button>
+
+            <button type="button" className="settings-btn" onClick={() => setSettingsOpen(true)} title="设置" aria-label="设置">
+              ⚙
+            </button>
+          </form>
+        </div>
+
+        <SettingsDrawer open={settingsOpen} title="设置" onClose={() => setSettingsOpen(false)}>
+          <div className="settings-section">
+            <label className="settings-toggle">
+              <input type="checkbox" checked={!!showHistoryPanel} onChange={(e) => setShowHistoryPanel(e.target.checked)} />
+              <span>显示历史</span>
+            </label>
+            <label className="settings-toggle">
+              <input type="checkbox" checked={!!showDebugPanel} onChange={(e) => setShowDebugPanel(e.target.checked)} />
+              <span>显示 Debug</span>
+            </label>
+          </div>
+
+          <div className="settings-divider" />
+
+          <ControlBar
+            useAgentMode={useAgentMode}
+            onChangeUseAgentMode={setUseAgentMode}
+            agentOptions={agentOptions}
+            selectedAgentId={selectedAgentId}
+            onChangeSelectedAgentId={setSelectedAgentId}
+            chatOptions={chatOptions}
+            selectedChat={selectedChat}
+            onChangeSelectedChat={setSelectedChat}
+            guideEnabled={guideEnabled}
+            onChangeGuideEnabled={setGuideEnabled}
+            guideDuration={guideDuration}
+            onChangeGuideDuration={setGuideDuration}
+            guideStyle={guideStyle}
+            onChangeGuideStyle={setGuideStyle}
+            tourMeta={tourMeta}
+            tourZone={tourZone}
+            onChangeTourZone={setTourZone}
+            audienceProfile={audienceProfile}
+            onChangeAudienceProfile={setAudienceProfile}
+            groupMode={groupMode}
+            onChangeGroupMode={setGroupMode}
+            ttsEnabled={ttsEnabled}
+            onChangeTtsEnabled={setTtsEnabled}
+            ttsMode={ttsMode}
+            onChangeTtsMode={setTtsMode}
+            continuousTour={continuousTour}
+            onChangeContinuousTour={setContinuousTour}
+            tourState={tourState}
+            currentIntent={currentIntent}
+            tourStops={tourStops}
+            tourSelectedStopIndex={tourSelectedStopIndex}
+            onChangeTourSelectedStopIndex={setTourSelectedStopIndex}
+            onJump={async () => {
+              try {
+                await jumpTourStop(tourSelectedStopIndex);
+              } catch (e) {
+                console.error('[TOUR] jump failed', e);
+              }
+            }}
+            onReset={resetTour}
+          />
+
+          {ttsMode === 'modelscope' ? (
+            <>
+              <div className="settings-divider" />
+              <div className="settings-form">
+                <label className="settings-field">
+                  <span>ModelScope 音色(voice id)</span>
+                  <input
+                    value={modelscopeVoice}
+                    onChange={(e) => setModelscopeVoice(e.target.value)}
+                    placeholder="例如：cosyvoice-v3-plus-xxxx / cosyvoice-v3-plus-myvoice-..."
+                  />
+                </label>
+              </div>
+            </>
+          ) : null}
+
+          {groupMode ? (
+            <>
+              <div className="settings-divider" />
+              <div className="settings-form">
+                <label className="settings-field">
+                  <span>提问人</span>
+                  <input value={speakerName} onChange={(e) => setSpeakerName(e.target.value)} placeholder="观众A" />
+                </label>
+                <label className="settings-field">
+                  <span>优先级</span>
+                  <select value={questionPriority} onChange={(e) => setQuestionPriority(e.target.value)}>
+                    <option value="normal">普通</option>
+                    <option value="high">高优先</option>
+                  </select>
+                </label>
+              </div>
+            </>
+          ) : null}
+
+          <div className="settings-divider" />
+
+          <div className="settings-actions">
+            <button type="button" className="settings-action-btn" onClick={() => submitTextAuto('请用30秒总结刚才的讲解', 'settings_quick')}>
+              30秒总结
+            </button>
+            <button type="button" className="settings-action-btn" onClick={prevTourStop}>
+              上一站
+            </button>
+            <button type="button" className="settings-action-btn" onClick={nextTourStop}>
+              下一站
+            </button>
+          </div>
+        </SettingsDrawer>
       </div>
     </div>
   );

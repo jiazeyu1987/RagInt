@@ -8,6 +8,7 @@ import json
 import threading
 import time
 import uuid
+import copy
 import logging
 import contextlib
 
@@ -168,6 +169,55 @@ def load_app_config():
 
 def _get_nested(config: dict, path: list, default=None):
     return get_nested(config, path, default)
+
+
+def _apply_tts_overrides(app_config: dict, *, provider: str, data: dict) -> dict:
+    """
+    Per-request overrides (do not mutate cached config dict from RagflowService).
+
+    Supported:
+    - tts_voice: override `tts.bailian.voice` when provider is modelscope/bailian/dashscope/flash.
+    - tts_model: override `tts.bailian.model` when provider is modelscope/bailian/dashscope/flash.
+    """
+    cfg = app_config
+    provider_norm = str(provider or "").strip().lower()
+    tts_voice = ""
+    tts_model = ""
+    try:
+        tts_voice = str((data or {}).get("tts_voice") or "").strip()
+    except Exception:
+        tts_voice = ""
+
+    try:
+        tts_model = str((data or {}).get("tts_model") or "").strip()
+    except Exception:
+        tts_model = ""
+
+    # Provider-specific preset: "flash" means use cosyvoice-v3-flash with a reasonable default system voice.
+    if provider_norm == "flash":
+        if not tts_model:
+            tts_model = "cosyvoice-v3-flash"
+        if not tts_voice:
+            tts_voice = "longanyang"
+
+    if not tts_voice and not tts_model:
+        return cfg
+    if provider_norm not in ("modelscope", "bailian", "dashscope", "flash"):
+        return cfg
+
+    # Deep copy to avoid mutating cached config (ragflow_service._last_loaded_cfg).
+    cfg = copy.deepcopy(app_config or {})
+    if not isinstance(cfg, dict):
+        cfg = {}
+    if not isinstance(cfg.get("tts"), dict):
+        cfg["tts"] = {}
+    if not isinstance(cfg["tts"].get("bailian"), dict):
+        cfg["tts"]["bailian"] = {}
+    if tts_voice:
+        cfg["tts"]["bailian"]["voice"] = tts_voice
+    if tts_model:
+        cfg["tts"]["bailian"]["model"] = tts_model
+    return cfg
 
 
 def init_ragflow():
@@ -772,6 +822,11 @@ def text_to_speech():
         or request.headers.get("X-TTS-Provider")
         or _get_nested(app_config, ["tts", "provider"], "modelscope")
     )
+    # Allow per-request voice override (e.g. modelscope/cosyvoice voice id).
+    with contextlib.suppress(Exception):
+        if request.headers.get("X-TTS-Voice") and not data.get("tts_voice"):
+            data["tts_voice"] = request.headers.get("X-TTS-Voice")
+    app_config = _apply_tts_overrides(app_config, provider=str(provider), data=data or {})
     tts_service.tts_state_update(
         request_id,
         data.get("segment_index", None),
@@ -884,6 +939,10 @@ def text_to_speech_stream():
         or request.headers.get("X-TTS-Provider")
         or _get_nested(app_config, ["tts", "provider"], "modelscope")
     )
+    with contextlib.suppress(Exception):
+        if request.headers.get("X-TTS-Voice") and not data.get("tts_voice"):
+            data["tts_voice"] = request.headers.get("X-TTS-Voice")
+    app_config = _apply_tts_overrides(app_config, provider=str(provider), data=data or {})
     tts_service.tts_state_update(
         request_id,
         segment_index,
