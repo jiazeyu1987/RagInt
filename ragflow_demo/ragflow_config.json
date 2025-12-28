@@ -4,7 +4,7 @@
   "dataset_name": "展厅",
   "default_conversation_name": "展厅聊天",
   "asr": {
-    "provider": "funasr",
+    "provider": "dashscope",
     "preprocess": {
       "trim_silence": true,
       "normalize": true
@@ -26,7 +26,7 @@
       "initial_prompt": null
     },
     "dashscope": {
-      "api_key": "",
+      "api_key": "YOUR_DASHSCOPE_API_KEY_HERE",
       "model": "paraformer-realtime-v2",
       "kwargs": {
         "disfluency_removal_enabled": false
