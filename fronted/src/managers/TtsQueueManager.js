@@ -77,6 +77,7 @@ export class TtsQueueManager {
 
     this._generatorPromise = null;
     this._playerPromise = null;
+    this._currentItem = null;
   }
 
   _emit(name, fields, kind) {
@@ -121,6 +122,7 @@ export class TtsQueueManager {
     this._audioQueue = [];
     this._generatorPromise = null;
     this._playerPromise = null;
+    this._currentItem = null;
     safeStopCurrentAudio(this._currentAudioRef);
     if (reason) this._log('[TTSQ] stopped', reason);
     this._emit('play_cancelled', { reason: String(reason || 'stop') }, 'client');
@@ -154,6 +156,41 @@ export class TtsQueueManager {
     }
 
     return { seq, seg, stopIndex };
+  }
+
+  capturePendingTextByStopIndex(stopIndex) {
+    const idx = Number.isFinite(Number(stopIndex)) ? Number(stopIndex) : null;
+    if (idx == null) return [];
+
+    const out = [];
+
+    const cur = this._currentItem;
+    if (cur && Number(cur.stopIndex) === idx && cur.text) out.push(String(cur.text));
+
+    for (const item of this._audioQueue || []) {
+      if (!item) continue;
+      if (Number(item.stopIndex) !== idx) continue;
+      if (item.text) out.push(String(item.text));
+    }
+
+    const n = Math.min((this._textQueue || []).length, (this._metaQueue || []).length);
+    for (let i = 0; i < n; i++) {
+      const meta = this._metaQueue[i];
+      if (!meta || Number(meta.stopIndex) !== idx) continue;
+      const seg = this._textQueue[i];
+      if (seg) out.push(String(seg));
+    }
+
+    const cleaned = [];
+    let last = null;
+    for (const s of out) {
+      const t = String(s || '').trim();
+      if (!t) continue;
+      if (t === last) continue;
+      cleaned.push(t);
+      last = t;
+    }
+    return cleaned;
   }
 
   enqueueWavBytes(wavBytes, meta) {
@@ -287,6 +324,8 @@ export class TtsQueueManager {
           continue;
         }
 
+        this._currentItem = audioItem;
+
         if (this._onStopIndexChange && Number.isFinite(audioItem.stopIndex)) {
           try {
             this._onStopIndexChange(Number(audioItem.stopIndex));
@@ -377,6 +416,8 @@ export class TtsQueueManager {
             // ignore
           }
         }
+
+        if (this._token === token) this._currentItem = null;
       }
     })()
       .catch((err) => {
@@ -384,6 +425,7 @@ export class TtsQueueManager {
       })
       .finally(() => {
         if (this._token === token) this._playerPromise = null;
+        if (this._token === token) this._currentItem = null;
         // SD-6: t_play_end (client-side playback end). Best-effort.
         if (this._token === token && this._ragDone && !this._generatorPromise && this._audioQueue.length === 0) {
           this._emit('play_end', { t_client_ms: this._nowMs() }, 'client');

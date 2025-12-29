@@ -158,6 +158,7 @@ function App() {
   const debugRef = useRef(null);
   const askAbortRef = useRef(null);
   const tourStateRef = useRef(tourState);
+  const tourResumeRef = useRef({});
   const tourStopDurationsRef = useRef(tourStopDurations);
   const tourStopTargetCharsRef = useRef(tourStopTargetChars);
   const clientIdRef = useRef(clientId);
@@ -585,6 +586,7 @@ function App() {
     tourPipelineRef,
     getTourPipeline,
     tourStateRef,
+    tourResumeRef,
     getTourStopName,
     startStatusMonitor,
     guideEnabledRef,
@@ -690,6 +692,8 @@ function App() {
       tourStopTargetCharsRef,
       continuousTourRef,
       tourStateRef,
+      tourResumeRef,
+      getTtsManager,
       getTourStops: () => (tourStopsRef.current || []),
       buildTourPrompt,
       beginDebugRun,
@@ -697,6 +701,7 @@ function App() {
       getTourPipeline,
       interruptCurrentRun,
       setTourState,
+      getTourStopName,
     });
     return tourControllerRef.current;
   };

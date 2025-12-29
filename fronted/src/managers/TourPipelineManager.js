@@ -33,7 +33,7 @@ export class TourPipelineManager {
     this._active = false;
     this._token = 0;
     this._prefetchAbort = null;
-    this._prefetchStore = new Map(); // stopIndex -> { answerText, tail, createdAt }
+    this._prefetchStore = new Map(); // stopIndex -> { answerText, tail, createdAt, segments }
     this._stopsOverride = null;
     this._currentStopIndex = -1;
   }
@@ -50,6 +50,32 @@ export class TourPipelineManager {
     const idx = Number(stopIndex);
     if (!Number.isFinite(idx)) return null;
     return this._prefetchStore.get(idx) || null;
+  }
+
+  replayPrefetchToQueue({ stopIndex, enqueueSegment, ensureTtsRunning } = {}) {
+    const idx = Number(stopIndex);
+    if (!Number.isFinite(idx)) return false;
+
+    const cached = this._prefetchStore.get(idx);
+    if (!cached) return false;
+
+    const segs = Array.isArray(cached.segments) && cached.segments.length ? cached.segments : null;
+    const fallback = !segs && String(cached.answerText || '').trim() ? [String(cached.answerText || '').trim()] : null;
+    const list = segs || fallback;
+    if (!list || !list.length) return false;
+
+    for (const s of list) {
+      const t = String(s || '').trim();
+      if (!t) continue;
+      try {
+        if (enqueueSegment) enqueueSegment(t, { stopIndex: idx, source: 'prefetch_replay' });
+        if (ensureTtsRunning) ensureTtsRunning();
+      } catch (_) {
+        // ignore
+      }
+    }
+
+    return true;
   }
 
   clearPrefetchStore() {
@@ -180,7 +206,8 @@ export class TourPipelineManager {
 
     try {
       const action = String(firstAction || 'start');
-      const prompt = this.buildTourPrompt(action === 'continue' ? 'continue' : 'start', start);
+      const promptAction = action === 'continue' ? 'continue' : action === 'next' ? 'next' : 'start';
+      const prompt = this.buildTourPrompt(promptAction, start);
       await askQuestion(prompt, { tourAction: action, tourStopIndex: start, continuous: true, continuousRoot: true });
     } finally {
       if (this._token === token) {
@@ -238,12 +265,12 @@ export class TourPipelineManager {
     }, 0);
   }
 
-  async prefetchStopTextToQueue({ stopIndex, tail, token, enqueueSegment, ensureTtsRunning }) {
+  async prefetchStopTextToQueue({ stopIndex, tail, token, enqueueSegment, ensureTtsRunning, force } = {}) {
     const idx = Number.isFinite(stopIndex) ? Number(stopIndex) : 0;
     const stops = Array.isArray(this._getStops()) ? this._getStops() : [];
     if (!stops.length || idx < 0 || idx >= stops.length) return;
     if (!this._isContinuousTourEnabled()) return;
-    if (!this._active) return;
+    if (!force && !this._active) return;
     if (this._token !== token) return;
 
     if (this._prefetchStore.has(idx)) return;
@@ -289,10 +316,12 @@ export class TourPipelineManager {
       let sseBuffer = '';
       let answerText = '';
       let gotAnySegment = false;
+      const segments = [];
 
       while (true) {
         if (ctl.signal.aborted) break;
-        if (!this._active || this._token !== token) break;
+        if (!this._isContinuousTourEnabled()) break;
+        if ((!force && !this._active) || this._token !== token) break;
         const { done, value } = await reader.read();
         if (done) break;
         sseBuffer += decoder.decode(value, { stream: true });
@@ -314,6 +343,7 @@ export class TourPipelineManager {
             const seg = String(data.segment || '').trim();
             if (seg) {
               gotAnySegment = true;
+              segments.push(seg);
               try {
                 if (enqueueSegment) enqueueSegment(seg, { stopIndex: idx, source: 'prefetch' });
                 if (ensureTtsRunning) ensureTtsRunning();
@@ -327,10 +357,11 @@ export class TourPipelineManager {
       }
 
       if (ctl.signal.aborted) return;
-      if (!this._active || this._token !== token) return;
+      if (!this._isContinuousTourEnabled()) return;
+      if ((!force && !this._active) || this._token !== token) return;
 
       const tailOut = String(answerText || '').trim().slice(-80);
-    this._prefetchStore.set(idx, { answerText: String(answerText || ''), tail: tailOut, createdAt: Date.now() });
+    this._prefetchStore.set(idx, { answerText: String(answerText || ''), tail: tailOut, createdAt: Date.now(), segments });
     this._log('[PREFETCH] ready', `stopIndex=${idx}`, `segments=${gotAnySegment ? 'yes' : 'no'}`);
 
       // Limited chain prefetch: keep at most `_maxPrefetchAhead` stops ahead of current playback.
@@ -340,7 +371,7 @@ export class TourPipelineManager {
         const base = cur >= 0 ? cur : idx;
         if (nextIndex <= base + this._maxPrefetchAhead && !this._prefetchStore.has(nextIndex)) {
           setTimeout(() => {
-            this.prefetchStopTextToQueue({ stopIndex: nextIndex, tail: tailOut, token, enqueueSegment, ensureTtsRunning });
+            this.prefetchStopTextToQueue({ stopIndex: nextIndex, tail: tailOut, token, enqueueSegment, ensureTtsRunning, force });
           }, 0);
         }
       }

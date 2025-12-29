@@ -29,6 +29,8 @@ export class AskWorkflowManager {
   interrupt(reason) {
     const {
       tourPipelineRef,
+      tourStateRef,
+      tourResumeRef,
       activeAskRequestIdRef,
       cancelBackendRequest,
       askAbortRef,
@@ -42,16 +44,45 @@ export class AskWorkflowManager {
       clientIdRef,
     } = this.deps;
     const emitClientEvent = typeof this.deps.emitClientEvent === 'function' ? this.deps.emitClientEvent : null;
+    const interruptReason = String(reason || 'interrupt');
 
+    // Capture remaining tour TTS segments for a smoother "continue" after manual interrupt.
     try {
-      if (tourPipelineRef && tourPipelineRef.current) tourPipelineRef.current.interrupt('interrupt');
+      const r = String(reason || '');
+      const isManual = r === 'user_stop' || r === 'escape';
+      const cur = tourStateRef && tourStateRef.current ? tourStateRef.current : null;
+      const stopIndex =
+        cur && Number.isFinite(cur.stopIndex) && Number(cur.stopIndex) >= 0 ? Number(cur.stopIndex) : null;
+      if (isManual && stopIndex != null && tourResumeRef && tourResumeRef.current && ttsManagerRef && ttsManagerRef.current) {
+        const mgr = ttsManagerRef.current;
+        if (typeof mgr.capturePendingTextByStopIndex === 'function') {
+          const pending = mgr.capturePendingTextByStopIndex(stopIndex);
+          if (pending && pending.length) {
+            tourResumeRef.current[stopIndex] = { stopIndex, segments: pending, capturedAtMs: Date.now() };
+          }
+        }
+      }
+    } catch (_) {
+      // ignore
+    }
+
+    // For manual pause, keep continuous tour pipeline state/cache; only stop the current playback and in-flight requests.
+    try {
+      const pipeline = tourPipelineRef && tourPipelineRef.current ? tourPipelineRef.current : null;
+      if (pipeline) {
+        if (interruptReason === 'user_stop' || interruptReason === 'escape') {
+          if (typeof pipeline.abortPrefetch === 'function') pipeline.abortPrefetch('manual_pause');
+        } else {
+          pipeline.interrupt('interrupt');
+        }
+      }
     } catch (_) {
       // ignore
     }
 
     try {
       if (activeAskRequestIdRef && activeAskRequestIdRef.current && typeof cancelBackendRequest === 'function') {
-        cancelBackendRequest(activeAskRequestIdRef.current, reason || 'interrupt');
+        cancelBackendRequest(activeAskRequestIdRef.current, interruptReason || 'interrupt');
         if (emitClientEvent) {
           try {
             emitClientEvent({
@@ -59,7 +90,7 @@ export class AskWorkflowManager {
               clientId: clientIdRef ? clientIdRef.current : '',
               kind: 'nav',
               name: 'nav_cancelled',
-              fields: { reason: String(reason || 'interrupt') },
+              fields: { reason: interruptReason },
             });
           } catch (_) {
             // ignore
@@ -132,6 +163,7 @@ export class AskWorkflowManager {
       abortPrefetch,
       setTourState,
       tourStateRef,
+      tourResumeRef,
       getTourStopName,
       startStatusMonitor,
       setQueueStatus,
@@ -210,6 +242,13 @@ export class AskWorkflowManager {
         setTourState((prev) =>
           tourStateOnTourAction(prev, { action, stopIndex: Number.isFinite(stopIndex) ? stopIndex : 0, stopName })
         );
+        try {
+          if (tourResumeRef && tourResumeRef.current && Number.isFinite(stopIndex) && Number(stopIndex) >= 0) {
+            delete tourResumeRef.current[Number(stopIndex)];
+          }
+        } catch (_) {
+          // ignore
+        }
         // eslint-disable-next-line no-console
         console.log('[TOUR]', `action=${action}`, `stopIndex=${stopIndex}`, stopName ? `stop=${stopName}` : '');
       } else {
