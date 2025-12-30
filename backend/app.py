@@ -2,7 +2,7 @@
 import sys
 import os
 from pathlib import Path
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, send_file
 from flask_cors import CORS
 import json
 import threading
@@ -74,7 +74,7 @@ CORS(
             ]
         }
     },
-    allow_headers=["Content-Type", "X-Client-ID", "X-Request-ID"],
+    allow_headers=["Content-Type", "X-Client-ID", "X-Request-ID", "X-Recording-ID", "X-TTS-Provider", "X-TTS-Voice"],
 )
 
 sys.path.append(str(Path(__file__).parent.parent))
@@ -90,6 +90,7 @@ from services.ragflow_agent_service import RagflowAgentService
 from services.ragflow_service import RagflowService
 from services.tour_planner import TourPlanner
 from services.tts_service import TTSSvc
+from services.recording_store import RecordingStore
 from infra.cancellation import CancellationRegistry
 from infra.event_store import EventStore
 from orchestrators.conversation_orchestrator import AskInput, ConversationOrchestrator
@@ -104,6 +105,7 @@ tour_planner = TourPlanner()
 request_registry = CancellationRegistry()
 event_store = EventStore()
 asr_model_loaded = asr_service.funasr_loaded
+recording_store = RecordingStore(Path(__file__).parent / "data" / "recordings", logger=logger)
 
 class SuppressOutput:
     def __enter__(self):
@@ -594,6 +596,7 @@ def ask_question():
         or request.headers.get("X-Request-ID")
         or f"ask_{uuid.uuid4().hex[:12]}"
     )
+    recording_id = str((data.get("recording_id") or request.headers.get("X-Recording-ID") or "")).strip() or None
     # SD-6 stop/action metadata (best-effort, provided by frontend guide context).
     stop_name = str((guide.get("stop_name") or "")).strip() or None
     stop_index = guide.get("stop_index", None)
@@ -706,6 +709,36 @@ def ask_question():
                 cancel_event=cancel_event,
                 t_submit=t_submit,
             ):
+                # Persist tour recordings (only for tour stops; not for ad-hoc Q&A).
+                try:
+                    if recording_id and stop_index is not None and tour_action:
+                        if isinstance(payload, dict) and payload.get("done"):
+                            recording_store.add_ask_event(
+                                recording_id=recording_id,
+                                stop_index=int(stop_index),
+                                request_id=request_id,
+                                kind="done",
+                                text=None,
+                            )
+                        elif isinstance(payload, dict) and payload.get("segment") and not payload.get("done"):
+                            recording_store.add_ask_event(
+                                recording_id=recording_id,
+                                stop_index=int(stop_index),
+                                request_id=request_id,
+                                kind="segment",
+                                text=str(payload.get("segment") or ""),
+                            )
+                        elif isinstance(payload, dict) and payload.get("chunk") and not payload.get("done"):
+                            recording_store.add_ask_event(
+                                recording_id=recording_id,
+                                stop_index=int(stop_index),
+                                request_id=request_id,
+                                kind="chunk",
+                                text=str(payload.get("chunk") or ""),
+                            )
+                except Exception:
+                    pass
+
                 try:
                     if not seen_first_text and isinstance(payload, dict) and (payload.get("chunk") or "").strip():
                         seen_first_text = True
@@ -775,6 +808,63 @@ def ask_question():
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.route("/api/recordings", methods=["GET"])
+def list_recordings():
+    limit = request.args.get("limit", 50)
+    try:
+        limit = int(limit)
+    except Exception:
+        limit = 50
+    items = recording_store.list(limit=limit)
+    return jsonify({"items": items})
+
+
+@app.route("/api/recordings/start", methods=["POST"])
+def start_recording():
+    data = request.get_json(silent=True) or {}
+    stops = data.get("stops") or []
+    if not isinstance(stops, list) or not stops:
+        return jsonify({"error": "stops_required"}), 400
+    rid = str(data.get("recording_id") or "").strip() or f"rec_{int(time.time()*1000)}"
+    info = recording_store.create(recording_id=rid, stops=[str(s or "").strip() for s in stops if str(s or "").strip()])
+    return jsonify({"recording_id": info.recording_id, "created_at_ms": info.created_at_ms})
+
+
+@app.route("/api/recordings/<recording_id>/finish", methods=["POST"])
+def finish_recording(recording_id: str):
+    recording_store.finish(recording_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/recordings/<recording_id>", methods=["GET"])
+def get_recording(recording_id: str):
+    meta = recording_store.get(recording_id)
+    if not meta:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify(meta)
+
+
+@app.route("/api/recordings/<recording_id>/stop/<int:stop_index>", methods=["GET"])
+def get_recording_stop(recording_id: str, stop_index: int):
+    base_url = str(request.host_url).rstrip("/")
+    payload = recording_store.get_stop_payload(recording_id=recording_id, stop_index=int(stop_index), base_url=base_url)
+    if not payload:
+        return jsonify({"error": "not_found"}), 404
+    return jsonify(payload)
+
+
+@app.route("/api/recordings/<recording_id>/audio/<path:filename>", methods=["GET"])
+def get_recording_audio(recording_id: str, filename: str):
+    try:
+        path = recording_store.safe_rel_audio_path(recording_id, filename)
+        path = recording_store.ensure_within_audio_dir(recording_id, path)
+    except Exception:
+        return jsonify({"error": "bad_path"}), 400
+    if not path.exists() or not path.is_file():
+        return jsonify({"error": "not_found"}), 404
+    return send_file(str(path), mimetype="audio/wav", conditional=True)
 
 @app.route('/api/text_to_speech', methods=['POST'])
 def text_to_speech():
@@ -953,7 +1043,17 @@ def text_to_speech_stream():
         f"[{request_id}] tts_provider={provider} response_mimetype={_get_nested(app_config, ['tts', 'mimetype'], 'audio/wav')} remote={request.remote_addr} ua={(request.headers.get('User-Agent') or '')[:60]!r}"
     )
 
+    recording_id = str((data.get("recording_id") or request.headers.get("X-Recording-ID") or "")).strip() or None
+    stop_index_arg = data.get("stop_index", None)
+    try:
+        stop_index_arg = int(stop_index_arg) if stop_index_arg is not None and str(stop_index_arg).strip() != "" else None
+    except Exception:
+        stop_index_arg = None
+
     def generate_streaming_audio():
+        audio_file = None
+        tmp_path = None
+        final_rel = None
         try:
             logger.info(f"[{request_id}] 开始流式TTS音频生成 provider={provider}")
 
@@ -961,6 +1061,19 @@ def text_to_speech_stream():
             chunk_count = 0
             first_audio_chunk_at = None
             first_emitted = False
+
+            if recording_id and stop_index_arg is not None:
+                try:
+                    audio_dir = recording_store.audio_dir(recording_id)
+                    seg_name = f"{request_id}_{segment_index if segment_index is not None else 'x'}.wav"
+                    final_rel = seg_name
+                    tmp_path = (audio_dir / f"{seg_name}.part").resolve()
+                    audio_file = open(tmp_path, "wb")
+                except Exception as e:
+                    logger.warning(f"[REC] tts_open_failed recording_id={recording_id} err={e}")
+                    audio_file = None
+                    tmp_path = None
+                    final_rel = None
 
             for chunk in tts_service.stream(
                 text=text,
@@ -987,6 +1100,11 @@ def text_to_speech_stream():
                     continue
                 chunk_count += 1
                 total_size += len(chunk)
+                if audio_file is not None:
+                    try:
+                        audio_file.write(chunk)
+                    except Exception:
+                        audio_file = None
                 if first_audio_chunk_at is None:
                     first_audio_chunk_at = time.perf_counter()
                     with contextlib.suppress(Exception):
@@ -1032,6 +1150,28 @@ def text_to_speech_stream():
                 bytes=int(total_size),
                 chunks=int(chunk_count),
             )
+
+            if audio_file is not None and tmp_path is not None and final_rel is not None and recording_id and stop_index_arg is not None:
+                try:
+                    audio_file.flush()
+                    audio_file.close()
+                    audio_file = None
+                except Exception:
+                    pass
+                try:
+                    audio_dir = recording_store.audio_dir(recording_id)
+                    final_path = (audio_dir / final_rel).resolve()
+                    os.replace(str(tmp_path), str(final_path))
+                    recording_store.add_tts_audio(
+                        recording_id=recording_id,
+                        stop_index=int(stop_index_arg),
+                        request_id=request_id,
+                        segment_index=segment_index if segment_index is not None else None,
+                        text=text,
+                        rel_path=final_rel,
+                    )
+                except Exception as e:
+                    logger.warning(f"[REC] tts_save_failed recording_id={recording_id} err={e}")
             return
 
         except GeneratorExit:
@@ -1058,6 +1198,18 @@ def text_to_speech_stream():
                 segment_index=segment_index,
                 err=str(e),
             )
+        finally:
+            # Cleanup partial file on errors/cancel.
+            try:
+                if audio_file is not None:
+                    with contextlib.suppress(Exception):
+                        audio_file.close()
+                if tmp_path is not None:
+                    with contextlib.suppress(Exception):
+                        if Path(tmp_path).exists():
+                            Path(tmp_path).unlink(missing_ok=True)
+            except Exception:
+                pass
 
     return Response(
         generate_streaming_audio(),

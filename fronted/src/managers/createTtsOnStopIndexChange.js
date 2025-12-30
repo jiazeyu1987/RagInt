@@ -9,7 +9,9 @@ export function createTtsOnStopIndexChange({
   setTourState,
   setAnswer,
   enqueueSegment,
+  enqueueAudioSegment,
   ensureTtsRunning,
+  getPlaybackRecordingId,
 } = {}) {
   return (nextStopIndex) => {
     if (!guideEnabledRef || !guideEnabledRef.current) return;
@@ -23,13 +25,25 @@ export function createTtsOnStopIndexChange({
       const pipeline = tourPipelineRef && tourPipelineRef.current;
       if (pipeline) {
         pipeline.setCurrentStopIndex(Number(nextStopIndex));
-        pipeline.maybePrefetchFromPlayback({
-          currentStopIndex: Number(nextStopIndex),
-          enqueueSegment,
-          ensureTtsRunning: () => {
-            if (ttsEnabledRef && ttsEnabledRef.current && typeof ensureTtsRunning === 'function') ensureTtsRunning();
-          },
-        });
+        const rid = typeof getPlaybackRecordingId === 'function' ? String(getPlaybackRecordingId() || '').trim() : '';
+        if (rid && typeof pipeline.maybePrefetchFromRecordingPlayback === 'function') {
+          pipeline.maybePrefetchFromRecordingPlayback({
+            recordingId: rid,
+            currentStopIndex: Number(nextStopIndex),
+            enqueueAudioSegment,
+            ensureTtsRunning: () => {
+              if (ttsEnabledRef && ttsEnabledRef.current && typeof ensureTtsRunning === 'function') ensureTtsRunning();
+            },
+          });
+        } else {
+          pipeline.maybePrefetchFromPlayback({
+            currentStopIndex: Number(nextStopIndex),
+            enqueueSegment,
+            ensureTtsRunning: () => {
+              if (ttsEnabledRef && ttsEnabledRef.current && typeof ensureTtsRunning === 'function') ensureTtsRunning();
+            },
+          });
+        }
       }
     } catch (_) {
       // ignore
@@ -54,4 +68,3 @@ export function createTtsOnStopIndexChange({
     }
   };
 }
-

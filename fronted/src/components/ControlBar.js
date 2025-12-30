@@ -30,6 +30,13 @@ export function ControlBar({
   onChangeTtsMode,
   continuousTour,
   onChangeContinuousTour,
+  tourRecordingEnabled,
+  onChangeTourRecordingEnabled,
+  playTourRecordingEnabled,
+  onChangePlayTourRecordingEnabled,
+  tourRecordingOptions,
+  selectedTourRecordingId,
+  onChangeSelectedTourRecordingId,
 
   tourState,
   currentIntent,
@@ -182,6 +189,45 @@ export function ControlBar({
             重置
           </button>
         </div>
+      ) : null}
+
+      {guideEnabled ? (
+        <label className="tts-toggle" title="开始讲解时创建一个存档，保存RAGFlow chunk/segment/done 与对应的TTS wav">
+          <input
+            type="checkbox"
+            checked={!!tourRecordingEnabled}
+            onChange={(e) => onChangeTourRecordingEnabled && onChangeTourRecordingEnabled(e.target.checked)}
+          />
+          <span>录制讲解</span>
+        </label>
+      ) : null}
+
+      {guideEnabled ? (
+        <label className="tts-toggle" title="站点播报使用存档里的文字+语音，不再调用RAGFlow/TTS">
+          <input
+            type="checkbox"
+            checked={!!playTourRecordingEnabled}
+            onChange={(e) => onChangePlayTourRecordingEnabled && onChangePlayTourRecordingEnabled(e.target.checked)}
+          />
+          <span>播放存档</span>
+        </label>
+      ) : null}
+
+      {guideEnabled && playTourRecordingEnabled ? (
+        <label className="kb-select">
+          <span>存档</span>
+          <select
+            value={String(selectedTourRecordingId || '')}
+            onChange={(e) => onChangeSelectedTourRecordingId && onChangeSelectedTourRecordingId(e.target.value)}
+          >
+            <option value="">请选择</option>
+            {(tourRecordingOptions || []).map((r) => (
+              <option key={String(r.recording_id)} value={String(r.recording_id)}>
+                {r.label || String(r.recording_id)}
+              </option>
+            ))}
+          </select>
+        </label>
       ) : null}
     </div>
   );

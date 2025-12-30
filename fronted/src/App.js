@@ -58,6 +58,19 @@ function App() {
     serialize: (v) => (v ? '1' : '0'),
     deserialize: (raw) => String(raw) === '1',
   });
+  const [tourRecordingEnabled, setTourRecordingEnabled] = useLocalStorageState('tourRecordingEnabled', false, {
+    serialize: (v) => (v ? '1' : '0'),
+    deserialize: (raw) => String(raw) === '1',
+  });
+  const [playTourRecordingEnabled, setPlayTourRecordingEnabled] = useLocalStorageState('playTourRecordingEnabled', false, {
+    serialize: (v) => (v ? '1' : '0'),
+    deserialize: (raw) => String(raw) === '1',
+  });
+  const [selectedTourRecordingId, setSelectedTourRecordingId] = useLocalStorageState('selectedTourRecordingId', '', {
+    serialize: (v) => String(v || ''),
+    deserialize: (raw) => String(raw || ''),
+  });
+  const [tourRecordingOptions, setTourRecordingOptions] = useState([]);
   const [guideDuration, setGuideDuration] = useLocalStorageState('guideDuration', '60', {
     serialize: (v) => String(v || '60'),
     deserialize: (raw) => String(raw || '60'),
@@ -141,10 +154,51 @@ function App() {
     setAgentOptions,
     setSelectedAgentId,
   });
+
+  const formatRecordingLabel = (createdAtMs) => {
+    try {
+      const d = new Date(Number(createdAtMs) || Date.now());
+      const pad = (n) => String(Number(n) || 0).padStart(2, '0');
+      return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}/${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
+    } catch (_) {
+      return String(createdAtMs || '');
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        if (!settingsOpen && !playTourRecordingEnabled) return;
+        const data = await fetchJson('/api/recordings?limit=50');
+        if (cancelled) return;
+        const items = Array.isArray(data && data.items) ? data.items : [];
+        setTourRecordingOptions(
+          items.map((r) => ({
+            recording_id: String((r && r.recording_id) || ''),
+            label: formatRecordingLabel(r && r.created_at_ms),
+          }))
+        );
+      } catch (_) {
+        if (cancelled) return;
+        setTourRecordingOptions([]);
+      }
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [settingsOpen, playTourRecordingEnabled]);
   const messagesEndRef = useRef(null);
   const PREFERRED_TTS_SAMPLE_RATE = 16000;
   const ttsEnabledRef = useRef(true);
   const continuousTourRef = useRef(continuousTour);
+  const tourRecordingEnabledRef = useRef(tourRecordingEnabled);
+  const playTourRecordingEnabledRef = useRef(playTourRecordingEnabled);
+  const selectedTourRecordingIdRef = useRef(selectedTourRecordingId);
+  const activeTourRecordingIdRef = useRef('');
   const guideEnabledRef = useRef(guideEnabled);
   const tourStopsRef = useRef(tourStops);
   const tourZoneRef = useRef(tourZone);
@@ -180,6 +234,10 @@ function App() {
     tourStopDurationsRef,
     tourStopTargetCharsRef,
     continuousTourRef,
+    tourRecordingEnabledRef,
+    activeTourRecordingIdRef,
+    playTourRecordingEnabledRef,
+    selectedTourRecordingIdRef,
     useAgentModeRef,
     selectedChatRef,
     selectedAgentIdRef,
@@ -225,10 +283,18 @@ function App() {
           const mgr = ttsManagerRef.current;
           if (mgr) mgr.enqueueText(s, meta);
         },
+        enqueueAudioSegment: (u, meta) => {
+          const mgr = ttsManagerRef.current;
+          if (mgr && typeof mgr.enqueueAudioUrl === 'function') mgr.enqueueAudioUrl(u, meta);
+        },
         ensureTtsRunning: () => {
           const mgr = ttsManagerRef.current;
           if (mgr) mgr.ensureRunning();
         },
+        getPlaybackRecordingId: () =>
+          playTourRecordingEnabledRef && playTourRecordingEnabledRef.current && selectedTourRecordingIdRef
+            ? selectedTourRecordingIdRef.current
+            : '',
       }),
       debugRef,
       debugMark,
@@ -319,6 +385,18 @@ function App() {
   useEffect(() => {
     continuousTourRef.current = !!continuousTour;
   }, [continuousTour]);
+
+  useEffect(() => {
+    tourRecordingEnabledRef.current = !!tourRecordingEnabled;
+  }, [tourRecordingEnabled]);
+
+  useEffect(() => {
+    playTourRecordingEnabledRef.current = !!playTourRecordingEnabled;
+  }, [playTourRecordingEnabled]);
+
+  useEffect(() => {
+    selectedTourRecordingIdRef.current = String(selectedTourRecordingId || '').trim();
+  }, [selectedTourRecordingId]);
 
   useEffect(() => {
     guideEnabledRef.current = !!guideEnabled;
@@ -541,6 +619,43 @@ function App() {
     }, 200); // 每200ms更新一次状态
   };
 
+  async function startTourRecordingArchive(stops) {
+    const list = Array.isArray(stops) ? stops.map((s) => String(s || '').trim()).filter(Boolean) : [];
+    if (!list.length) return '';
+    const data = await fetchJson('/api/recordings/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Client-ID': clientIdRef.current },
+      body: JSON.stringify({ stops: list }),
+    });
+    const rid = String((data && data.recording_id) || '').trim();
+    if (rid) activeTourRecordingIdRef.current = rid;
+    return rid;
+  }
+
+  async function finishTourRecordingArchive(recordingId) {
+    const rid = String(recordingId || '').trim() || String(activeTourRecordingIdRef.current || '').trim();
+    if (!rid) return;
+    try {
+      await fetchJson(`/api/recordings/${encodeURIComponent(rid)}/finish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Client-ID': clientIdRef.current },
+        body: JSON.stringify({ ok: true }),
+      });
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  async function loadTourRecordingMeta(recordingId) {
+    const rid = String(recordingId || '').trim();
+    if (!rid) return null;
+    try {
+      return await fetchJson(`/api/recordings/${encodeURIComponent(rid)}`);
+    } catch (_) {
+      return null;
+    }
+  }
+
   const {
     isRecording,
     startRecording,
@@ -597,6 +712,12 @@ function App() {
     selectedAgentIdRef,
     tourStopDurationsRef,
     tourStopTargetCharsRef,
+    getTourStops: () => (tourStopsRef.current || []),
+    tourRecordingEnabledRef,
+    playTourRecordingEnabledRef,
+    selectedTourRecordingIdRef,
+    activeTourRecordingIdRef,
+    finishTourRecordingArchive,
     currentAudioRef,
     getHistorySort: () => historySort,
     fetchHistory,
@@ -691,6 +812,12 @@ function App() {
       tourStopDurationsRef,
       tourStopTargetCharsRef,
       continuousTourRef,
+      tourRecordingEnabledRef,
+      playTourRecordingEnabledRef,
+      selectedTourRecordingIdRef,
+      activeTourRecordingIdRef,
+      startTourRecordingArchive,
+      loadTourRecordingMeta,
       tourStateRef,
       tourResumeRef,
       getTtsManager,
@@ -878,6 +1005,13 @@ function App() {
             onChangeTtsMode={setTtsMode}
             continuousTour={continuousTour}
             onChangeContinuousTour={setContinuousTour}
+            tourRecordingEnabled={tourRecordingEnabled}
+            onChangeTourRecordingEnabled={setTourRecordingEnabled}
+            playTourRecordingEnabled={playTourRecordingEnabled}
+            onChangePlayTourRecordingEnabled={setPlayTourRecordingEnabled}
+            tourRecordingOptions={tourRecordingOptions}
+            selectedTourRecordingId={selectedTourRecordingId}
+            onChangeSelectedTourRecordingId={setSelectedTourRecordingId}
             tourState={tourState}
             currentIntent={currentIntent}
             tourStops={tourStops}

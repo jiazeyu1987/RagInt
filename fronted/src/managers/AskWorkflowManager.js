@@ -183,6 +183,12 @@ export class AskWorkflowManager {
       getHistorySort,
       fetchHistory,
       maybeStartNextQueuedQuestion,
+      getTourStops,
+      tourRecordingEnabledRef,
+      playTourRecordingEnabledRef,
+      selectedTourRecordingIdRef,
+      activeTourRecordingIdRef,
+      finishTourRecordingArchive,
     } = this.deps;
 
     const options = opts && typeof opts === 'object' ? opts : {};
@@ -315,6 +321,28 @@ export class AskWorkflowManager {
         ? (tourAction === 'next' || tourAction === 'prev' || tourAction === 'jump' ? '切站' : '讲解')
         : '问答';
 
+      const playbackRecordingId =
+        options.tourAction && playTourRecordingEnabledRef && playTourRecordingEnabledRef.current && selectedTourRecordingIdRef
+          ? String(selectedTourRecordingIdRef.current || '').trim()
+          : '';
+      const isPlaybackTour = !!(options.tourAction && playbackRecordingId && Number.isFinite(stopIndex));
+
+      const recordingIdForThisAsk =
+        options.tourAction &&
+        !isPlaybackTour &&
+        Number.isFinite(stopIndex) &&
+        tourRecordingEnabledRef &&
+        tourRecordingEnabledRef.current &&
+        activeTourRecordingIdRef
+          ? String(activeTourRecordingIdRef.current || '').trim()
+          : '';
+
+      try {
+        if (ttsMgr && typeof ttsMgr.setRecordingId === 'function') ttsMgr.setRecordingId(recordingIdForThisAsk, 'ask_recording_ctx');
+      } catch (_) {
+        // ignore
+      }
+
       // SD-6 navigation events (this repo currently has no real chassis adapter; mark as skipped).
       if (emitClientEvent && tourAction && Number.isFinite(stopIndex)) {
         try {
@@ -335,16 +363,89 @@ export class AskWorkflowManager {
         }
       }
 
+      if (isPlaybackTour) {
+        try {
+          if (ttsMgr && typeof ttsMgr.setRecordingId === 'function') ttsMgr.setRecordingId('', 'recording_playback');
+        } catch (_) {
+          // ignore
+        }
+
+        const recUrl = `${base}/api/recordings/${encodeURIComponent(playbackRecordingId)}/stop/${encodeURIComponent(String(stopIndex))}`;
+        const recResp = await fetch(recUrl, { method: 'GET', signal: abortController.signal });
+        if (!recResp.ok) throw new Error(`recording_stop_http_${recResp.status}`);
+        const recData = await recResp.json();
+
+        const chunks = Array.isArray(recData && recData.chunks) ? recData.chunks : [];
+        const segments = Array.isArray(recData && recData.segments) ? recData.segments : [];
+
+        for (const c of chunks) {
+          if (runIdRef && runIdRef.current !== runId) break;
+          const s = String(c || '');
+          if (!s) continue;
+          if (typeof debugMark === 'function' && !fullAnswer) debugMark('ragflowFirstChunkAt');
+          fullAnswer += s;
+          if (typeof setAnswer === 'function') setAnswer(fullAnswer);
+        }
+
+        for (const item of segments) {
+          if (runIdRef && runIdRef.current !== runId) break;
+          const audioUrl = item && item.audio_url ? String(item.audio_url || '').trim() : '';
+          const segText = item && item.text ? String(item.text || '') : '';
+          if (!audioUrl || !ttsMgr || typeof ttsMgr.enqueueAudioUrl !== 'function') continue;
+          if (typeof debugMark === 'function') debugMark('ragflowFirstSegmentAt');
+          ttsMgr.enqueueAudioUrl(audioUrl, { stopIndex: Number(stopIndex), text: segText });
+          if (receivedSegmentsRef) receivedSegmentsRef.current = true;
+          ttsMgr.ensureRunning();
+        }
+
+        if (typeof debugMark === 'function') debugMark('ragflowDoneAt');
+        if (ttsMgr) ttsMgr.markRagDone();
+
+        if (options.tourAction && options.continuousRoot && typeof getTourPipeline === 'function' && ttsMgr) {
+          try {
+            const curStopIndex = Number.isFinite(stopIndex) ? stopIndex : 0;
+            const pipeline = getTourPipeline();
+            if (pipeline && typeof pipeline.maybePrefetchNextStopFromRecording === 'function') {
+              pipeline.maybePrefetchNextStopFromRecording({
+                recordingId: playbackRecordingId,
+                currentStopIndex: curStopIndex,
+                enqueueAudioSegment: (u, meta) => ttsMgr.enqueueAudioUrl(u, meta),
+                ensureTtsRunning: () => ttsMgr.ensureRunning(),
+              });
+            }
+          } catch (_) {
+            // ignore
+          }
+        }
+
+        if (!ttsEnabledRef || !ttsEnabledRef.current) {
+          if (runIdRef && runIdRef.current === runId && typeof setIsLoading === 'function') setIsLoading(false);
+          return fullAnswer;
+        }
+
+        if (ttsMgr) {
+          ttsMgr.ensureRunning();
+          await ttsMgr.waitForIdle();
+        }
+        if (runIdRef && runIdRef.current === runId) {
+          if (typeof setIsLoading === 'function') setIsLoading(false);
+          if (typeof debugMark === 'function') debugMark('ttsAllDoneAt');
+        }
+        return fullAnswer;
+      }
+
       const response = await fetch(`${base}/api/ask`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Client-ID': clientIdRef ? clientIdRef.current : '',
+          ...(recordingIdForThisAsk ? { 'X-Recording-ID': recordingIdForThisAsk } : {}),
         },
         body: JSON.stringify({
           question: text,
           request_id: requestId,
           client_id: clientIdRef ? clientIdRef.current : '',
+          recording_id: recordingIdForThisAsk || null,
           conversation_name: useAgentModeRef && useAgentModeRef.current ? null : selectedChatRef ? selectedChatRef.current : null,
           agent_id: useAgentModeRef && useAgentModeRef.current ? (selectedAgentIdRef ? (selectedAgentIdRef.current || null) : null) : null,
           guide: {
@@ -460,6 +561,25 @@ export class AskWorkflowManager {
               if (runIdRef && runIdRef.current === runId) {
                 if (typeof setIsLoading === 'function') setIsLoading(false);
                 if (typeof debugMark === 'function') debugMark('ttsAllDoneAt');
+              }
+
+              // Auto-finish a recording archive when the last stop finishes playing.
+              try {
+                if (recordingIdForThisAsk && options.tourAction && typeof getTourStops === 'function' && typeof finishTourRecordingArchive === 'function') {
+                  const stops = getTourStops() || [];
+                  const n = Array.isArray(stops) ? stops.length : 0;
+                  const curStopIndex = Number.isFinite(options.tourStopIndex)
+                    ? Number(options.tourStopIndex)
+                    : tourStateRef && tourStateRef.current
+                      ? Number(tourStateRef.current.stopIndex)
+                      : 0;
+                  if (n && curStopIndex >= 0 && curStopIndex === n - 1) {
+                    await finishTourRecordingArchive(recordingIdForThisAsk);
+                    if (activeTourRecordingIdRef) activeTourRecordingIdRef.current = '';
+                  }
+                }
+              } catch (_) {
+                // ignore
               }
               return fullAnswer;
             }

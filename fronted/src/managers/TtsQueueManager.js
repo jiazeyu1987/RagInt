@@ -58,6 +58,7 @@ export class TtsQueueManager {
     this._useSavedTts = !!options.useSavedTts;
     this._ttsProvider = String(options.ttsProvider || '').trim();
     this._ttsVoice = String(options.ttsVoice || '').trim();
+    this._recordingId = String(options.recordingId || '').trim();
     this._maxPreGenerateCount = Math.max(0, Number(options.maxPreGenerateCount || 2) || 2);
 
     this._onStopIndexChange = typeof options.onStopIndexChange === 'function' ? options.onStopIndexChange : null;
@@ -234,7 +235,7 @@ export class TtsQueueManager {
     }
   }
 
-  _buildSegmentUrl(text) {
+  _buildSegmentUrl(text, meta) {
     const seg = String(text || '').trim();
     if (!seg) return null;
     const url = new URL(this._useSavedTts ? '/api/text_to_speech_saved' : '/api/text_to_speech_stream', this._baseUrl);
@@ -245,7 +246,44 @@ export class TtsQueueManager {
     if (this._ttsProvider) url.searchParams.set('tts_provider', this._ttsProvider);
     if (this._ttsVoice) url.searchParams.set('tts_voice', this._ttsVoice);
     url.searchParams.set('segment_index', String(this._segmentIndex++));
+    if (this._recordingId) url.searchParams.set('recording_id', this._recordingId);
+    const stopIndex = meta && Number.isFinite(meta.stopIndex) ? Number(meta.stopIndex) : null;
+    if (this._recordingId && stopIndex != null) url.searchParams.set('stop_index', String(stopIndex));
     return url.toString();
+  }
+
+  setRecordingId(next, reason) {
+    const val = String(next || '').trim();
+    if (val === this._recordingId) return;
+    this._recordingId = val;
+    if (reason) this._log('[TTSQ] recording_id_changed', val, reason);
+  }
+
+  enqueueAudioUrl(url, meta) {
+    const u = String(url || '').trim();
+    if (!u) return null;
+    const seq = this._seq++;
+    const stopIndex = meta && Number.isFinite(meta.stopIndex) ? Number(meta.stopIndex) : null;
+    const text = meta && typeof meta.text === 'string' ? meta.text : '';
+
+    if (this._onDebug) {
+      try {
+        this._onDebug({ type: 'enqueue', t: this._nowMs(), seq, stopIndex, chars: (text || '').length });
+      } catch (_) {
+        // ignore
+      }
+    }
+
+    this._audioQueue.push({
+      seq,
+      stopIndex,
+      text,
+      url: u,
+      recorded: true,
+    });
+
+    if (!this._playerPromise && this._audioQueue.length > 0) this._startPlayer();
+    return { seq, stopIndex };
   }
 
   setTtsProvider(next, reason) {
@@ -290,7 +328,7 @@ export class TtsQueueManager {
 
         this._textQueue.shift();
         const meta = this._metaQueue.shift();
-        const audioUrl = this._buildSegmentUrl(nextSegment);
+        const audioUrl = this._buildSegmentUrl(nextSegment, meta);
         if (audioUrl) {
           this._audioQueue.push({
             seq: meta && typeof meta.seq === 'number' ? meta.seq : null,
@@ -373,6 +411,13 @@ export class TtsQueueManager {
                   }
                 );
               }
+            }
+          } else if (audioItem && audioItem.recorded) {
+            try {
+              await playWavViaDecodeAudioData(audioItem.url, this._audioContextRef, this._currentAudioRef);
+            } catch (err) {
+              this._warn('[TTSQ] recorded_wav_playback_failed_fallback_to_audio', err);
+              await playAudioElementUrl(audioItem.url, this._currentAudioRef);
             }
           } else if (this._useSavedTts) {
             try {

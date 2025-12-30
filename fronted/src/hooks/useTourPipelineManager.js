@@ -13,6 +13,10 @@ export function useTourPipelineManager({
   tourStopDurationsRef,
   tourStopTargetCharsRef,
   continuousTourRef,
+  tourRecordingEnabledRef,
+  activeTourRecordingIdRef,
+  playTourRecordingEnabledRef,
+  selectedTourRecordingIdRef,
   useAgentModeRef,
   selectedChatRef,
   selectedAgentIdRef,
@@ -37,6 +41,14 @@ export function useTourPipelineManager({
       getPerStopDurations: () => (tourStopDurationsRef ? tourStopDurationsRef.current || [] : []),
       getPerStopTargetChars: () => (tourStopTargetCharsRef ? tourStopTargetCharsRef.current || [] : []),
       isContinuousTourEnabled: () => !!(continuousTourRef && continuousTourRef.current),
+      getRecordingId: () =>
+        !!(tourRecordingEnabledRef && tourRecordingEnabledRef.current) && activeTourRecordingIdRef
+          ? String(activeTourRecordingIdRef.current || '').trim()
+          : '',
+      getPlaybackRecordingId: () =>
+        !!(playTourRecordingEnabledRef && playTourRecordingEnabledRef.current) && selectedTourRecordingIdRef
+          ? String(selectedTourRecordingIdRef.current || '').trim()
+          : '',
       maxPrefetchAhead: Math.max(0, Number(maxPrefetchAhead) || 1),
       getConversationConfig: () => ({
         useAgentMode: !!(useAgentModeRef && useAgentModeRef.current),
@@ -60,6 +72,10 @@ export function useTourPipelineManager({
     tourStopDurationsRef,
     tourStopTargetCharsRef,
     continuousTourRef,
+    tourRecordingEnabledRef,
+    activeTourRecordingIdRef,
+    playTourRecordingEnabledRef,
+    selectedTourRecordingIdRef,
     useAgentModeRef,
     selectedChatRef,
     selectedAgentIdRef,
@@ -78,4 +94,3 @@ export function useTourPipelineManager({
 
   return { tourPipelineRef, getTourPipeline, abortPrefetch };
 }
-

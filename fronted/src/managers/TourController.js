@@ -114,7 +114,19 @@ export class TourController {
   }
 
   async start() {
-    const { continuousTourRef, buildTourPrompt, beginDebugRun, askQuestion } = this.deps;
+    const {
+      continuousTourRef,
+      buildTourPrompt,
+      beginDebugRun,
+      askQuestion,
+      tourRecordingEnabledRef,
+      playTourRecordingEnabledRef,
+      selectedTourRecordingIdRef,
+      startTourRecordingArchive,
+      loadTourRecordingMeta,
+      setTourStops,
+      activeTourRecordingIdRef,
+    } = this.deps;
     this._ensurePreferredAudioContext();
 
     try {
@@ -124,8 +136,39 @@ export class TourController {
       // ignore
     }
 
-    const plannedStops = await this._fetchTourPlan();
+    let plannedStops = null;
+    try {
+      const playRid =
+        playTourRecordingEnabledRef && playTourRecordingEnabledRef.current && selectedTourRecordingIdRef
+          ? String(selectedTourRecordingIdRef.current || '').trim()
+          : '';
+      if (playRid && typeof loadTourRecordingMeta === 'function') {
+        const meta = await loadTourRecordingMeta(playRid);
+        const stops = meta && Array.isArray(meta.stops) ? meta.stops.map((s) => String(s || '').trim()).filter(Boolean) : [];
+        if (stops.length) {
+          plannedStops = stops;
+          if (typeof setTourStops === 'function') setTourStops(stops);
+        }
+      } else {
+        plannedStops = await this._fetchTourPlan();
+      }
+    } catch (_) {
+      plannedStops = await this._fetchTourPlan();
+    }
     const stopIndex = 0;
+
+    try {
+      if ((!tourRecordingEnabledRef || !tourRecordingEnabledRef.current) && activeTourRecordingIdRef) activeTourRecordingIdRef.current = '';
+      const playRid =
+        playTourRecordingEnabledRef && playTourRecordingEnabledRef.current && selectedTourRecordingIdRef
+          ? String(selectedTourRecordingIdRef.current || '').trim()
+          : '';
+      if (!playRid && tourRecordingEnabledRef && tourRecordingEnabledRef.current && typeof startTourRecordingArchive === 'function') {
+        await startTourRecordingArchive(plannedStops || []);
+      }
+    } catch (_) {
+      // ignore
+    }
 
     if (continuousTourRef && continuousTourRef.current) {
       await this._runContinuousTour({ startIndex: stopIndex, firstAction: 'start', stopsOverride: plannedStops });

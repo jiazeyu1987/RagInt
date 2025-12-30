@@ -24,6 +24,9 @@ export class TourPipelineManager {
       typeof options.getConversationConfig === 'function'
         ? options.getConversationConfig
         : () => ({ useAgentMode: false, selectedChat: null, selectedAgentId: null });
+    this._getRecordingId = typeof options.getRecordingId === 'function' ? options.getRecordingId : () => '';
+    this._getPlaybackRecordingId =
+      typeof options.getPlaybackRecordingId === 'function' ? options.getPlaybackRecordingId : () => '';
 
     this._maxPrefetchAhead = Math.max(0, Number(options.maxPrefetchAhead ?? 1) || 1);
 
@@ -69,6 +72,29 @@ export class TourPipelineManager {
       if (!t) continue;
       try {
         if (enqueueSegment) enqueueSegment(t, { stopIndex: idx, source: 'prefetch_replay' });
+        if (ensureTtsRunning) ensureTtsRunning();
+      } catch (_) {
+        // ignore
+      }
+    }
+
+    return true;
+  }
+
+  replayPrefetchAudioToQueue({ stopIndex, enqueueAudioSegment, ensureTtsRunning } = {}) {
+    const idx = Number(stopIndex);
+    if (!Number.isFinite(idx)) return false;
+    const cached = this._prefetchStore.get(idx);
+    if (!cached) return false;
+    const list = Array.isArray(cached.audioSegments) ? cached.audioSegments : null;
+    if (!list || !list.length) return false;
+
+    for (const seg of list) {
+      const url = seg && seg.audio_url ? String(seg.audio_url || '').trim() : '';
+      const text = seg && seg.text ? String(seg.text || '') : '';
+      if (!url) continue;
+      try {
+        if (enqueueAudioSegment) enqueueAudioSegment(url, { stopIndex: idx, text, source: 'prefetch_replay' });
         if (ensureTtsRunning) ensureTtsRunning();
       } catch (_) {
         // ignore
@@ -241,6 +267,37 @@ export class TourPipelineManager {
     }, 0);
   }
 
+  maybePrefetchNextStopFromRecording({ recordingId, currentStopIndex, enqueueAudioSegment, ensureTtsRunning }) {
+    const rid = String(recordingId || '').trim() || String(this._getPlaybackRecordingId() || '').trim();
+    if (!rid) return;
+    if (!this._isContinuousTourEnabled()) return;
+    if (!this._active) return;
+    this.setCurrentStopIndex(currentStopIndex);
+    const stops = Array.isArray(this._getStops()) ? this._getStops() : [];
+    const n = stops.length;
+    const cur = Number.isFinite(currentStopIndex) ? Number(currentStopIndex) : -1;
+    const nextIndex = cur + 1;
+    if (!n || nextIndex < 0 || nextIndex >= n) return;
+
+    if (this._maxPrefetchAhead >= 0) {
+      const base = this.getCurrentStopIndex();
+      if (base >= 0 && nextIndex > base + this._maxPrefetchAhead) return;
+    }
+
+    if (this._prefetchStore.has(nextIndex)) return;
+
+    const token = this._token;
+    setTimeout(() => {
+      this.prefetchStopFromRecordingToQueue({
+        recordingId: rid,
+        stopIndex: nextIndex,
+        token,
+        enqueueAudioSegment,
+        ensureTtsRunning,
+      });
+    }, 0);
+  }
+
   maybePrefetchFromPlayback({ currentStopIndex, enqueueSegment, ensureTtsRunning }) {
     if (!this._isContinuousTourEnabled()) return;
     if (!this._active) return;
@@ -265,6 +322,34 @@ export class TourPipelineManager {
     }, 0);
   }
 
+  maybePrefetchFromRecordingPlayback({ recordingId, currentStopIndex, enqueueAudioSegment, ensureTtsRunning }) {
+    const rid = String(recordingId || '').trim() || String(this._getPlaybackRecordingId() || '').trim();
+    if (!rid) return;
+    if (!this._isContinuousTourEnabled()) return;
+    if (!this._active) return;
+    const cur = Number.isFinite(currentStopIndex) ? Number(currentStopIndex) : -1;
+    if (cur < 0) return;
+    this.setCurrentStopIndex(cur);
+
+    const stops = Array.isArray(this._getStops()) ? this._getStops() : [];
+    const n = stops.length;
+    const nextIndex = cur + 1;
+    if (!n || nextIndex < 0 || nextIndex >= n) return;
+    if (this._maxPrefetchAhead >= 0 && nextIndex > cur + this._maxPrefetchAhead) return;
+    if (this._prefetchStore.has(nextIndex)) return;
+
+    const token = this._token;
+    setTimeout(() => {
+      this.prefetchStopFromRecordingToQueue({
+        recordingId: rid,
+        stopIndex: nextIndex,
+        token,
+        enqueueAudioSegment,
+        ensureTtsRunning,
+      });
+    }, 0);
+  }
+
   async prefetchStopTextToQueue({ stopIndex, tail, token, enqueueSegment, ensureTtsRunning, force } = {}) {
     const idx = Number.isFinite(stopIndex) ? Number(stopIndex) : 0;
     const stops = Array.isArray(this._getStops()) ? this._getStops() : [];
@@ -285,18 +370,21 @@ export class TourPipelineManager {
 
     try {
       const conv = this._getConversationConfig() || {};
+      const recordingId = String(this._getRecordingId() || '').trim();
       const resp = await fetch(`${this._baseUrl}/api/ask`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Client-ID': this._getClientId(),
           'X-Request-ID': prefetchAskId,
+          ...(recordingId ? { 'X-Recording-ID': recordingId } : {}),
         },
         body: JSON.stringify({
           question: prompt,
           request_id: prefetchAskId,
           client_id: this._getClientId(),
           kind: 'ask_prefetch',
+          recording_id: recordingId || null,
           conversation_name: conv.useAgentMode ? null : conv.selectedChat,
           agent_id: conv.useAgentMode ? conv.selectedAgentId || null : null,
           guide: {
@@ -304,6 +392,10 @@ export class TourPipelineManager {
             duration_s: Math.max(15, Number(this._getGuideDuration() || 60) || 60),
             continuous: true,
             style: String(this._getGuideStyle() || 'friendly'),
+            stop_index: idx,
+            stop_name: this._getStopName(idx),
+            tour_action: 'next',
+            action_type: '切站',
           },
         }),
         signal: ctl.signal,
@@ -378,6 +470,76 @@ export class TourPipelineManager {
     } catch (e) {
       if (ctl.signal.aborted || String(e && e.name) === 'AbortError') return;
       this._warn('[PREFETCH] failed', e);
+    } finally {
+      if (this._prefetchAbort === ctl) this._prefetchAbort = null;
+    }
+  }
+
+  async prefetchStopFromRecordingToQueue({ recordingId, stopIndex, token, enqueueAudioSegment, ensureTtsRunning } = {}) {
+    const rid = String(recordingId || '').trim();
+    const idx = Number.isFinite(stopIndex) ? Number(stopIndex) : 0;
+    const stops = Array.isArray(this._getStops()) ? this._getStops() : [];
+    if (!rid) return;
+    if (!stops.length || idx < 0 || idx >= stops.length) return;
+    if (!this._isContinuousTourEnabled()) return;
+    if (!this._active) return;
+    if (this._token !== token) return;
+    if (this._prefetchStore.has(idx)) return;
+
+    this.abortPrefetch('replace');
+    const ctl = new AbortController();
+    this._prefetchAbort = ctl;
+
+    const url = `${this._baseUrl}/api/recordings/${encodeURIComponent(rid)}/stop/${encodeURIComponent(String(idx))}`;
+    this._log('[PREFETCH_REC] start', `stopIndex=${idx}`, `recording=${rid}`);
+
+    try {
+      const resp = await fetch(url, { method: 'GET', signal: ctl.signal });
+      if (!resp.ok) throw new Error(`prefetch_rec http=${resp.status}`);
+      const data = await resp.json();
+      if (ctl.signal.aborted) return;
+      if (!this._active || this._token !== token) return;
+
+      const answerText = String((data && data.answer_text) || '');
+      const tailOut = String((data && data.tail) || '').trim().slice(-80) || answerText.trim().slice(-80);
+      const audioSegments = Array.isArray(data && data.segments) ? data.segments : [];
+      this._prefetchStore.set(idx, { answerText, tail: tailOut, createdAt: Date.now(), audioSegments });
+      this._log('[PREFETCH_REC] ready', `stopIndex=${idx}`, `segments=${audioSegments.length}`);
+
+      if (enqueueAudioSegment && audioSegments.length) {
+        for (const s of audioSegments) {
+          const u = s && s.audio_url ? String(s.audio_url || '').trim() : '';
+          const t = s && s.text ? String(s.text || '') : '';
+          if (!u) continue;
+          try {
+            enqueueAudioSegment(u, { stopIndex: idx, text: t, source: 'prefetch_rec' });
+            if (ensureTtsRunning) ensureTtsRunning();
+          } catch (_) {
+            // ignore
+          }
+        }
+      }
+
+      // Chain within the same prefetch window.
+      const cur = this.getCurrentStopIndex();
+      const nextIndex = idx + 1;
+      if (nextIndex < stops.length) {
+        const base = cur >= 0 ? cur : idx;
+        if (nextIndex <= base + this._maxPrefetchAhead && !this._prefetchStore.has(nextIndex)) {
+          setTimeout(() => {
+            this.prefetchStopFromRecordingToQueue({
+              recordingId: rid,
+              stopIndex: nextIndex,
+              token,
+              enqueueAudioSegment,
+              ensureTtsRunning,
+            });
+          }, 0);
+        }
+      }
+    } catch (e) {
+      if (ctl.signal.aborted || String(e && e.name) === 'AbortError') return;
+      this._warn('[PREFETCH_REC] failed', e);
     } finally {
       if (this._prefetchAbort === ctl) this._prefetchAbort = null;
     }
