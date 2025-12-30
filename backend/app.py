@@ -846,6 +846,26 @@ def get_recording(recording_id: str):
     return jsonify(meta)
 
 
+@app.route("/api/recordings/<recording_id>/rename", methods=["POST"])
+def rename_recording(recording_id: str):
+    data = request.get_json(silent=True) or {}
+    name = str((data.get("display_name") or data.get("name") or "")).strip()
+    try:
+        recording_store.set_display_name(recording_id, name)
+        return jsonify({"ok": True, "recording_id": str(recording_id), "display_name": name})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/recordings/<recording_id>", methods=["DELETE"])
+def delete_recording(recording_id: str):
+    try:
+        recording_store.delete(recording_id)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
 @app.route("/api/recordings/<recording_id>/stop/<int:stop_index>", methods=["GET"])
 def get_recording_stop(recording_id: str, stop_index: int):
     base_url = str(request.host_url).rstrip("/")

@@ -37,6 +37,8 @@ export function ControlBar({
   tourRecordingOptions,
   selectedTourRecordingId,
   onChangeSelectedTourRecordingId,
+  onRenameSelectedTourRecording,
+  onDeleteSelectedTourRecording,
 
   tourState,
   currentIntent,
@@ -228,6 +230,17 @@ export function ControlBar({
             ))}
           </select>
         </label>
+      ) : null}
+
+      {guideEnabled && playTourRecordingEnabled ? (
+        <div className="tour-controls">
+          <button type="button" className="tour-jump-btn" onClick={() => onRenameSelectedTourRecording && onRenameSelectedTourRecording()} disabled={!selectedTourRecordingId}>
+            重命名
+          </button>
+          <button type="button" className="tour-reset-btn" onClick={() => onDeleteSelectedTourRecording && onDeleteSelectedTourRecording()} disabled={!selectedTourRecordingId}>
+            删除
+          </button>
+        </div>
       ) : null}
     </div>
   );

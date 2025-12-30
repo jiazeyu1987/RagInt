@@ -6,6 +6,7 @@ import os
 import sqlite3
 import threading
 import time
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,10 +51,18 @@ class RecordingStore:
                         recording_id TEXT PRIMARY KEY,
                         created_at_ms INTEGER NOT NULL,
                         finished_at_ms INTEGER,
-                        stops_json TEXT NOT NULL
+                        stops_json TEXT NOT NULL,
+                        display_name TEXT
                     );
                     """
                 )
+                # Backward compatible migration: add display_name column if missing.
+                try:
+                    cols = [str(r["name"]) for r in conn.execute("PRAGMA table_info(recordings);").fetchall()]
+                    if "display_name" not in cols:
+                        conn.execute("ALTER TABLE recordings ADD COLUMN display_name TEXT;")
+                except Exception:
+                    pass
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS recording_ask_events (
@@ -146,7 +155,7 @@ class RecordingStore:
             try:
                 rows = conn.execute(
                     """
-                    SELECT recording_id, created_at_ms, finished_at_ms
+                    SELECT recording_id, created_at_ms, finished_at_ms, display_name
                     FROM recordings
                     ORDER BY created_at_ms DESC
                     LIMIT ?
@@ -165,7 +174,7 @@ class RecordingStore:
             conn = self._connect()
             try:
                 row = conn.execute(
-                    "SELECT recording_id, created_at_ms, finished_at_ms, stops_json FROM recordings WHERE recording_id=?",
+                    "SELECT recording_id, created_at_ms, finished_at_ms, stops_json, display_name FROM recordings WHERE recording_id=?",
                     (rid,),
                 ).fetchone()
                 if not row:
@@ -179,6 +188,47 @@ class RecordingStore:
                 return out
             finally:
                 conn.close()
+
+    def set_display_name(self, recording_id: str, display_name: str) -> None:
+        rid = str(recording_id or "").strip()
+        if not rid:
+            raise ValueError("recording_id_empty")
+        name = str(display_name or "").strip()
+        if len(name) > 120:
+            name = name[:120]
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute("UPDATE recordings SET display_name=? WHERE recording_id=?", (name, rid))
+                conn.commit()
+            finally:
+                conn.close()
+
+    def delete(self, recording_id: str) -> None:
+        rid = str(recording_id or "").strip()
+        if not rid:
+            return
+        # Delete DB rows first (audio files are best-effort).
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute("DELETE FROM recording_ask_events WHERE recording_id=?", (rid,))
+                conn.execute("DELETE FROM recording_tts_audio WHERE recording_id=?", (rid,))
+                conn.execute("DELETE FROM recordings WHERE recording_id=?", (rid,))
+                conn.commit()
+            finally:
+                conn.close()
+
+        # Delete files.
+        try:
+            root = (self._root / rid).resolve()
+            base = self._root.resolve()
+            if not str(root).lower().startswith(str(base).lower() + os.sep.lower()):
+                raise ValueError("path_outside_store")
+            if root.exists() and root.is_dir():
+                shutil.rmtree(root, ignore_errors=True)
+        except Exception:
+            pass
 
     def _next_seq(self, *, conn: sqlite3.Connection, table: str, recording_id: str, stop_index: int) -> int:
         row = conn.execute(
@@ -355,4 +405,3 @@ class RecordingStore:
         if str(p).lower().startswith(str(base).lower() + os.sep.lower()) or str(p).lower() == str(base).lower():
             return p
         raise ValueError("path_outside_audio_dir")
-

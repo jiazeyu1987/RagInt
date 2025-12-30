@@ -175,10 +175,14 @@ function App() {
         if (cancelled) return;
         const items = Array.isArray(data && data.items) ? data.items : [];
         setTourRecordingOptions(
-          items.map((r) => ({
-            recording_id: String((r && r.recording_id) || ''),
-            label: formatRecordingLabel(r && r.created_at_ms),
-          }))
+          items.map((r) => {
+            const rid = String((r && r.recording_id) || '');
+            const displayName = r && r.display_name ? String(r.display_name || '').trim() : '';
+            return {
+              recording_id: rid,
+              label: displayName || formatRecordingLabel(r && r.created_at_ms),
+            };
+          })
         );
       } catch (_) {
         if (cancelled) return;
@@ -656,6 +660,57 @@ function App() {
     }
   }
 
+  const refreshTourRecordings = async () => {
+    try {
+      const data = await fetchJson('/api/recordings?limit=50');
+      const items = Array.isArray(data && data.items) ? data.items : [];
+      setTourRecordingOptions(
+        items.map((r) => {
+          const rid = String((r && r.recording_id) || '');
+          const displayName = r && r.display_name ? String(r.display_name || '').trim() : '';
+          return {
+            recording_id: rid,
+            label: displayName || formatRecordingLabel(r && r.created_at_ms),
+          };
+        })
+      );
+    } catch (_) {
+      setTourRecordingOptions([]);
+    }
+  };
+
+  const renameSelectedTourRecording = async () => {
+    const rid = String(selectedTourRecordingIdRef.current || '').trim();
+    if (!rid) return;
+    const next = window.prompt('请输入存档名称', '') || '';
+    try {
+      await fetchJson(`/api/recordings/${encodeURIComponent(rid)}/rename`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ display_name: String(next || '').trim() }),
+      });
+    } catch (e) {
+      alert(String((e && e.message) || e || 'rename_failed'));
+    }
+    await refreshTourRecordings();
+  };
+
+  const deleteSelectedTourRecording = async () => {
+    const rid = String(selectedTourRecordingIdRef.current || '').trim();
+    if (!rid) return;
+    const ok = window.confirm('确认删除该存档？删除后无法恢复。');
+    if (!ok) return;
+    try {
+      await fetchJson(`/api/recordings/${encodeURIComponent(rid)}`, { method: 'DELETE' });
+      if (selectedTourRecordingIdRef.current === rid) {
+        setSelectedTourRecordingId('');
+      }
+    } catch (e) {
+      alert(String((e && e.message) || e || 'delete_failed'));
+    }
+    await refreshTourRecordings();
+  };
+
   const {
     isRecording,
     startRecording,
@@ -1012,6 +1067,8 @@ function App() {
             tourRecordingOptions={tourRecordingOptions}
             selectedTourRecordingId={selectedTourRecordingId}
             onChangeSelectedTourRecordingId={setSelectedTourRecordingId}
+            onRenameSelectedTourRecording={renameSelectedTourRecording}
+            onDeleteSelectedTourRecording={deleteSelectedTourRecording}
             tourState={tourState}
             currentIntent={currentIntent}
             tourStops={tourStops}
