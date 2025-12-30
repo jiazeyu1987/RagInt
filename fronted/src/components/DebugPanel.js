@@ -220,8 +220,8 @@ export function DebugPanel({
 
           <div className="debug-subtitle">分段</div>
           <div className="debug-list">
-            {(debugInfo.segments || []).slice(-12).map((s) => (
-              <div key={s.seq} className="debug-item">
+            {(debugInfo.segments || []).slice(-12).map((s, idx) => (
+              <div key={`${debugInfo.requestId || 'run'}_${s.seq}_${idx}`} className="debug-item">
                 <div className="debug-item-h">
                   <span>#{s.seq}</span>
                   <span>{s.chars}字</span>

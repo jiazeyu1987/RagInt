@@ -194,6 +194,36 @@ export class TtsQueueManager {
     return cleaned;
   }
 
+  capturePendingAudioByStopIndex(stopIndex) {
+    const idx = Number.isFinite(Number(stopIndex)) ? Number(stopIndex) : null;
+    if (idx == null) return [];
+
+    const out = [];
+
+    const cur = this._currentItem;
+    if (cur && Number(cur.stopIndex) === idx && cur.url) {
+      out.push({ audio_url: String(cur.url), text: cur.text ? String(cur.text) : '' });
+    }
+
+    for (const item of this._audioQueue || []) {
+      if (!item) continue;
+      if (Number(item.stopIndex) !== idx) continue;
+      if (!item.url) continue;
+      out.push({ audio_url: String(item.url), text: item.text ? String(item.text) : '' });
+    }
+
+    const cleaned = [];
+    let lastUrl = null;
+    for (const s of out) {
+      const u = s && s.audio_url ? String(s.audio_url || '').trim() : '';
+      if (!u) continue;
+      if (u === lastUrl) continue;
+      cleaned.push({ audio_url: u, text: s && s.text ? String(s.text || '') : '' });
+      lastUrl = u;
+    }
+    return cleaned;
+  }
+
   enqueueWavBytes(wavBytes, meta) {
     if (!wavBytes) return null;
     const seq = meta && typeof meta.seq === 'number' ? meta.seq : this._seq++;

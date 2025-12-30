@@ -6,6 +6,7 @@ import {
 } from './audio/ttsAudio';
 import { cancelRequest as cancelBackendRequestExt, emitClientEvent as emitClientEventExt, fetchJson } from './api/backendClient';
 import { TourController } from './managers/TourController';
+import { InterruptManager } from './managers/InterruptManager';
 import { createTtsOnStopIndexChange } from './managers/createTtsOnStopIndexChange';
 import { createOrGetTtsManager } from './managers/createTtsManager';
 import { HistoryPanel } from './components/HistoryPanel';
@@ -225,6 +226,10 @@ function App() {
   const queueRef = useRef([]);
   const lastSpeakerRef = useRef('');
 
+  const interruptEpochRef = useRef(0);
+  const interruptManagerRef = useRef(null);
+  if (!interruptManagerRef.current) interruptManagerRef.current = new InterruptManager(interruptEpochRef);
+
   const ttsManagerRef = useRef(null);
   const { tourPipelineRef, getTourPipeline, abortPrefetch } = useTourPipelineManager({
     baseUrl: 'http://localhost:8000',
@@ -242,6 +247,7 @@ function App() {
     activeTourRecordingIdRef,
     playTourRecordingEnabledRef,
     selectedTourRecordingIdRef,
+    interruptManagerRef,
     useAgentModeRef,
     selectedChatRef,
     selectedAgentIdRef,
@@ -250,7 +256,7 @@ function App() {
     onWarn: console.warn,
   });
 
-  const runIdRef = useRef(0);
+  const requestSeqRef = useRef(0);
   const currentAudioRef = useRef(null);
   const receivedSegmentsRef = useRef(false);
   const audioContextRef = useRef(null);
@@ -266,7 +272,7 @@ function App() {
       ttsManagerRef,
       audioContextRef,
       currentAudioRef,
-      runIdRef,
+      runIdRef: requestSeqRef,
       clientIdRef,
       nowMs,
       baseUrl: 'http://localhost:8000',
@@ -299,6 +305,7 @@ function App() {
           playTourRecordingEnabledRef && playTourRecordingEnabledRef.current && selectedTourRecordingIdRef
             ? selectedTourRecordingIdRef.current
             : '',
+        interruptManagerRef,
       }),
       debugRef,
       debugMark,
@@ -614,7 +621,7 @@ function App() {
   const startStatusMonitor = (runId) => {
     const interval = setInterval(() => {
       const busy = ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false;
-      if (runIdRef.current === runId && (isLoading || busy)) {
+      if (requestSeqRef.current === runId && (isLoading || busy)) {
         updateQueueStatus();
       } else {
         setQueueStatus('');
@@ -733,7 +740,8 @@ function App() {
   const { interruptCurrentRun, askQuestion } = useAskWorkflowManager({
     baseUrl: 'http://localhost:8000',
     getIsLoading: () => isLoading,
-    runIdRef,
+    requestSeqRef,
+    interruptManagerRef,
     askAbortRef,
     activeAskRequestIdRef,
     cancelBackendRequest,
@@ -871,6 +879,7 @@ function App() {
       playTourRecordingEnabledRef,
       selectedTourRecordingIdRef,
       activeTourRecordingIdRef,
+      interruptManagerRef,
       startTourRecordingArchive,
       loadTourRecordingMeta,
       tourStateRef,

@@ -12,6 +12,7 @@ export function createTtsOnStopIndexChange({
   enqueueAudioSegment,
   ensureTtsRunning,
   getPlaybackRecordingId,
+  interruptManagerRef,
 } = {}) {
   return (nextStopIndex) => {
     if (!guideEnabledRef || !guideEnabledRef.current) return;
@@ -24,24 +25,34 @@ export function createTtsOnStopIndexChange({
     try {
       const pipeline = tourPipelineRef && tourPipelineRef.current;
       if (pipeline) {
+        const mgr = interruptManagerRef && interruptManagerRef.current ? interruptManagerRef.current : null;
+        const epoch = mgr ? mgr.snapshot() : 0;
+        const allow = () => (mgr ? mgr.isCurrent(epoch) : true);
+        const gatedEnsure = () => {
+          if (!allow()) return;
+          if (ttsEnabledRef && ttsEnabledRef.current && typeof ensureTtsRunning === 'function') ensureTtsRunning();
+        };
+
         pipeline.setCurrentStopIndex(Number(nextStopIndex));
         const rid = typeof getPlaybackRecordingId === 'function' ? String(getPlaybackRecordingId() || '').trim() : '';
         if (rid && typeof pipeline.maybePrefetchFromRecordingPlayback === 'function') {
           pipeline.maybePrefetchFromRecordingPlayback({
             recordingId: rid,
             currentStopIndex: Number(nextStopIndex),
-            enqueueAudioSegment,
-            ensureTtsRunning: () => {
-              if (ttsEnabledRef && ttsEnabledRef.current && typeof ensureTtsRunning === 'function') ensureTtsRunning();
+            enqueueAudioSegment: (u, meta) => {
+              if (!allow()) return;
+              if (typeof enqueueAudioSegment === 'function') enqueueAudioSegment(u, meta);
             },
+            ensureTtsRunning: gatedEnsure,
           });
         } else {
           pipeline.maybePrefetchFromPlayback({
             currentStopIndex: Number(nextStopIndex),
-            enqueueSegment,
-            ensureTtsRunning: () => {
-              if (ttsEnabledRef && ttsEnabledRef.current && typeof ensureTtsRunning === 'function') ensureTtsRunning();
+            enqueueSegment: (s, meta) => {
+              if (!allow()) return;
+              if (typeof enqueueSegment === 'function') enqueueSegment(s, meta);
             },
+            ensureTtsRunning: gatedEnsure,
           });
         }
       }

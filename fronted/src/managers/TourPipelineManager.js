@@ -1,6 +1,6 @@
 // Flow-oriented tour pipeline manager extracted from App.js.
 // Responsibilities:
-// - Continuous tour state (active + token)
+// - Continuous tour state (active + interrupt epoch)
 // - Prompt building for stops
 // - Prefetch next stops via /api/ask (kind=ask_prefetch)
 // - Cache prefetched answers (for UI + seamless stop transition)
@@ -12,6 +12,11 @@ export class TourPipelineManager {
     this._getClientId = typeof options.getClientId === 'function' ? options.getClientId : () => '';
     this._getStops = typeof options.getStops === 'function' ? options.getStops : () => [];
     this._getLastAnswerTail = typeof options.getLastAnswerTail === 'function' ? options.getLastAnswerTail : () => '';
+    this._getInterruptEpoch = typeof options.getInterruptEpoch === 'function' ? options.getInterruptEpoch : () => 0;
+    this._isInterruptEpochCurrent =
+      typeof options.isInterruptEpochCurrent === 'function'
+        ? options.isInterruptEpochCurrent
+        : (epoch) => Number(epoch) === Number(this._getInterruptEpoch());
     this._getAudienceProfile = typeof options.getAudienceProfile === 'function' ? options.getAudienceProfile : () => '';
     this._getGuideDuration = typeof options.getGuideDuration === 'function' ? options.getGuideDuration : () => 60;
     this._getGuideStyle = typeof options.getGuideStyle === 'function' ? options.getGuideStyle : () => 'friendly';
@@ -34,7 +39,6 @@ export class TourPipelineManager {
     this._warn = typeof options.onWarn === 'function' ? options.onWarn : () => {};
 
     this._active = false;
-    this._token = 0;
     this._prefetchAbort = null;
     this._prefetchStore = new Map(); // stopIndex -> { answerText, tail, createdAt, segments }
     this._stopsOverride = null;
@@ -43,10 +47,6 @@ export class TourPipelineManager {
 
   isActive() {
     return this._active;
-  }
-
-  token() {
-    return this._token;
   }
 
   getPrefetch(stopIndex) {
@@ -132,11 +132,16 @@ export class TourPipelineManager {
 
   interrupt(reason) {
     this._active = false;
-    this._token += 1;
     this._stopsOverride = null;
     this._currentStopIndex = -1;
     this.clearPrefetchStore();
     this.abortPrefetch(reason || 'interrupt');
+  }
+
+  pause(reason) {
+    // Manual pause: stop any prefetch/enqueue without clearing cached store.
+    this._active = false;
+    this.abortPrefetch(reason || 'pause');
   }
 
   _stops() {
@@ -223,12 +228,12 @@ export class TourPipelineManager {
       return;
     }
 
-    const token = ++this._token;
+    const epoch = this._getInterruptEpoch();
     this._active = true;
     this.abortPrefetch('continuous_start');
 
     const start = Math.max(0, Math.min(Number(startIndex) || 0, stops.length - 1));
-    this._log('[TOUR] continuous start', `token=${token}`, `from=${start}`);
+    this._log('[TOUR] continuous start', `epoch=${epoch}`, `from=${start}`);
 
     try {
       const action = String(firstAction || 'start');
@@ -236,11 +241,11 @@ export class TourPipelineManager {
       const prompt = this.buildTourPrompt(promptAction, start);
       await askQuestion(prompt, { tourAction: action, tourStopIndex: start, continuous: true, continuousRoot: true });
     } finally {
-      if (this._token === token) {
+      if (this._isInterruptEpochCurrent(epoch)) {
         this._active = false;
         this._stopsOverride = null;
         this.abortPrefetch('continuous_end');
-        this._log('[TOUR] continuous end', `token=${token}`);
+        this._log('[TOUR] continuous end', `epoch=${epoch}`);
       }
     }
   }
@@ -261,9 +266,9 @@ export class TourPipelineManager {
       if (base >= 0 && nextIndex > base + this._maxPrefetchAhead) return;
     }
 
-    const token = this._token;
+    const epoch = this._getInterruptEpoch();
     setTimeout(() => {
-      this.prefetchStopTextToQueue({ stopIndex: nextIndex, tail, token, enqueueSegment, ensureTtsRunning });
+      this.prefetchStopTextToQueue({ stopIndex: nextIndex, tail, epoch, enqueueSegment, ensureTtsRunning });
     }, 0);
   }
 
@@ -286,12 +291,12 @@ export class TourPipelineManager {
 
     if (this._prefetchStore.has(nextIndex)) return;
 
-    const token = this._token;
+    const epoch = this._getInterruptEpoch();
     setTimeout(() => {
       this.prefetchStopFromRecordingToQueue({
         recordingId: rid,
         stopIndex: nextIndex,
-        token,
+        epoch,
         enqueueAudioSegment,
         ensureTtsRunning,
       });
@@ -316,9 +321,9 @@ export class TourPipelineManager {
       (this._prefetchStore.get(cur) && this._prefetchStore.get(cur).tail) ||
       String(this._getLastAnswerTail() || '').trim().slice(-80);
 
-    const token = this._token;
+    const epoch = this._getInterruptEpoch();
     setTimeout(() => {
-      this.prefetchStopTextToQueue({ stopIndex: nextIndex, tail, token, enqueueSegment, ensureTtsRunning });
+      this.prefetchStopTextToQueue({ stopIndex: nextIndex, tail, epoch, enqueueSegment, ensureTtsRunning });
     }, 0);
   }
 
@@ -338,25 +343,25 @@ export class TourPipelineManager {
     if (this._maxPrefetchAhead >= 0 && nextIndex > cur + this._maxPrefetchAhead) return;
     if (this._prefetchStore.has(nextIndex)) return;
 
-    const token = this._token;
+    const epoch = this._getInterruptEpoch();
     setTimeout(() => {
       this.prefetchStopFromRecordingToQueue({
         recordingId: rid,
         stopIndex: nextIndex,
-        token,
+        epoch,
         enqueueAudioSegment,
         ensureTtsRunning,
       });
     }, 0);
   }
 
-  async prefetchStopTextToQueue({ stopIndex, tail, token, enqueueSegment, ensureTtsRunning, force } = {}) {
+  async prefetchStopTextToQueue({ stopIndex, tail, epoch, enqueueSegment, ensureTtsRunning, force } = {}) {
     const idx = Number.isFinite(stopIndex) ? Number(stopIndex) : 0;
     const stops = Array.isArray(this._getStops()) ? this._getStops() : [];
     if (!stops.length || idx < 0 || idx >= stops.length) return;
     if (!this._isContinuousTourEnabled()) return;
     if (!force && !this._active) return;
-    if (this._token !== token) return;
+    if (!this._isInterruptEpochCurrent(epoch)) return;
 
     if (this._prefetchStore.has(idx)) return;
 
@@ -364,7 +369,7 @@ export class TourPipelineManager {
     const ctl = new AbortController();
     this._prefetchAbort = ctl;
 
-    const prefetchAskId = `ask_prefetch_${token}_${idx}_${Date.now()}`;
+    const prefetchAskId = `ask_prefetch_${epoch}_${idx}_${Date.now()}`;
     const prompt = this.buildTourPrompt('next', idx, tail);
     this._log('[PREFETCH] start', `stopIndex=${idx}`, `askId=${prefetchAskId}`);
 
@@ -413,13 +418,15 @@ export class TourPipelineManager {
       while (true) {
         if (ctl.signal.aborted) break;
         if (!this._isContinuousTourEnabled()) break;
-        if ((!force && !this._active) || this._token !== token) break;
+        if ((!force && !this._active) || !this._isInterruptEpochCurrent(epoch)) break;
         const { done, value } = await reader.read();
         if (done) break;
         sseBuffer += decoder.decode(value, { stream: true });
         const lines = sseBuffer.split('\n');
         sseBuffer = lines.pop() || '';
         for (const line of lines) {
+          if (ctl.signal.aborted) break;
+          if (!this._isInterruptEpochCurrent(epoch)) break;
           const trimmed = String(line || '').trim();
           if (!trimmed.startsWith('data: ')) continue;
           let data = null;
@@ -437,7 +444,9 @@ export class TourPipelineManager {
               gotAnySegment = true;
               segments.push(seg);
               try {
+                if (!this._isInterruptEpochCurrent(epoch)) break;
                 if (enqueueSegment) enqueueSegment(seg, { stopIndex: idx, source: 'prefetch' });
+                if (!this._isInterruptEpochCurrent(epoch)) break;
                 if (ensureTtsRunning) ensureTtsRunning();
               } catch (_) {
                 // ignore
@@ -450,11 +459,11 @@ export class TourPipelineManager {
 
       if (ctl.signal.aborted) return;
       if (!this._isContinuousTourEnabled()) return;
-      if ((!force && !this._active) || this._token !== token) return;
+      if ((!force && !this._active) || !this._isInterruptEpochCurrent(epoch)) return;
 
       const tailOut = String(answerText || '').trim().slice(-80);
-    this._prefetchStore.set(idx, { answerText: String(answerText || ''), tail: tailOut, createdAt: Date.now(), segments });
-    this._log('[PREFETCH] ready', `stopIndex=${idx}`, `segments=${gotAnySegment ? 'yes' : 'no'}`);
+      this._prefetchStore.set(idx, { answerText: String(answerText || ''), tail: tailOut, createdAt: Date.now(), segments });
+      this._log('[PREFETCH] ready', `stopIndex=${idx}`, `segments=${gotAnySegment ? 'yes' : 'no'}`);
 
       // Limited chain prefetch: keep at most `_maxPrefetchAhead` stops ahead of current playback.
       const cur = this.getCurrentStopIndex();
@@ -463,7 +472,7 @@ export class TourPipelineManager {
         const base = cur >= 0 ? cur : idx;
         if (nextIndex <= base + this._maxPrefetchAhead && !this._prefetchStore.has(nextIndex)) {
           setTimeout(() => {
-            this.prefetchStopTextToQueue({ stopIndex: nextIndex, tail: tailOut, token, enqueueSegment, ensureTtsRunning, force });
+            this.prefetchStopTextToQueue({ stopIndex: nextIndex, tail: tailOut, epoch, enqueueSegment, ensureTtsRunning, force });
           }, 0);
         }
       }
@@ -475,7 +484,7 @@ export class TourPipelineManager {
     }
   }
 
-  async prefetchStopFromRecordingToQueue({ recordingId, stopIndex, token, enqueueAudioSegment, ensureTtsRunning } = {}) {
+  async prefetchStopFromRecordingToQueue({ recordingId, stopIndex, epoch, enqueueAudioSegment, ensureTtsRunning } = {}) {
     const rid = String(recordingId || '').trim();
     const idx = Number.isFinite(stopIndex) ? Number(stopIndex) : 0;
     const stops = Array.isArray(this._getStops()) ? this._getStops() : [];
@@ -483,7 +492,7 @@ export class TourPipelineManager {
     if (!stops.length || idx < 0 || idx >= stops.length) return;
     if (!this._isContinuousTourEnabled()) return;
     if (!this._active) return;
-    if (this._token !== token) return;
+    if (!this._isInterruptEpochCurrent(epoch)) return;
     if (this._prefetchStore.has(idx)) return;
 
     this.abortPrefetch('replace');
@@ -498,7 +507,7 @@ export class TourPipelineManager {
       if (!resp.ok) throw new Error(`prefetch_rec http=${resp.status}`);
       const data = await resp.json();
       if (ctl.signal.aborted) return;
-      if (!this._active || this._token !== token) return;
+      if (!this._active || !this._isInterruptEpochCurrent(epoch)) return;
 
       const answerText = String((data && data.answer_text) || '');
       const tailOut = String((data && data.tail) || '').trim().slice(-80) || answerText.trim().slice(-80);
@@ -530,7 +539,7 @@ export class TourPipelineManager {
             this.prefetchStopFromRecordingToQueue({
               recordingId: rid,
               stopIndex: nextIndex,
-              token,
+              epoch,
               enqueueAudioSegment,
               ensureTtsRunning,
             });

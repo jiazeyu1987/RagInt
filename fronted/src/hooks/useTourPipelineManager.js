@@ -17,6 +17,7 @@ export function useTourPipelineManager({
   activeTourRecordingIdRef,
   playTourRecordingEnabledRef,
   selectedTourRecordingIdRef,
+  interruptManagerRef,
   useAgentModeRef,
   selectedChatRef,
   selectedAgentIdRef,
@@ -34,6 +35,10 @@ export function useTourPipelineManager({
       getClientId: () => (clientIdRef ? clientIdRef.current : ''),
       getStops: () => (tourStopsRef ? tourStopsRef.current || [] : []),
       getLastAnswerTail: () => String((tourStateRef && tourStateRef.current && tourStateRef.current.lastAnswerTail) || ''),
+      getInterruptEpoch: () =>
+        interruptManagerRef && interruptManagerRef.current ? interruptManagerRef.current.snapshot() : 0,
+      isInterruptEpochCurrent: (epoch) =>
+        interruptManagerRef && interruptManagerRef.current ? interruptManagerRef.current.isCurrent(epoch) : false,
       getAudienceProfile: () => String((audienceProfileRef && audienceProfileRef.current) || ''),
       getGuideDuration: () => Number((guideDurationRef && guideDurationRef.current) || 60),
       getGuideStyle: () => String((guideStyleRef && guideStyleRef.current) || 'friendly'),
@@ -65,6 +70,7 @@ export function useTourPipelineManager({
     clientIdRef,
     tourStopsRef,
     tourStateRef,
+    interruptManagerRef,
     audienceProfileRef,
     guideDurationRef,
     guideStyleRef,

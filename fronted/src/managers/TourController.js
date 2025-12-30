@@ -40,6 +40,14 @@ export class TourController {
     }
   }
 
+  _snapshotInterruptEpoch() {
+    const { interruptManagerRef } = this.deps || {};
+    const mgr = interruptManagerRef && interruptManagerRef.current ? interruptManagerRef.current : null;
+    const epoch = mgr ? mgr.snapshot() : 0;
+    const allow = () => (mgr ? mgr.isCurrent(epoch) : true);
+    return { epoch, allow };
+  }
+
   async _fetchTourPlan() {
     const {
       fetchJson,
@@ -98,6 +106,7 @@ export class TourController {
 
   async _runContinuousTour({ startIndex, firstAction, stopsOverride }) {
     const { beginDebugRun, getTourPipeline, askQuestion, getTourStops } = this.deps;
+    const { allow } = this._snapshotInterruptEpoch();
     const stops =
       Array.isArray(stopsOverride) && stopsOverride.length ? stopsOverride : typeof getTourStops === 'function' ? getTourStops() : [];
     if (!Array.isArray(stops) || !stops.length) {
@@ -105,6 +114,7 @@ export class TourController {
       console.warn('[TOUR] continuous: no stops loaded');
       return;
     }
+    if (!allow()) return;
 
     const action = String(firstAction || 'start');
     if (typeof beginDebugRun === 'function') beginDebugRun(action === 'continue' ? 'guide_continue' : 'guide_start');
@@ -126,8 +136,15 @@ export class TourController {
       loadTourRecordingMeta,
       setTourStops,
       activeTourRecordingIdRef,
+      interruptCurrentRun,
     } = this.deps;
     this._ensurePreferredAudioContext();
+    try {
+      if (typeof interruptCurrentRun === 'function') interruptCurrentRun('tour_start');
+    } catch (_) {
+      // ignore
+    }
+    const { allow } = this._snapshotInterruptEpoch();
 
     try {
       const { tourResumeRef } = this.deps;
@@ -155,6 +172,7 @@ export class TourController {
     } catch (_) {
       plannedStops = await this._fetchTourPlan();
     }
+    if (!allow()) return;
     const stopIndex = 0;
 
     try {
@@ -169,6 +187,7 @@ export class TourController {
     } catch (_) {
       // ignore
     }
+    if (!allow()) return;
 
     if (continuousTourRef && continuousTourRef.current) {
       await this._runContinuousTour({ startIndex: stopIndex, firstAction: 'start', stopsOverride: plannedStops });
@@ -180,18 +199,27 @@ export class TourController {
     if (typeof askQuestion === 'function') await askQuestion(prompt, { tourAction: 'start', tourStopIndex: stopIndex });
   }
 
-  async _resumeFromInterrupt({ stopIndex, action }) {
-    const { tourResumeRef, getTtsManager, setTourState, getTourStopName, getTourPipeline, getTourStops, continuousTourRef } = this.deps;
+  async _resumeFromInterrupt({ stopIndex, action, allow }) {
+    const { tourResumeRef, getTtsManager, setTourState, getTourStopName } = this.deps;
     if (!tourResumeRef || !tourResumeRef.current) return false;
     const saved = tourResumeRef.current[stopIndex];
-    if (!saved || !Array.isArray(saved.segments) || !saved.segments.length) return false;
     if (typeof getTtsManager !== 'function') return false;
+    if (typeof allow === 'function' && !allow()) return false;
 
     const ttsMgr = getTtsManager();
     if (!ttsMgr) return false;
 
     // Consume resume buffer to avoid replay loops.
     delete tourResumeRef.current[stopIndex];
+    try {
+      if (Number(tourResumeRef.current._latestStopIndex) === Number(stopIndex)) delete tourResumeRef.current._latestStopIndex;
+    } catch (_) {
+      // ignore
+    }
+
+    const hasAudioSegments = saved && Array.isArray(saved.audioSegments) && saved.audioSegments.length;
+    const hasTextSegments = saved && Array.isArray(saved.segments) && saved.segments.length;
+    if (!hasAudioSegments && !hasTextSegments) return false;
 
     const stopName = typeof getTourStopName === 'function' ? getTourStopName(Number(stopIndex)) : '';
     try {
@@ -201,6 +229,7 @@ export class TourController {
     } catch (_) {
       // ignore
     }
+    if (typeof allow === 'function' && !allow()) return true;
 
     const requestId = `tts_resume_${stopIndex}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     try {
@@ -208,84 +237,48 @@ export class TourController {
     } catch (_) {
       // ignore
     }
+    if (typeof allow === 'function' && !allow()) return true;
 
-    for (const s of saved.segments) {
-      try {
-        if (typeof ttsMgr.enqueueText === 'function') ttsMgr.enqueueText(s, { stopIndex: Number(stopIndex) });
-      } catch (_) {
-        // ignore
+    if (hasAudioSegments && typeof ttsMgr.enqueueAudioUrl === 'function') {
+      for (const s of saved.audioSegments) {
+        if (typeof allow === 'function' && !allow()) return true;
+        try {
+          const url = s && s.audio_url ? String(s.audio_url || '').trim() : '';
+          if (!url) continue;
+          const text = s && s.text ? String(s.text || '') : '';
+          ttsMgr.enqueueAudioUrl(url, { stopIndex: Number(stopIndex), text });
+        } catch (_) {
+          // ignore
+        }
+      }
+    } else if (hasTextSegments) {
+      for (const s of saved.segments) {
+        if (typeof allow === 'function' && !allow()) return true;
+        try {
+          if (typeof ttsMgr.enqueueText === 'function') ttsMgr.enqueueText(s, { stopIndex: Number(stopIndex) });
+        } catch (_) {
+          // ignore
+        }
       }
     }
     try {
+      if (typeof allow === 'function' && !allow()) return true;
       if (typeof ttsMgr.markRagDone === 'function') ttsMgr.markRagDone();
       if (typeof ttsMgr.ensureRunning === 'function') ttsMgr.ensureRunning();
     } catch (_) {
       // ignore
     }
 
-    // Best-effort: if continuous tour is enabled, restore/trigger prefetch for next stop so "jump" stays instant (same as main flow).
-    // Important: do this AFTER enqueueing the current-stop remaining segments, to keep playback order correct.
     try {
-      if (continuousTourRef && continuousTourRef.current && typeof getTourPipeline === 'function') {
-        const pipeline = getTourPipeline();
-        const stops = typeof getTourStops === 'function' ? getTourStops() : [];
-        const n = Array.isArray(stops) ? stops.length : 0;
-        const nextIndex = Number(stopIndex) + 1;
-        if (pipeline && n && nextIndex >= 0 && nextIndex < n) {
-          const tail = String(saved.segments[saved.segments.length - 1] || '').trim().slice(-80);
-          const enqueueSegment = (s, meta) => {
-            try {
-              if (typeof ttsMgr.enqueueText === 'function') ttsMgr.enqueueText(s, meta);
-            } catch (_) {
-              // ignore
-            }
-          };
-          const ensureTtsRunning = () => {
-            try {
-              if (typeof ttsMgr.ensureRunning === 'function') ttsMgr.ensureRunning();
-            } catch (_) {
-              // ignore
-            }
-          };
-
-          // If we already have cached prefetch, replay it into the TTS queue (interrupt clears the queue but not pipeline store).
-          try {
-            if (typeof pipeline.replayPrefetchToQueue === 'function') {
-              pipeline.replayPrefetchToQueue({ stopIndex: nextIndex, enqueueSegment, ensureTtsRunning });
-            }
-          } catch (_) {
-            // ignore
-          }
-
-          // If not cached, force a normal prefetch (same endpoint/stream format) while we are resuming current stop.
-          try {
-            if (typeof pipeline.prefetchStopTextToQueue === 'function') {
-              pipeline.prefetchStopTextToQueue({
-                stopIndex: nextIndex,
-                tail,
-                token: typeof pipeline.token === 'function' ? pipeline.token() : 0,
-                enqueueSegment,
-                ensureTtsRunning,
-                force: true,
-              });
-            }
-          } catch (_) {
-            // ignore
-          }
-        }
-      }
-    } catch (_) {
-      // ignore
-    }
-
-    try {
+      if (typeof allow === 'function' && !allow()) return true;
       if (typeof ttsMgr.waitForIdle === 'function') await ttsMgr.waitForIdle();
     } catch (_) {
       // ignore
     }
+    if (typeof allow === 'function' && !allow()) return true;
 
     try {
-      const last = String(saved.segments[saved.segments.length - 1] || '').trim();
+      const last = hasTextSegments ? String(saved.segments[saved.segments.length - 1] || '').trim() : '';
       const tail = last ? last.slice(-80) : '';
       if (typeof setTourState === 'function') {
         setTourState((prev) => tourStateOnReady(prev, { fullAnswerTail: tail }));
@@ -298,16 +291,26 @@ export class TourController {
   }
 
   async continue() {
-    const { continuousTourRef, tourStateRef, buildTourPrompt, beginDebugRun, askQuestion, getTourStops } = this.deps;
+    const { continuousTourRef, tourStateRef, buildTourPrompt, beginDebugRun, askQuestion, getTourStops, tourResumeRef } = this.deps;
     this._ensurePreferredAudioContext();
+    const { allow } = this._snapshotInterruptEpoch();
 
     const cur = tourStateRef ? tourStateRef.current : null;
-    const stopIndex = Number.isFinite(cur && cur.stopIndex) && cur.stopIndex >= 0 ? cur.stopIndex : 0;
+    let stopIndex = Number.isFinite(cur && cur.stopIndex) && cur.stopIndex >= 0 ? cur.stopIndex : 0;
+    try {
+      const latest = tourResumeRef && tourResumeRef.current ? Number(tourResumeRef.current._latestStopIndex) : NaN;
+      if (Number.isFinite(latest) && latest >= 0 && tourResumeRef && tourResumeRef.current && tourResumeRef.current[latest]) {
+        stopIndex = latest;
+      }
+    } catch (_) {
+      // ignore
+    }
 
     // If user interrupted mid-playback, resume remaining segments first to avoid abrupt re-generation.
     try {
-      const resumed = await this._resumeFromInterrupt({ stopIndex, action: 'continue' });
+      const resumed = await this._resumeFromInterrupt({ stopIndex, action: 'continue', allow });
       if (resumed) {
+        if (!allow()) return;
         if (continuousTourRef && continuousTourRef.current) {
           // If prefetch worked, stopIndex will advance naturally as next-stop audio begins playing.
           // Fallback: if it didn't advance, restart continuous tour from next stop.
@@ -319,6 +322,7 @@ export class TourController {
             const n = Array.isArray(stops) ? stops.length : 0;
             const nextIndex = stopIndex + 1;
             if (n && nextIndex >= 0 && nextIndex < n) {
+              if (!allow()) return;
               await this._runContinuousTour({ startIndex: nextIndex, firstAction: 'next' });
             }
           }
@@ -328,6 +332,7 @@ export class TourController {
     } catch (_) {
       // ignore
     }
+    if (!allow()) return;
 
     if (continuousTourRef && continuousTourRef.current) {
       await this._runContinuousTour({ startIndex: stopIndex, firstAction: 'continue' });
@@ -340,7 +345,12 @@ export class TourController {
   }
 
   async prevStop() {
-    const { tourStateRef, buildTourPrompt, beginDebugRun, askQuestion } = this.deps;
+    const { tourStateRef, buildTourPrompt, beginDebugRun, askQuestion, interruptCurrentRun } = this.deps;
+    try {
+      if (typeof interruptCurrentRun === 'function') interruptCurrentRun('tour_prev');
+    } catch (_) {
+      // ignore
+    }
     const cur = tourStateRef ? tourStateRef.current : null;
     const stopIndexRaw = Number.isFinite(cur && cur.stopIndex) ? cur.stopIndex - 1 : 0;
     const stopIndex = Math.max(0, stopIndexRaw);
@@ -356,7 +366,12 @@ export class TourController {
   }
 
   async nextStop() {
-    const { tourStateRef, getTourStops, buildTourPrompt, beginDebugRun, askQuestion } = this.deps;
+    const { tourStateRef, getTourStops, buildTourPrompt, beginDebugRun, askQuestion, interruptCurrentRun } = this.deps;
+    try {
+      if (typeof interruptCurrentRun === 'function') interruptCurrentRun('tour_next');
+    } catch (_) {
+      // ignore
+    }
     const cur = tourStateRef ? tourStateRef.current : null;
     const stops = typeof getTourStops === 'function' ? getTourStops() : [];
     const n = Array.isArray(stops) ? stops.length : 0;
@@ -374,7 +389,12 @@ export class TourController {
   }
 
   async jumpTo(idx) {
-    const { getTourStops, buildTourPrompt, beginDebugRun, askQuestion } = this.deps;
+    const { getTourStops, buildTourPrompt, beginDebugRun, askQuestion, interruptCurrentRun } = this.deps;
+    try {
+      if (typeof interruptCurrentRun === 'function') interruptCurrentRun('tour_jump');
+    } catch (_) {
+      // ignore
+    }
     const stops = typeof getTourStops === 'function' ? getTourStops() : [];
     const n = Array.isArray(stops) ? stops.length : 0;
     const stopIndex = n ? Math.max(0, Math.min(Number(idx) || 0, n - 1)) : Math.max(0, Number(idx) || 0);

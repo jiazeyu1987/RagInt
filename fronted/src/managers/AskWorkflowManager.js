@@ -31,10 +31,12 @@ export class AskWorkflowManager {
       tourPipelineRef,
       tourStateRef,
       tourResumeRef,
+      playTourRecordingEnabledRef,
+      selectedTourRecordingIdRef,
+      interruptManagerRef,
       activeAskRequestIdRef,
       cancelBackendRequest,
       askAbortRef,
-      runIdRef,
       currentAudioRef,
       receivedSegmentsRef,
       ttsManagerRef,
@@ -46,6 +48,13 @@ export class AskWorkflowManager {
     const emitClientEvent = typeof this.deps.emitClientEvent === 'function' ? this.deps.emitClientEvent : null;
     const interruptReason = String(reason || 'interrupt');
 
+    // Invalidate any late enqueue across async callbacks (prefetch / playback fetch / SSE segment).
+    try {
+      if (interruptManagerRef && interruptManagerRef.current) interruptManagerRef.current.bump(interruptReason);
+    } catch (_) {
+      // ignore
+    }
+
     // Capture remaining tour TTS segments for a smoother "continue" after manual interrupt.
     try {
       const r = String(reason || '');
@@ -53,12 +62,22 @@ export class AskWorkflowManager {
       const cur = tourStateRef && tourStateRef.current ? tourStateRef.current : null;
       const stopIndex =
         cur && Number.isFinite(cur.stopIndex) && Number(cur.stopIndex) >= 0 ? Number(cur.stopIndex) : null;
+      const isPlaybackTour =
+        !!(playTourRecordingEnabledRef && playTourRecordingEnabledRef.current && selectedTourRecordingIdRef && String(selectedTourRecordingIdRef.current || '').trim());
+
       if (isManual && stopIndex != null && tourResumeRef && tourResumeRef.current && ttsManagerRef && ttsManagerRef.current) {
         const mgr = ttsManagerRef.current;
-        if (typeof mgr.capturePendingTextByStopIndex === 'function') {
+        if (isPlaybackTour && typeof mgr.capturePendingAudioByStopIndex === 'function') {
+          const pending = mgr.capturePendingAudioByStopIndex(stopIndex);
+          if (pending && pending.length) {
+            tourResumeRef.current[stopIndex] = { stopIndex, audioSegments: pending, capturedAtMs: Date.now() };
+            tourResumeRef.current._latestStopIndex = stopIndex;
+          }
+        } else if (typeof mgr.capturePendingTextByStopIndex === 'function') {
           const pending = mgr.capturePendingTextByStopIndex(stopIndex);
           if (pending && pending.length) {
             tourResumeRef.current[stopIndex] = { stopIndex, segments: pending, capturedAtMs: Date.now() };
+            tourResumeRef.current._latestStopIndex = stopIndex;
           }
         }
       }
@@ -66,12 +85,13 @@ export class AskWorkflowManager {
       // ignore
     }
 
-    // For manual pause, keep continuous tour pipeline state/cache; only stop the current playback and in-flight requests.
+    // For manual pause, pause continuous tour pipeline (keep cache) to prevent any late prefetch from enqueueing new audio.
     try {
       const pipeline = tourPipelineRef && tourPipelineRef.current ? tourPipelineRef.current : null;
       if (pipeline) {
         if (interruptReason === 'user_stop' || interruptReason === 'escape') {
-          if (typeof pipeline.abortPrefetch === 'function') pipeline.abortPrefetch('manual_pause');
+          if (typeof pipeline.pause === 'function') pipeline.pause('manual_pause');
+          else if (typeof pipeline.abortPrefetch === 'function') pipeline.abortPrefetch('manual_pause');
         } else {
           pipeline.interrupt('interrupt');
         }
@@ -109,9 +129,6 @@ export class AskWorkflowManager {
       if (askAbortRef) askAbortRef.current = null;
     }
 
-    // Make all in-flight loops exit (SSE + TTS generator/player).
-    if (runIdRef) runIdRef.current += 1;
-
     // Stop audio playback / in-flight audio fetch.
     this._stopCurrentAudio();
     if (currentAudioRef) currentAudioRef.current = null;
@@ -147,7 +164,8 @@ export class AskWorkflowManager {
   async ask(text, opts) {
     const {
       getIsLoading,
-      runIdRef,
+      requestSeqRef,
+      interruptManagerRef,
       askAbortRef,
       currentAudioRef,
       ttsManagerRef,
@@ -192,6 +210,9 @@ export class AskWorkflowManager {
     } = this.deps;
 
     const options = opts && typeof opts === 'object' ? opts : {};
+    const interruptMgr = interruptManagerRef && interruptManagerRef.current ? interruptManagerRef.current : null;
+    const epoch = interruptMgr ? interruptMgr.snapshot() : 0;
+    const allow = () => (interruptMgr ? interruptMgr.isCurrent(epoch) : true);
 
     // Interrupt any previous in-flight /api/ask stream.
     const hasActiveRun =
@@ -206,7 +227,7 @@ export class AskWorkflowManager {
       // ignore
     }
 
-    const runId = runIdRef ? ++runIdRef.current : Date.now();
+    const runId = requestSeqRef ? ++requestSeqRef.current : Date.now();
     const requestId = `ask_${runId}_${Date.now()}`;
     if (activeAskRequestIdRef) activeAskRequestIdRef.current = requestId;
     try {
@@ -251,6 +272,7 @@ export class AskWorkflowManager {
         try {
           if (tourResumeRef && tourResumeRef.current && Number.isFinite(stopIndex) && Number(stopIndex) >= 0) {
             delete tourResumeRef.current[Number(stopIndex)];
+            if (Number(tourResumeRef.current._latestStopIndex) === Number(stopIndex)) delete tourResumeRef.current._latestStopIndex;
           }
         } catch (_) {
           // ignore
@@ -379,7 +401,8 @@ export class AskWorkflowManager {
         const segments = Array.isArray(recData && recData.segments) ? recData.segments : [];
 
         for (const c of chunks) {
-          if (runIdRef && runIdRef.current !== runId) break;
+          if (!allow()) break;
+          if (options.tourAction && !allow()) break;
           const s = String(c || '');
           if (!s) continue;
           if (typeof debugMark === 'function' && !fullAnswer) debugMark('ragflowFirstChunkAt');
@@ -388,14 +411,15 @@ export class AskWorkflowManager {
         }
 
         for (const item of segments) {
-          if (runIdRef && runIdRef.current !== runId) break;
+          if (!allow()) break;
+          if (options.tourAction && !allow()) break;
           const audioUrl = item && item.audio_url ? String(item.audio_url || '').trim() : '';
           const segText = item && item.text ? String(item.text || '') : '';
           if (!audioUrl || !ttsMgr || typeof ttsMgr.enqueueAudioUrl !== 'function') continue;
           if (typeof debugMark === 'function') debugMark('ragflowFirstSegmentAt');
-          ttsMgr.enqueueAudioUrl(audioUrl, { stopIndex: Number(stopIndex), text: segText });
+          if (!options.tourAction || allow()) ttsMgr.enqueueAudioUrl(audioUrl, { stopIndex: Number(stopIndex), text: segText });
           if (receivedSegmentsRef) receivedSegmentsRef.current = true;
-          ttsMgr.ensureRunning();
+          if (!options.tourAction || allow()) ttsMgr.ensureRunning();
         }
 
         if (typeof debugMark === 'function') debugMark('ragflowDoneAt');
@@ -409,8 +433,14 @@ export class AskWorkflowManager {
               pipeline.maybePrefetchNextStopFromRecording({
                 recordingId: playbackRecordingId,
                 currentStopIndex: curStopIndex,
-                enqueueAudioSegment: (u, meta) => ttsMgr.enqueueAudioUrl(u, meta),
-                ensureTtsRunning: () => ttsMgr.ensureRunning(),
+                enqueueAudioSegment: (u, meta) => {
+                  if (!allow()) return;
+                  ttsMgr.enqueueAudioUrl(u, meta);
+                },
+                ensureTtsRunning: () => {
+                  if (!allow()) return;
+                  ttsMgr.ensureRunning();
+                },
               });
             }
           } catch (_) {
@@ -419,7 +449,7 @@ export class AskWorkflowManager {
         }
 
         if (!ttsEnabledRef || !ttsEnabledRef.current) {
-          if (runIdRef && runIdRef.current === runId && typeof setIsLoading === 'function') setIsLoading(false);
+          if (allow() && typeof setIsLoading === 'function') setIsLoading(false);
           return fullAnswer;
         }
 
@@ -427,7 +457,7 @@ export class AskWorkflowManager {
           ttsMgr.ensureRunning();
           await ttsMgr.waitForIdle();
         }
-        if (runIdRef && runIdRef.current === runId) {
+        if (allow()) {
           if (typeof setIsLoading === 'function') setIsLoading(false);
           if (typeof debugMark === 'function') debugMark('ttsAllDoneAt');
         }
@@ -472,7 +502,7 @@ export class AskWorkflowManager {
       let sseBuffer = '';
 
       while (true) {
-        if (runIdRef && runIdRef.current !== runId) {
+        if (!allow()) {
           try {
             abortController.abort();
           } catch (_) {
@@ -508,19 +538,23 @@ export class AskWorkflowManager {
             if (data.segment && !data.done) {
               const seg = String(data.segment).trim();
               if (seg && ttsEnabledRef && ttsEnabledRef.current && ttsMgr) {
-                ttsMgr.enqueueText(seg, { stopIndex: options.tourAction ? options.tourStopIndex : null, source: 'ask' });
+                if (!options.tourAction || allow()) {
+                  ttsMgr.enqueueText(seg, { stopIndex: options.tourAction ? options.tourStopIndex : null, source: 'ask' });
+                }
                 if (typeof debugMark === 'function') debugMark('ragflowFirstSegmentAt');
                 if (receivedSegmentsRef) receivedSegmentsRef.current = true;
                 // eslint-disable-next-line no-console
                 console.log(`📝 收到文本段落: "${seg.substring(0, 30)}..."`);
-                ttsMgr.ensureRunning();
+                if (!options.tourAction || allow()) ttsMgr.ensureRunning();
               }
             }
 
             if (data.done) {
               if (typeof debugMark === 'function') debugMark('ragflowDoneAt');
               if (ttsEnabledRef && ttsEnabledRef.current && receivedSegmentsRef && !receivedSegmentsRef.current && ttsMgr && !ttsMgr.hasAnySegment() && fullAnswer.trim()) {
-                ttsMgr.enqueueText(fullAnswer.trim(), { stopIndex: options.tourAction ? options.tourStopIndex : null, source: 'ask_done' });
+                if (!options.tourAction || allow()) {
+                  ttsMgr.enqueueText(fullAnswer.trim(), { stopIndex: options.tourAction ? options.tourStopIndex : null, source: 'ask_done' });
+                }
                 // eslint-disable-next-line no-console
                 console.log(`📝 收到完整文本: "${fullAnswer.substring(0, 30)}..."`);
               }
@@ -538,8 +572,12 @@ export class AskWorkflowManager {
                   getTourPipeline().maybePrefetchNextStop({
                     currentStopIndex: curStopIndex,
                     tail,
-                    enqueueSegment: (s, meta) => ttsMgr.enqueueText(s, meta),
+                    enqueueSegment: (s, meta) => {
+                      if (!allow()) return;
+                      ttsMgr.enqueueText(s, meta);
+                    },
                     ensureTtsRunning: () => {
+                      if (!allow()) return;
                       if (ttsEnabledRef && ttsEnabledRef.current) ttsMgr.ensureRunning();
                     },
                   });
@@ -549,7 +587,7 @@ export class AskWorkflowManager {
               }
 
               if (!ttsEnabledRef || !ttsEnabledRef.current) {
-                if (runIdRef && runIdRef.current === runId && typeof setIsLoading === 'function') setIsLoading(false);
+                if (allow() && typeof setIsLoading === 'function') setIsLoading(false);
                 return fullAnswer;
               }
               // eslint-disable-next-line no-console
@@ -558,7 +596,7 @@ export class AskWorkflowManager {
                 ttsMgr.ensureRunning();
                 await ttsMgr.waitForIdle();
               }
-              if (runIdRef && runIdRef.current === runId) {
+              if (allow()) {
                 if (typeof setIsLoading === 'function') setIsLoading(false);
                 if (typeof debugMark === 'function') debugMark('ttsAllDoneAt');
               }
@@ -597,7 +635,7 @@ export class AskWorkflowManager {
       }
       // eslint-disable-next-line no-console
       console.error('Error asking question:', err);
-      if (runIdRef && runIdRef.current === runId && typeof setIsLoading === 'function') setIsLoading(false);
+      if (allow() && typeof setIsLoading === 'function') setIsLoading(false);
     } finally {
       if (askAbortRef && askAbortRef.current === abortController) {
         askAbortRef.current = null;
@@ -606,7 +644,7 @@ export class AskWorkflowManager {
         activeAskRequestIdRef.current = null;
       }
       try {
-        if (runIdRef && runIdRef.current === runId && typeof setTourState === 'function') {
+        if (allow() && typeof setTourState === 'function') {
           const tail = String(fullAnswer || '').trim().slice(-80);
           setTourState((prev) => tourStateOnReady(prev, { fullAnswerTail: tail }));
         }
@@ -616,7 +654,7 @@ export class AskWorkflowManager {
 
       // refresh history list after a run finishes (best-effort)
       try {
-        if (runIdRef && runIdRef.current === runId && typeof fetchHistory === 'function') {
+        if (allow() && typeof fetchHistory === 'function') {
           const sortMode = typeof getHistorySort === 'function' ? getHistorySort() : undefined;
           fetchHistory(sortMode);
         }
@@ -625,7 +663,7 @@ export class AskWorkflowManager {
       }
 
       try {
-        if (runIdRef && runIdRef.current === runId && typeof maybeStartNextQueuedQuestion === 'function') {
+        if (allow() && typeof maybeStartNextQueuedQuestion === 'function') {
           setTimeout(() => {
             maybeStartNextQueuedQuestion();
           }, 0);
