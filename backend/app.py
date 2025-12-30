@@ -32,6 +32,43 @@ class _DashscopeByeNoiseFilter(logging.Filter):
         return True
 
 
+class _AccessNoiseFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        # Frontend polls these endpoints frequently; suppress their access logs.
+        if 'GET /api/status' in msg:
+            return False
+        if 'GET /api/events' in msg:
+            return False
+        return True
+
+
+def _install_log_filters() -> None:
+    """
+    Flask/werkzeug may attach handlers after import (especially with debug reloader).
+    Install filters on both loggers and handlers to keep polling noise out of stdout.
+    """
+    with contextlib.suppress(Exception):
+        access_filter = _AccessNoiseFilter()
+        bye_filter = _DashscopeByeNoiseFilter()
+
+        root = logging.getLogger()
+        root.addFilter(access_filter)
+        root.addFilter(bye_filter)
+        for h in list(getattr(root, "handlers", []) or []):
+            h.addFilter(access_filter)
+            h.addFilter(bye_filter)
+
+        for name in ("werkzeug", "werkzeug.serving"):
+            lg = logging.getLogger(name)
+            lg.addFilter(access_filter)
+            for h in list(getattr(lg, "handlers", []) or []):
+                h.addFilter(access_filter)
+
+
 for _name in (
     "dashscope.audio.tts_v2.speech_synthesizer",
     "dashscope",
@@ -44,11 +81,7 @@ for _name in (
         # Keep our app logs at INFO; reduce third-party log spam.
         logging.getLogger(_name).setLevel(logging.WARNING)
 
-# Ensure the filter applies even if third-party libs attach their own handlers.
-with contextlib.suppress(Exception):
-    _root_logger = logging.getLogger()
-    for _h in list(getattr(_root_logger, "handlers", []) or []):
-        _h.addFilter(_DashscopeByeNoiseFilter())
+_install_log_filters()
 
 # websocket-client may add its own StreamHandler (no timestamp) when trace is enabled; remove non-null handlers.
 with contextlib.suppress(Exception):
@@ -1242,6 +1275,7 @@ def text_to_speech_stream():
 
 
 if __name__ == '__main__':
+    _install_log_filters()
     logger.info("启动语音问答后端服务")
     logger.info(f"FunASR模型状态: {'已加载' if asr_model_loaded else '未加载'}")
     logger.info(f"RAGFlow状态: {'已连接' if session else '未连接'}")

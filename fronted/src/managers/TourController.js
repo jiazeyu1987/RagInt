@@ -6,6 +6,7 @@
 // - Continuous tour kickoff via TourPipelineManager
 
 import { tourStateOnReady, tourStateOnTourAction } from './TourStateMachine';
+import { RUN_REASON } from './RunReasons';
 
 export class TourController {
   constructor(deps) {
@@ -140,7 +141,7 @@ export class TourController {
     } = this.deps;
     this._ensurePreferredAudioContext();
     try {
-      if (typeof interruptCurrentRun === 'function') interruptCurrentRun('tour_start');
+      if (typeof interruptCurrentRun === 'function') interruptCurrentRun(RUN_REASON.TOUR_START);
     } catch (_) {
       // ignore
     }
@@ -347,7 +348,7 @@ export class TourController {
   async prevStop() {
     const { tourStateRef, buildTourPrompt, beginDebugRun, askQuestion, interruptCurrentRun } = this.deps;
     try {
-      if (typeof interruptCurrentRun === 'function') interruptCurrentRun('tour_prev');
+      if (typeof interruptCurrentRun === 'function') interruptCurrentRun(RUN_REASON.TOUR_PREV);
     } catch (_) {
       // ignore
     }
@@ -368,7 +369,7 @@ export class TourController {
   async nextStop() {
     const { tourStateRef, getTourStops, buildTourPrompt, beginDebugRun, askQuestion, interruptCurrentRun } = this.deps;
     try {
-      if (typeof interruptCurrentRun === 'function') interruptCurrentRun('tour_next');
+      if (typeof interruptCurrentRun === 'function') interruptCurrentRun(RUN_REASON.TOUR_NEXT);
     } catch (_) {
       // ignore
     }
@@ -391,7 +392,7 @@ export class TourController {
   async jumpTo(idx) {
     const { getTourStops, buildTourPrompt, beginDebugRun, askQuestion, interruptCurrentRun } = this.deps;
     try {
-      if (typeof interruptCurrentRun === 'function') interruptCurrentRun('tour_jump');
+      if (typeof interruptCurrentRun === 'function') interruptCurrentRun(RUN_REASON.TOUR_JUMP);
     } catch (_) {
       // ignore
     }
@@ -412,7 +413,7 @@ export class TourController {
   reset() {
     const { interruptCurrentRun, setTourState } = this.deps;
     try {
-      if (typeof interruptCurrentRun === 'function') interruptCurrentRun('tour_reset');
+      if (typeof interruptCurrentRun === 'function') interruptCurrentRun(RUN_REASON.TOUR_RESET);
     } catch (_) {
       // ignore
     }

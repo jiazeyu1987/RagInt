@@ -7,6 +7,7 @@ import {
 import { cancelRequest as cancelBackendRequestExt, emitClientEvent as emitClientEventExt, fetchJson } from './api/backendClient';
 import { TourController } from './managers/TourController';
 import { InterruptManager } from './managers/InterruptManager';
+import { RunCoordinator } from './managers/RunCoordinator';
 import { createTtsOnStopIndexChange } from './managers/createTtsOnStopIndexChange';
 import { createOrGetTtsManager } from './managers/createTtsManager';
 import { HistoryPanel } from './components/HistoryPanel';
@@ -263,6 +264,8 @@ function App() {
   const USE_SAVED_TTS = false;
   const inputElRef = useRef(null);
   const tourControllerRef = useRef(null);
+  const runCoordinatorRef = useRef(null);
+  if (!runCoordinatorRef.current) runCoordinatorRef.current = new RunCoordinator();
 
   const POINTER_SUPPORTED = typeof window !== 'undefined' && 'PointerEvent' in window;
   const MIN_RECORD_MS = 900;
@@ -334,7 +337,7 @@ function App() {
       } catch (_) {
         // ignore
       }
-      interruptCurrentRun('escape');
+      getRunCoordinator().interruptEscape();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
@@ -475,75 +478,6 @@ function App() {
 
   const buildTourPrompt = (action, stopIndex, tailOverride) => {
     return getTourPipeline().buildTourPrompt(action, stopIndex, tailOverride);
-  };
-
-  const enqueueQuestion = ({ speaker, text, priority }) => {
-    const item = {
-      id: `q_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-      speaker: String(speaker || '观众').trim() || '观众',
-      text: String(text || '').trim(),
-      priority: priority === 'high' ? 'high' : 'normal',
-      ts: Date.now(),
-    };
-    if (!item.text) return null;
-    const next = [...(queueRef.current || []), item];
-    queueRef.current = next;
-    setQuestionQueue(next);
-    return item;
-  };
-
-  const removeQueuedQuestion = (id) => {
-    const next = (queueRef.current || []).filter((q) => q && q.id !== id);
-    queueRef.current = next;
-    setQuestionQueue(next);
-  };
-
-  const pickNextQueuedQuestion = () => {
-    const q = queueRef.current || [];
-    if (!q.length) return null;
-    const highs = q.filter((x) => x && x.priority === 'high');
-    const pool = highs.length ? highs : q;
-    const last = String(lastSpeakerRef.current || '');
-    const diff = pool.find((x) => String(x.speaker || '') !== last) || pool[0];
-    if (!diff) return null;
-    return diff;
-  };
-
-  const maybeStartNextQueuedQuestion = async () => {
-    if (!groupModeRef.current) return;
-    if (tourPipelineRef.current && tourPipelineRef.current.isActive()) return;
-    const ttsBusy = ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false;
-    if (isLoading || askAbortRef.current || ttsBusy) return;
-    const next = pickNextQueuedQuestion();
-    if (!next) return;
-    removeQueuedQuestion(next.id);
-    lastSpeakerRef.current = String(next.speaker || '');
-    const prefixed = `【提问人：${String(next.speaker || '').trim() || '观众'}】${next.text}`;
-    try {
-      beginDebugRun(next.priority === 'high' ? 'group_high' : 'group_next');
-      await askQuestion(prefixed, { fromQueue: true });
-    } catch (e) {
-      console.error('[QUEUE] auto ask failed', e);
-    }
-  };
-
-  const answerQueuedNow = async (item) => {
-    if (!item || !item.id) return;
-    try {
-      removeQueuedQuestion(item.id);
-      lastSpeakerRef.current = String(item.speaker || '');
-      const prefixed = `【提问人：${String(item.speaker || '').trim() || '观众'}】${String(item.text || '').trim()}`;
-      const active =
-        !!askAbortRef.current ||
-        isLoading ||
-        !!currentAudioRef.current ||
-        (ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false);
-      if (active) interruptCurrentRun('queue_takeover');
-      beginDebugRun(item.priority === 'high' ? 'group_high' : 'group_takeover');
-      await askQuestion(prefixed, { fromQueue: true });
-    } catch (e) {
-      console.error('[QUEUE] takeover failed', e);
-    }
   };
 
   const fetchHistory = async (sortMode) => {
@@ -784,51 +718,24 @@ function App() {
     currentAudioRef,
     getHistorySort: () => historySort,
     fetchHistory,
-    maybeStartNextQueuedQuestion,
+    runCoordinatorRef,
   });
 
 
   const handleTextSubmit = async (e) => {
     e.preventDefault();
-    if (ttsEnabledRef.current) {
-      if (audioContextRef.current) {
-        try {
-          audioContextRef.current.close().catch(() => {});
-        } catch (_) {
-          // ignore
-        }
-        audioContextRef.current = null;
-      }
-      unlockAudio();
-    }
     const text = String(inputText || '').trim();
     if (text && (!useAgentMode || !!selectedAgentId)) {
-      beginDebugRun('text');
-      setInputText('');
-      const active =
-        !!askAbortRef.current ||
-        isLoading ||
-        !!currentAudioRef.current ||
-        (ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false);
-      if (groupMode) {
-        const item = enqueueQuestion({ speaker: speakerName, text, priority: questionPriority });
-        if (item && item.priority === 'high' && active) {
-          try {
-            interruptCurrentRun('high_priority');
-          } catch (_) {
-            // ignore
-          }
-          removeQueuedQuestion(item.id);
-          lastSpeakerRef.current = String(item.speaker || '');
-          await askQuestion(`【提问人：${item.speaker}】${item.text}`, { fromQueue: true });
-          return;
-        }
-        if (!active) {
-          await maybeStartNextQueuedQuestion();
-        }
-        return;
-      }
-      await askQuestion(text);
+      await getRunCoordinator().submitUserText({
+        text,
+        trigger: 'text',
+        groupMode,
+        speakerName,
+        priority: questionPriority,
+        useAgentMode,
+        selectedAgentId,
+      });
+      return;
     } else if (text && useAgentMode && !selectedAgentId) {
       alert('请先选择智能体再提问');
     }
@@ -841,20 +748,15 @@ function App() {
       alert('请先选择智能体再提问');
       return;
     }
-    if (ttsEnabledRef.current) {
-      if (audioContextRef.current) {
-        try {
-          audioContextRef.current.close().catch(() => {});
-        } catch (_) {
-          // ignore
-        }
-        audioContextRef.current = null;
-      }
-      unlockAudio();
-    }
-  beginDebugRun(trigger || 'quick');
-  setInputText('');
-  await askQuestion(q);
+    return await getRunCoordinator().submitUserText({
+      text: q,
+      trigger: trigger || 'quick',
+      groupMode: false,
+      speakerName,
+      priority: 'normal',
+      useAgentMode,
+      selectedAgentId,
+    });
   };
 
   const getTourController = () => {
@@ -897,17 +799,36 @@ function App() {
     return tourControllerRef.current;
   };
 
-  const startTour = async () => getTourController().start();
+  const getRunCoordinator = () => {
+    if (!runCoordinatorRef.current) runCoordinatorRef.current = new RunCoordinator();
+    runCoordinatorRef.current.setDeps({
+      interruptCurrentRun,
+      askQuestion,
+      getTourController,
+      getIsLoading: () => isLoading,
+      ttsEnabledRef,
+      audioContextRef,
+      unlockAudio,
+      beginDebugRun,
+      setInputText,
+      askAbortRef,
+      currentAudioRef,
+      ttsManagerRef,
+      queueRef,
+      setQuestionQueue,
+      lastSpeakerRef,
+      groupModeRef,
+      tourPipelineRef,
+    });
+    return runCoordinatorRef.current;
+  };
 
-  const continueTour = async () => getTourController().continue();
-
-  const prevTourStop = async () => getTourController().prevStop();
-
-  const nextTourStop = async () => getTourController().nextStop();
-
-  const jumpTourStop = async (idx) => getTourController().jumpTo(idx);
-
-  const resetTour = () => getTourController().reset();
+  const startTour = async () => getRunCoordinator().startTour();
+  const continueTour = async () => getRunCoordinator().continueTour();
+  const prevTourStop = async () => getRunCoordinator().prevTourStop();
+  const nextTourStop = async () => getRunCoordinator().nextTourStop();
+  const jumpTourStop = async (idx) => getRunCoordinator().jumpTourStop(idx);
+  const resetTour = () => getRunCoordinator().resetTour();
 
   useEffect(() => {
     if (!messagesEndRef.current) return;
@@ -967,8 +888,8 @@ function App() {
               serverEventsErr={serverEventsErr}
               serverLastError={serverLastError}
               questionQueue={questionQueue}
-              onAnswerQueuedNow={(item) => answerQueuedNow(item)}
-              onRemoveQueuedQuestion={(id) => removeQueuedQuestion(id)}
+              onAnswerQueuedNow={(item) => getRunCoordinator().answerQueuedNow(item)}
+              onRemoveQueuedQuestion={(id) => getRunCoordinator().removeQueuedQuestion(id)}
             />
           ) : null}
         </div>
@@ -981,7 +902,7 @@ function App() {
             <button
               type="button"
               className="home-action-btn home-action-danger"
-              onClick={() => interruptCurrentRun('user_stop')}
+              onClick={() => getRunCoordinator().interruptManual()}
               disabled={!!interruptDisabled}
             >
               打断

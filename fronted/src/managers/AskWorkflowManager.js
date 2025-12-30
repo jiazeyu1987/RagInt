@@ -1,4 +1,6 @@
 import { tourStateOnInterrupt, tourStateOnReady, tourStateOnTourAction, tourStateOnUserQuestion } from './TourStateMachine';
+import { RUN_REASON } from './RunReasons';
+import { classifyInterrupt } from './RunPolicies';
 
 export class AskWorkflowManager {
   constructor(deps) {
@@ -46,7 +48,8 @@ export class AskWorkflowManager {
       clientIdRef,
     } = this.deps;
     const emitClientEvent = typeof this.deps.emitClientEvent === 'function' ? this.deps.emitClientEvent : null;
-    const interruptReason = String(reason || 'interrupt');
+    const policy = classifyInterrupt(reason);
+    const interruptReason = policy.reason;
 
     // Invalidate any late enqueue across async callbacks (prefetch / playback fetch / SSE segment).
     try {
@@ -57,15 +60,13 @@ export class AskWorkflowManager {
 
     // Capture remaining tour TTS segments for a smoother "continue" after manual interrupt.
     try {
-      const r = String(reason || '');
-      const isManual = r === 'user_stop' || r === 'escape';
       const cur = tourStateRef && tourStateRef.current ? tourStateRef.current : null;
       const stopIndex =
         cur && Number.isFinite(cur.stopIndex) && Number(cur.stopIndex) >= 0 ? Number(cur.stopIndex) : null;
       const isPlaybackTour =
         !!(playTourRecordingEnabledRef && playTourRecordingEnabledRef.current && selectedTourRecordingIdRef && String(selectedTourRecordingIdRef.current || '').trim());
 
-      if (isManual && stopIndex != null && tourResumeRef && tourResumeRef.current && ttsManagerRef && ttsManagerRef.current) {
+      if (policy.captureResume && stopIndex != null && tourResumeRef && tourResumeRef.current && ttsManagerRef && ttsManagerRef.current) {
         const mgr = ttsManagerRef.current;
         if (isPlaybackTour && typeof mgr.capturePendingAudioByStopIndex === 'function') {
           const pending = mgr.capturePendingAudioByStopIndex(stopIndex);
@@ -85,15 +86,18 @@ export class AskWorkflowManager {
       // ignore
     }
 
-    // For manual pause, pause continuous tour pipeline (keep cache) to prevent any late prefetch from enqueueing new audio.
+    // Unified interrupt policy for continuous tour pipeline.
     try {
       const pipeline = tourPipelineRef && tourPipelineRef.current ? tourPipelineRef.current : null;
       if (pipeline) {
-        if (interruptReason === 'user_stop' || interruptReason === 'escape') {
-          if (typeof pipeline.pause === 'function') pipeline.pause('manual_pause');
-          else if (typeof pipeline.abortPrefetch === 'function') pipeline.abortPrefetch('manual_pause');
-        } else {
-          pipeline.interrupt('interrupt');
+        if (policy.kind === 'pause') {
+          if (typeof pipeline.pause === 'function') pipeline.pause(interruptReason || 'pause');
+          else if (typeof pipeline.abortPrefetch === 'function') pipeline.abortPrefetch(interruptReason || 'pause');
+          else if (typeof pipeline.interrupt === 'function') pipeline.interrupt(interruptReason || 'pause');
+        } else if (typeof pipeline.interrupt === 'function') {
+          pipeline.interrupt(interruptReason || 'interrupt');
+        } else if (typeof pipeline.abortPrefetch === 'function') {
+          pipeline.abortPrefetch(interruptReason || 'interrupt');
         }
       }
     } catch (_) {
@@ -201,6 +205,7 @@ export class AskWorkflowManager {
       getHistorySort,
       fetchHistory,
       maybeStartNextQueuedQuestion,
+      runCoordinatorRef,
       getTourStops,
       tourRecordingEnabledRef,
       playTourRecordingEnabledRef,
@@ -211,8 +216,6 @@ export class AskWorkflowManager {
 
     const options = opts && typeof opts === 'object' ? opts : {};
     const interruptMgr = interruptManagerRef && interruptManagerRef.current ? interruptManagerRef.current : null;
-    const epoch = interruptMgr ? interruptMgr.snapshot() : 0;
-    const allow = () => (interruptMgr ? interruptMgr.isCurrent(epoch) : true);
 
     // Interrupt any previous in-flight /api/ask stream.
     const hasActiveRun =
@@ -220,12 +223,18 @@ export class AskWorkflowManager {
       (typeof getIsLoading === 'function' ? !!getIsLoading() : false) ||
       !!(currentAudioRef && currentAudioRef.current) ||
       (ttsManagerRef && ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false);
-    if (hasActiveRun) this.interrupt('new_question');
+    if (hasActiveRun) this.interrupt(RUN_REASON.NEW_QUESTION);
     try {
       if (askAbortRef && askAbortRef.current) askAbortRef.current.abort();
     } catch (_) {
       // ignore
     }
+
+    // Snapshot epoch *after* we potentially bumped it via interrupt(new_question),
+    // so this ask run isn't immediately considered stale.
+    const epoch = interruptMgr ? interruptMgr.snapshot() : 0;
+    const allow = () => (interruptMgr ? interruptMgr.isCurrent(epoch) : true);
+    if (!allow()) return '';
 
     const runId = requestSeqRef ? ++requestSeqRef.current : Date.now();
     const requestId = `ask_${runId}_${Date.now()}`;
@@ -394,8 +403,10 @@ export class AskWorkflowManager {
 
         const recUrl = `${base}/api/recordings/${encodeURIComponent(playbackRecordingId)}/stop/${encodeURIComponent(String(stopIndex))}`;
         const recResp = await fetch(recUrl, { method: 'GET', signal: abortController.signal });
+        if (!allow()) return '';
         if (!recResp.ok) throw new Error(`recording_stop_http_${recResp.status}`);
         const recData = await recResp.json();
+        if (!allow()) return '';
 
         const chunks = Array.isArray(recData && recData.chunks) ? recData.chunks : [];
         const segments = Array.isArray(recData && recData.segments) ? recData.segments : [];
@@ -457,6 +468,7 @@ export class AskWorkflowManager {
           ttsMgr.ensureRunning();
           await ttsMgr.waitForIdle();
         }
+        if (!allow()) return '';
         if (allow()) {
           if (typeof setIsLoading === 'function') setIsLoading(false);
           if (typeof debugMark === 'function') debugMark('ttsAllDoneAt');
@@ -500,6 +512,7 @@ export class AskWorkflowManager {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let sseBuffer = '';
+      let sawDone = false;
 
       while (true) {
         if (!allow()) {
@@ -550,6 +563,7 @@ export class AskWorkflowManager {
             }
 
             if (data.done) {
+              sawDone = true;
               if (typeof debugMark === 'function') debugMark('ragflowDoneAt');
               if (ttsEnabledRef && ttsEnabledRef.current && receivedSegmentsRef && !receivedSegmentsRef.current && ttsMgr && !ttsMgr.hasAnySegment() && fullAnswer.trim()) {
                 if (!options.tourAction || allow()) {
@@ -596,6 +610,7 @@ export class AskWorkflowManager {
                 ttsMgr.ensureRunning();
                 await ttsMgr.waitForIdle();
               }
+              if (!allow()) return '';
               if (allow()) {
                 if (typeof setIsLoading === 'function') setIsLoading(false);
                 if (typeof debugMark === 'function') debugMark('ttsAllDoneAt');
@@ -628,6 +643,55 @@ export class AskWorkflowManager {
         }
       }
 
+      // Stream ended without explicit `done` event (e.g. client/server disconnect). Finalize to avoid UI getting stuck.
+      if (allow() && !sawDone) {
+        try {
+          if (ttsMgr) {
+            if (ttsEnabledRef && ttsEnabledRef.current) {
+              try {
+                if (receivedSegmentsRef && !receivedSegmentsRef.current && !ttsMgr.hasAnySegment() && fullAnswer.trim()) {
+                  ttsMgr.enqueueText(fullAnswer.trim(), {
+                    stopIndex: options.tourAction ? options.tourStopIndex : null,
+                    source: 'ask_eof',
+                  });
+                  receivedSegmentsRef.current = true;
+                }
+              } catch (_) {
+                // ignore
+              }
+
+              try {
+                ttsMgr.markRagDone();
+                ttsMgr.ensureRunning();
+                await ttsMgr.waitForIdle();
+              } catch (_) {
+                // ignore
+              }
+            } else {
+              try {
+                ttsMgr.markRagDone();
+              } catch (_) {
+                // ignore
+              }
+            }
+          }
+        } catch (_) {
+          // ignore
+        }
+        if (allow()) {
+          try {
+            if (typeof setIsLoading === 'function') setIsLoading(false);
+          } catch (_) {
+            // ignore
+          }
+          try {
+            if (typeof debugMark === 'function') debugMark('ttsAllDoneAt');
+          } catch (_) {
+            // ignore
+          }
+        }
+      }
+
       return fullAnswer;
     } catch (err) {
       if (abortController.signal.aborted || String(err && err.name) === 'AbortError') {
@@ -637,12 +701,24 @@ export class AskWorkflowManager {
       console.error('Error asking question:', err);
       if (allow() && typeof setIsLoading === 'function') setIsLoading(false);
     } finally {
+      const isActiveRun = !!(activeAskRequestIdRef && activeAskRequestIdRef.current === requestId);
+      const isAbortRun = !!(abortController && abortController.signal && abortController.signal.aborted);
+
       if (askAbortRef && askAbortRef.current === abortController) {
         askAbortRef.current = null;
       }
       if (activeAskRequestIdRef && activeAskRequestIdRef.current === requestId) {
         activeAskRequestIdRef.current = null;
       }
+
+      // Ensure UI doesn't get stuck in loading state if the stream is aborted/disconnected
+      // without a clean `done` event (common when an interrupt happens during long RAG latency).
+      try {
+        if (isActiveRun && isAbortRun && typeof setIsLoading === 'function') setIsLoading(false);
+      } catch (_) {
+        // ignore
+      }
+
       try {
         if (allow() && typeof setTourState === 'function') {
           const tail = String(fullAnswer || '').trim().slice(-80);
@@ -663,9 +739,19 @@ export class AskWorkflowManager {
       }
 
       try {
-        if (allow() && typeof maybeStartNextQueuedQuestion === 'function') {
+        if (!allow()) return;
+        const rc = runCoordinatorRef && runCoordinatorRef.current ? runCoordinatorRef.current : null;
+        const nextFn =
+          rc && typeof rc.maybeStartNextQueuedQuestion === 'function'
+            ? () => rc.maybeStartNextQueuedQuestion()
+            : maybeStartNextQueuedQuestion;
+        if (typeof nextFn === 'function') {
           setTimeout(() => {
-            maybeStartNextQueuedQuestion();
+            try {
+              nextFn();
+            } catch (_) {
+              // ignore
+            }
           }, 0);
         }
       } catch (_) {
