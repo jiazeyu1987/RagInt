@@ -16,6 +16,8 @@
   --radius: 14px;
   --brand: #07c160;
   --danger: #fa5151;
+  --accent-recording: #fa8c16;
+  --accent-playback: #1677ff;
 }
 
 html,
@@ -649,6 +651,16 @@ h1 {
 
 .text-input button:hover:not(:disabled) {
   filter: brightness(1.02);
+}
+
+.text-input .submit-btn-recording {
+  background: var(--accent-recording);
+  border-color: rgba(250, 140, 22, 0.45);
+}
+
+.text-input .submit-btn-playback {
+  background: var(--accent-playback);
+  border-color: rgba(22, 119, 255, 0.45);
 }
 
 .text-input .stop-btn {

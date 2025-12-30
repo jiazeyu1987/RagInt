@@ -912,6 +912,8 @@ function App() {
   const submitDisabled = !String(inputText || '').trim() || (useAgentMode && !selectedAgentId);
   const interruptDisabled =
     !isLoading && !((ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false) || currentAudioRef.current);
+  const sendMode = playTourRecordingEnabled ? 'playback' : tourRecordingEnabled ? 'recording' : 'normal';
+  const sendBtnClassName = `submit-btn submit-btn-${sendMode}`;
 
   return (
     <div className="app">
@@ -1008,7 +1010,7 @@ function App() {
               disabled={false}
             />
 
-            <button type="submit" disabled={submitDisabled} title="提交">
+            <button type="submit" className={sendBtnClassName} disabled={submitDisabled} title="提交">
               发送
             </button>
 
