@@ -63,6 +63,7 @@ export class AskWorkflowManager {
       const cur = tourStateRef && tourStateRef.current ? tourStateRef.current : null;
       const stopIndex =
         cur && Number.isFinite(cur.stopIndex) && Number(cur.stopIndex) >= 0 ? Number(cur.stopIndex) : null;
+      const isUserQuestion = !!(cur && String(cur.lastAction || '') === 'user_question');
       const isPlaybackTour =
         !!(playTourRecordingEnabledRef && playTourRecordingEnabledRef.current && selectedTourRecordingIdRef && String(selectedTourRecordingIdRef.current || '').trim());
 
@@ -71,13 +72,25 @@ export class AskWorkflowManager {
         if (isPlaybackTour && typeof mgr.capturePendingAudioByStopIndex === 'function') {
           const pending = mgr.capturePendingAudioByStopIndex(stopIndex);
           if (pending && pending.length) {
-            tourResumeRef.current[stopIndex] = { stopIndex, audioSegments: pending, capturedAtMs: Date.now() };
+            if (isUserQuestion) {
+              tourResumeRef.current._question = { kind: 'question', stopIndex, audioSegments: pending, capturedAtMs: Date.now() };
+              tourResumeRef.current._latestResumeKind = 'question';
+            } else {
+              tourResumeRef.current[stopIndex] = { kind: 'stop', stopIndex, audioSegments: pending, capturedAtMs: Date.now() };
+              tourResumeRef.current._latestResumeKind = 'stop';
+            }
             tourResumeRef.current._latestStopIndex = stopIndex;
           }
         } else if (typeof mgr.capturePendingTextByStopIndex === 'function') {
           const pending = mgr.capturePendingTextByStopIndex(stopIndex);
           if (pending && pending.length) {
-            tourResumeRef.current[stopIndex] = { stopIndex, segments: pending, capturedAtMs: Date.now() };
+            if (isUserQuestion) {
+              tourResumeRef.current._question = { kind: 'question', stopIndex, segments: pending, capturedAtMs: Date.now() };
+              tourResumeRef.current._latestResumeKind = 'question';
+            } else {
+              tourResumeRef.current[stopIndex] = { kind: 'stop', stopIndex, segments: pending, capturedAtMs: Date.now() };
+              tourResumeRef.current._latestResumeKind = 'stop';
+            }
             tourResumeRef.current._latestStopIndex = stopIndex;
           }
         }
@@ -282,6 +295,9 @@ export class AskWorkflowManager {
           if (tourResumeRef && tourResumeRef.current && Number.isFinite(stopIndex) && Number(stopIndex) >= 0) {
             delete tourResumeRef.current[Number(stopIndex)];
             if (Number(tourResumeRef.current._latestStopIndex) === Number(stopIndex)) delete tourResumeRef.current._latestStopIndex;
+            if (tourResumeRef.current._question && Number(tourResumeRef.current._question.stopIndex) === Number(stopIndex)) {
+              delete tourResumeRef.current._question;
+            }
           }
         } catch (_) {
           // ignore
@@ -393,6 +409,16 @@ export class AskWorkflowManager {
           // ignore
         }
       }
+
+      const playbackMode =
+        !!(playTourRecordingEnabledRef && playTourRecordingEnabledRef.current && selectedTourRecordingIdRef && String(selectedTourRecordingIdRef.current || '').trim());
+      const playbackStopIndex =
+        playbackMode && tourStateRef && tourStateRef.current && Number.isFinite(tourStateRef.current.stopIndex)
+          ? Number(tourStateRef.current.stopIndex)
+          : null;
+      const ttsStopIndexForAsk = options.tourAction
+        ? (Number.isFinite(options.tourStopIndex) ? Number(options.tourStopIndex) : null)
+        : playbackStopIndex;
 
       if (isPlaybackTour) {
         try {
@@ -552,7 +578,7 @@ export class AskWorkflowManager {
               const seg = String(data.segment).trim();
               if (seg && ttsEnabledRef && ttsEnabledRef.current && ttsMgr) {
                 if (!options.tourAction || allow()) {
-                  ttsMgr.enqueueText(seg, { stopIndex: options.tourAction ? options.tourStopIndex : null, source: 'ask' });
+                  ttsMgr.enqueueText(seg, { stopIndex: ttsStopIndexForAsk, source: 'ask' });
                 }
                 if (typeof debugMark === 'function') debugMark('ragflowFirstSegmentAt');
                 if (receivedSegmentsRef) receivedSegmentsRef.current = true;
@@ -567,7 +593,7 @@ export class AskWorkflowManager {
               if (typeof debugMark === 'function') debugMark('ragflowDoneAt');
               if (ttsEnabledRef && ttsEnabledRef.current && receivedSegmentsRef && !receivedSegmentsRef.current && ttsMgr && !ttsMgr.hasAnySegment() && fullAnswer.trim()) {
                 if (!options.tourAction || allow()) {
-                  ttsMgr.enqueueText(fullAnswer.trim(), { stopIndex: options.tourAction ? options.tourStopIndex : null, source: 'ask_done' });
+                  ttsMgr.enqueueText(fullAnswer.trim(), { stopIndex: ttsStopIndexForAsk, source: 'ask_done' });
                 }
                 // eslint-disable-next-line no-console
                 console.log(`📝 收到完整文本: "${fullAnswer.substring(0, 30)}..."`);
@@ -651,7 +677,7 @@ export class AskWorkflowManager {
               try {
                 if (receivedSegmentsRef && !receivedSegmentsRef.current && !ttsMgr.hasAnySegment() && fullAnswer.trim()) {
                   ttsMgr.enqueueText(fullAnswer.trim(), {
-                    stopIndex: options.tourAction ? options.tourStopIndex : null,
+                    stopIndex: ttsStopIndexForAsk,
                     source: 'ask_eof',
                   });
                   receivedSegmentsRef.current = true;

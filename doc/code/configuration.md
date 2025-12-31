@@ -1,82 +1,82 @@
-# Configuration Reference
+# 配置说明（`ragflow_demo/ragflow_config.json`）
 
-Primary config: `ragflow_demo/ragflow_config.json`
+后端通过 `backend/services/ragflow_service.py` 读取 `ragflow_demo/ragflow_config.json`，并在 `backend/app.py` 中通过 `load_app_config()` 获取运行时配置。
 
-## Top-level
+## 顶层字段
 
-- `api_key` / `base_url`: RAGFlow credentials/endpoint
-- `dataset_name`: dataset to attach to chat(s)
-- `default_conversation_name`: default chat for the frontend
+- `api_key` / `base_url`：RAGFlow 凭证与地址
+- `dataset_name`：用于创建/绑定 chat 的数据集名
+- `default_conversation_name`：前端默认选中的 chat 名
 
 ## `asr`
 
-- `asr.provider`: `funasr` (default), `faster_whisper`, `dashscope`
-- `asr.preprocess.trim_silence`: `true|false` (ffmpeg silenceremove)
-- `asr.preprocess.normalize`: `true|false` (ffmpeg loudnorm)
-- `asr.preprocess.loudnorm_filter`: optional override for loudnorm filter string
-- `asr.preprocess.silenceremove_filter`: optional override for silenceremove filter string
+- `asr.provider`：`funasr` / `faster_whisper` / `dashscope`
+- `asr.preprocess.trim_silence`：是否先做静音裁剪（`ffmpeg`）
+- `asr.preprocess.normalize`：是否做响度归一（`ffmpeg loudnorm`）
 
-### `asr.funasr`
+按 provider 分组的子配置：
+- `asr.funasr.*`
+- `asr.faster_whisper.*`
+- `asr.dashscope.*`（含 `api_key`、`model`、`kwargs`）
 
-- `asr.funasr.model`: FunASR model id/path
-- `asr.funasr.device`: `cpu` / `cuda` etc
-- `asr.funasr.disable_update`: boolean
-- `asr.funasr.kwargs`: dict passed to `AutoModel(...)`
+## `text_cleaning`（影响 `/api/ask` 的分段策略）
 
-### `asr.faster_whisper`
+常用字段：
+- `enabled`：是否启用清洗/分段
+- `tts_buffer_enabled`：是否启用面向 TTS 的分段缓冲（推荐开启）
+- `semantic_chunking`：是否偏“语义分段”（开启时对段落更友好）
+- `max_chunk_size`：分段缓冲窗口上限（字符数）
+- `start_tts_on_first_chunk`：是否在拿到首批 token 后尽快输出第一段 `segment`
+- `first_segment_min_chars`：第一段最小字符数
+- `segment_min_chars`：后续段最小字符数
+- `segment_flush_interval_s`：按时间强制 flush（避免长时间不出段）
 
-- `asr.faster_whisper.model`: Whisper model size or path (e.g. `large-v3`)
-- `asr.faster_whisper.device`: `cpu` / `cuda`
-- `asr.faster_whisper.compute_type`: e.g. `int8`, `float16`
-- `asr.faster_whisper.cpu_threads`: optional int
-- `asr.faster_whisper.language`: e.g. `zh`
-- `asr.faster_whisper.beam_size`: int
-- `asr.faster_whisper.vad_filter`: boolean
-- `asr.faster_whisper.initial_prompt`: optional string
+## `tour` / `tour_planner`（导览站点与规划）
 
-### `asr.dashscope`
+- `tour.stops`：站点列表（也会被 `/api/tour/stops` 返回）
 
-- `asr.dashscope.api_key`: DashScope ASR key (if used)
-- `asr.dashscope.model`: e.g. `paraformer-realtime-v2`
-- `asr.dashscope.kwargs`: passed to SDK
-
-## `text_cleaning`
-
-Used by `POST /api/ask` streaming segmentation.
-
-Key fields:
-- `enabled`: enable cleaner + segment buffer
-- `language`: `zh-CN` etc
-- `cleaning_level`: affects cleaner rules
-- `tts_buffer_enabled`: enable segmentation emission
-- `max_chunk_size`: segmentation buffer size
-- `start_tts_on_first_chunk`: emit early after first chunk
-- `first_segment_min_chars`: min chars for first TTS segment
-- `segment_flush_interval_s`: time-based forced emission
-- `segment_min_chars`: min chars for later segments
+`tour_planner` 用于 `/api/tour/meta` 与 `/api/tour/plan`：
+- `zones` / `profiles`：前端下拉选项
+- `default_zone` / `default_profile`
+- `routes`：`{ "<zone>": ["站点1", "站点2", ...] }`
+- `stop_durations_s`：三种形式均支持（见 `backend/services/tour_planner.py`）
+  - `{ "<zone>": [..] }`：按路线给一组时长
+  - `[ ... ]`：全局列表（与 stops 对齐）
+  - `{ "<stop name>": seconds }`：按站点名映射
+- `trim_by_duration`：是否按总时长裁剪站点（默认 false）
+- `chars_per_second`：用于把 stop 时长换算成“目标字数”（默认约 4.5 字/秒）
 
 ## `tts`
 
-- `tts.provider`: `bailian` or `local`
-- `tts.mimetype`: usually `audio/wav`
+### 基础
 
-### `tts.local`
+- `tts.provider`：默认 provider（前端可通过 query/header 覆盖）
+- `tts.mimetype`：后端响应的 `Content-Type`（前端默认按 `audio/wav` 处理）
 
-Local GPT-SoVITS HTTP (often disabled):
-- `enabled`: `false` to avoid hitting `127.0.0.1:9880`
-- `url`, `timeout_s`, `media_type`, etc.
+### provider 名称（前后端一致）
 
-### `tts.bailian`
+前端通过 `/api/text_to_speech_stream` 的 query 参数传入：
+- `tts_provider`：例如 `modelscope` / `flash` / `sapi` / `edge` / `sovtts1` / `sovtts2`（最终以 `backend/services/tts_service.py` 的实现为准）
+- `tts_voice`：覆盖音色（部分 provider 生效）
+- `tts_model`：覆盖模型（部分 provider 生效）
 
-DashScope/CosyVoice streaming:
-- `mode`: `dashscope` or `http`
-- `api_key`: DashScope key
-- `model`: `cosyvoice-v3-plus`
-- `voice`: voice id
-- `format`: `wav` (recommended for current frontend)
-- `sample_rate`: `16000` (matches frontend preferred sample rate)
-- `use_connection_pool`: `true|false`
-- `pool_max_size`: pool size
-- `queue_max_chunks`: buffering (backend)
-- `first_chunk_timeout_s`: cancel if first audio too slow
-- `pcm_probe_target_bytes`: probe bytes for noise detection
+对应的配置块通常包括：
+- `tts.bailian.*`：在线 cosyvoice/dashscope（流式）
+- `tts.edge.*`：Edge TTS
+- `tts.sapi.*`：Windows SAPI
+- `tts.sovtts1.*` / `tts.sovtts2.*` / `tts.local.*`：本地 SoVITS HTTP
+
+### 在线（bailian/modelscope/flash）常用字段
+
+`tts.bailian` 常见字段（具体由实现使用）：
+- `mode`：`dashscope` 或 `http`
+- `model` / `voice` / `format` / `sample_rate`
+- `use_connection_pool` / `pool_max_size`
+- `queue_max_chunks`：后端内部缓冲上限（过小易导致背压/丢包）
+- `first_chunk_timeout_s`
+- `pcm_probe_target_bytes`：白噪声探测采样窗口（字节）
+
+## 安全提示
+
+`ragflow_config.json` 会被后端直接读取；不要把生产环境密钥提交到仓库文件中，推荐用占位符并在部署侧注入真实值（当前代码默认仍以文件为准）。
+

@@ -1,42 +1,42 @@
-# Frontend Audio Playback (streaming)
+# 前端音频/播放链路（`fronted/`）
 
-Frontend entry: `fronted/src/App.js`
+前端核心目标：把 `/api/ask` 的 SSE（文本增量 + TTS 分段）转成一串 `/api/text_to_speech_stream` 的音频流，并稳定顺序播放。
 
-## High-level flow
+## 关键文件
 
-1) UI sends `POST /api/ask` and consumes SSE (`chunk` for text, `segment` for TTS units).
-2) For each `segment`, frontend calls backend TTS streaming endpoint:
-   - `GET /api/text_to_speech_stream?text=...&request_id=...&segment_index=...`
-3) Audio playback attempts:
-   1. **WebAudio streaming**: `playWavStreamViaWebAudio(...)`
-   2. Fallback to `decodeAudioData`
-   3. Fallback to `<audio>` element
+- Ask SSE：`fronted/src/managers/AskWorkflowManager.js`
+- TTS 队列：`fronted/src/managers/TtsQueueManager.js`
+- 音频播放/解码：`fronted/src/audio/ttsAudio.js`
+- 后端请求封装：`fronted/src/api/backendClient.js`（含 `cancelRequest`、`emitClientEvent`）
 
-## WebAudio streaming details
+## 高层流程
 
-Function: `playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, ...)`
+1) 发送问答：前端 `POST /api/ask`（body 带 `request_id`、`client_id`、可选 `guide`、`agent_id`、`conversation_name`）
+2) 解析 SSE：逐行读取 `data: {...}` 的 JSON
+   - `chunk`：拼接到 `fullAnswer` 并刷新 UI
+   - `segment`：交给 `TtsQueueManager.enqueueText(seg, { stopIndex, source: 'ask' })`
+   - `done=true`：标记 ragDone，并等待队列自然播放完（或触发预取下一站）
+3) 生成 TTS URL：`TtsQueueManager._buildSegmentUrl(...)` 会构造：
+   - `GET /api/text_to_speech_stream?text=...&request_id=...&client_id=...&tts_provider=...&tts_voice=...&segment_index=...`
+   - 若启用导览录制，还会追加 `recording_id`、`stop_index`
+4) 播放策略：队列顺序播放（避免并发叠音），并在结束时上报 `play_end`（`POST /api/client_events`）
 
-Key assumptions:
-- Backend response is **WAV (RIFF/WAVE)** with PCM16 (`audioFormatCode=1`, `bitsPerSample=16`).
-- After parsing WAV header, the remaining bytes are treated as PCM16 interleaved and fed into a `ScriptProcessorNode`.
+## WebAudio 流式播放要点（白噪声风险点）
 
-White-noise guard:
-- `enqueuePcmChunk(...)` probes the first ~0.25s audio and computes:
-  - RMS and ZCR (zero-crossing rate)
-  - If `avgZcr > 0.35 && avgRms > 0.05`, it throws:
-    - `PCM sanity check failed (white-noise suspected) ...`
+主路径：`playWavStreamViaWebAudio(url, ...)`（`fronted/src/audio/ttsAudio.js`）
 
-## Repeated WAV headers mid-stream
+假设/约束：
+- 后端返回 `audio/wav`，WAV header 解析后，后续按 PCM16（通常 16kHz/mono）投喂 WebAudio
 
-Some providers may send each websocket frame as a standalone WAV (repeating `RIFF....WAVE`).
-If the frontend treats those header bytes as PCM, playback becomes white noise.
+白噪声常见原因：
+- 流中途重复出现 `RIFF....WAVE` header（把 header 当作 PCM 播放会变白噪声）
+- 字节丢失/截断导致 PCM 对齐/容器尺寸错误
 
-Mitigation implemented:
-- If a chunk begins with `RIFF` + `WAVE` mid-stream, the parser is reset:
-  - logs: `[TTS] Detected embedded WAV header mid-stream; resetting parser`
-  - resets `wavInfo/headerBuffer/sanity`
+已做的防护（见 `fronted/src/audio/ttsAudio.js`）：
+- 检测到 chunk 以 `RIFF`/`WAVE` 开头且处于 mid-stream 时，重置 WAV 解析状态（避免把 header 当 PCM）
+- 对前若干字节做 PCM sanity（RMS + ZCR）探测，疑似白噪声会触发回退路径
 
-## Interruption
-
-Frontend has an “interrupt previous ask” pattern (see `askAbortRef` and `runIdRef`) to stop older streams when a new question is submitted.
+回退路径：
+1) `decodeAudioData`（一次性拉完整个 wav，必要时 patch RIFF/data size）
+2) `<audio>` 标签播放
 

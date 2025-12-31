@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import re
 import time
 from dataclasses import dataclass
 
@@ -119,6 +120,33 @@ class ConversationOrchestrator:
         ragflow_config = ragflow_config or {}
         text_cleaning = ragflow_config.get("text_cleaning", {}) or {}
 
+        qa_cfg = ragflow_config.get("qa_constraints", {}) if isinstance(ragflow_config, dict) else {}
+        if not isinstance(qa_cfg, dict):
+            qa_cfg = {}
+        qa_constraints_enabled = bool(qa_cfg.get("enabled", True))
+        qa_no_self_intro = bool(qa_cfg.get("no_self_intro", True))
+        try:
+            qa_max_answer_chars = int(qa_cfg.get("max_answer_chars") or 150)
+        except Exception:
+            qa_max_answer_chars = 150
+        qa_max_answer_chars = max(0, qa_max_answer_chars)
+        apply_qa_constraints = qa_constraints_enabled and (not bool(guide.get("enabled", False)))
+
+        def _trim_answer(s: str) -> str:
+            if not apply_qa_constraints or qa_max_answer_chars <= 0:
+                return str(s or "")
+            s = str(s or "")
+            return s[:qa_max_answer_chars]
+
+        if apply_qa_constraints:
+            req_lines = []
+            if qa_no_self_intro:
+                req_lines.append("- \u76f4\u63a5\u56de\u7b54\u95ee\u9898\uff0c\u4e0d\u8981\u81ea\u6211\u4ecb\u7ecd\uff08\u4e0d\u8981\u51fa\u73b0\u201c\u6211\u662f...\u201d\u201c\u6211\u53eb...\u201d\u7b49\uff09\u3002")
+            if qa_max_answer_chars > 0:
+                req_lines.append(f"- \u603b\u5b57\u6570\u4e0d\u8d85\u8fc7{qa_max_answer_chars}\u5b57\u3002")
+            if req_lines:
+                question_for_rag = f"{question_for_rag}\n\n\u3010\u56de\u7b54\u8981\u6c42\u3011\n" + "\n".join(req_lines) + "\n"
+
         enable_cleaning = bool(text_cleaning.get("enabled", False))
         cleaning_level = text_cleaning.get("cleaning_level", "standard")
         language = text_cleaning.get("language", "zh-CN")
@@ -162,6 +190,7 @@ class ConversationOrchestrator:
             else:
                 fast_answer = "你好！我在～你可以直接问我展厅/产品相关问题，或说“开始讲解”。"
 
+            fast_answer = _trim_answer(fast_answer)
             yield {"chunk": fast_answer, "done": False}
             yield {"chunk": "", "done": True}
             if inp.save_history:
@@ -183,9 +212,9 @@ class ConversationOrchestrator:
         if (not agent_id) and (not rag_session):
             self._logger.warning("RAGFlow不可用，使用固定回答")
             fallback_answer = f"我收到了你的问题：{question}。由于RAGFlow服务暂时不可用，我现在只能给你一个固定的回答。请确保RAGFlow服务正在运行。"
-            last_complete_content = fallback_answer
+            last_complete_content = _trim_answer(fallback_answer)
 
-            for char in fallback_answer:
+            for char in last_complete_content:
                 if cancel_event.is_set():
                     self._logger.info(f"[{request_id}] ask_cancelled_during_fallback client_id={client_id}")
                     return
@@ -227,6 +256,7 @@ class ConversationOrchestrator:
         t_ragflow_request = time.perf_counter()
         response = None
         last_complete_content = ""
+        last_ragflow_content = ""
         try:
             if agent_id:
                 self._logger.info(f"[{request_id}] 开始RAGFlow Agent流式响应 agent_id={agent_id}")
@@ -255,6 +285,8 @@ class ConversationOrchestrator:
             first_ragflow_text_at = None
             first_segment_at = None
             carry_segment_text = ""
+            intro_buf = ""
+            intro_checked = not (apply_qa_constraints and qa_no_self_intro)
 
             for chunk in response:
                 if cancel_event.is_set():
@@ -273,7 +305,7 @@ class ConversationOrchestrator:
                 content = None
                 if agent_id:
                     if isinstance(chunk, str):
-                        content = last_complete_content + chunk
+                        content = last_ragflow_content + chunk
                     else:
                         content = str(chunk) if chunk is not None else ""
                 elif chunk and hasattr(chunk, "content"):
@@ -296,12 +328,42 @@ class ConversationOrchestrator:
 
                 # incremental part
                 new_part = ""
-                if content.startswith(last_complete_content):
-                    new_part = content[len(last_complete_content) :]
+                if content.startswith(last_ragflow_content):
+                    new_part = content[len(last_ragflow_content) :]
                 else:
                     new_part = content
+                last_ragflow_content = content
 
                 if new_part:
+                    if apply_qa_constraints and qa_no_self_intro and not intro_checked:
+                        intro_buf += new_part
+                        should_flush = len(intro_buf) >= 30 or any(
+                            ch in intro_buf for ch in ("\n", "\u3002", "\uff01", "!", "\uff1f", "?", ".", "\uff0c", ",", "\uff1a", ":")
+                        )
+                        if not should_flush:
+                            continue
+                        new_part = re.sub(
+                            r"^\\s*(\\u4f60\\u597d[!！,，。\\s]*)?(\\u6211\\u662f|\\u6211\\u53eb|\\u8fd9\\u91cc\\u662f)\\S{0,20}?(?:\\u52a9\\u624b|\\u673a\\u5668\\u4eba|AI|\\u667a\\u80fd\\u52a9\\u624b)?[,:：，。\\s]*",
+                            "",
+                            intro_buf,
+                        )
+                        new_part = re.sub(
+                            r"^\s*(\u4f60\u597d[!\uff01,\uff0c\u3002\s]*)?(\u6211\u662f|\u6211\u53eb|\u8fd9\u91cc\u662f)\S{0,20}?(?:\u52a9\u624b|\u673a\u5668\u4eba|AI|\u667a\u80fd\u52a9\u624b)?[,: \uff1a\uff0c\u3002\s]*",
+                            "",
+                            intro_buf,
+                        )
+                        intro_checked = True
+                        intro_buf = ""
+                        if not new_part:
+                            continue
+                    if apply_qa_constraints and qa_max_answer_chars > 0:
+                        remaining = qa_max_answer_chars - len(last_complete_content)
+                        if remaining <= 0:
+                            with contextlib.suppress(Exception):
+                                getattr(response, "close")()
+                            break
+                        if len(new_part) > remaining:
+                            new_part = new_part[:remaining]
                     yield {"chunk": new_part, "done": False}
 
                     if text_cleaner and tts_buffer:
@@ -351,7 +413,12 @@ class ConversationOrchestrator:
                                     self._timings_set(request_id, t_first_tts_segment=first_segment_at)
                                 yield {"segment": seg, "done": False, "segment_seq": segment_seq}
 
-                last_complete_content = content
+                if new_part:
+                    last_complete_content += new_part
+                    if apply_qa_constraints and qa_max_answer_chars > 0 and len(last_complete_content) >= qa_max_answer_chars:
+                        with contextlib.suppress(Exception):
+                            getattr(response, "close")()
+                        break
 
             self._logger.info(
                 f"[{request_id}] 流式响应结束 total_dt={time.perf_counter() - t_submit:.3f}s total_chunks={chunk_count}"
@@ -403,4 +470,3 @@ class ConversationOrchestrator:
                 yield {"chunk": msg, "done": True}
             else:
                 yield {"chunk": f"错误: {str(e)}", "done": True}
-

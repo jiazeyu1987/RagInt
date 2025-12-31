@@ -201,7 +201,7 @@ export class TourController {
   }
 
   async _resumeFromInterrupt({ stopIndex, action, allow }) {
-    const { tourResumeRef, getTtsManager, setTourState, getTourStopName } = this.deps;
+    const { tourResumeRef, getTtsManager, setTourState, getTourStopName, getTourPipeline, setAnswer } = this.deps;
     if (!tourResumeRef || !tourResumeRef.current) return false;
     const saved = tourResumeRef.current[stopIndex];
     if (typeof getTtsManager !== 'function') return false;
@@ -221,6 +221,17 @@ export class TourController {
     const hasAudioSegments = saved && Array.isArray(saved.audioSegments) && saved.audioSegments.length;
     const hasTextSegments = saved && Array.isArray(saved.segments) && saved.segments.length;
     if (!hasAudioSegments && !hasTextSegments) return false;
+
+    // If we are resuming a tour stop, restore cached stop text so audio/text stay aligned.
+    try {
+      if (saved && saved.kind === 'stop' && typeof getTourPipeline === 'function' && typeof setAnswer === 'function') {
+        const pipeline = getTourPipeline();
+        const cached = pipeline && typeof pipeline.getPrefetch === 'function' ? pipeline.getPrefetch(stopIndex) : null;
+        if (cached && cached.answerText) setAnswer(String(cached.answerText || ''));
+      }
+    } catch (_) {
+      // ignore
+    }
 
     const stopName = typeof getTourStopName === 'function' ? getTourStopName(Number(stopIndex)) : '';
     try {
@@ -291,6 +302,64 @@ export class TourController {
     return true;
   }
 
+  async _resumeQuestionFromInterrupt({ allow }) {
+    const { tourResumeRef, getTtsManager } = this.deps;
+    if (!tourResumeRef || !tourResumeRef.current) return { resumed: false, stopIndex: null };
+    const saved = tourResumeRef.current._question;
+    if (!saved) return { resumed: false, stopIndex: null };
+
+    const stopIndex = Number.isFinite(saved && saved.stopIndex) ? Number(saved.stopIndex) : null;
+
+    // Consume to avoid replay loops.
+    try {
+      delete tourResumeRef.current._question;
+      if (tourResumeRef.current._latestResumeKind === 'question') tourResumeRef.current._latestResumeKind = 'stop';
+      if (Number.isFinite(stopIndex)) tourResumeRef.current._latestStopIndex = stopIndex;
+    } catch (_) {
+      // ignore
+    }
+
+    if (typeof getTtsManager !== 'function') return { resumed: false, stopIndex };
+    if (typeof allow === 'function' && !allow()) return { resumed: true, stopIndex };
+    const ttsMgr = getTtsManager();
+    if (!ttsMgr) return { resumed: false, stopIndex };
+
+    const hasAudioSegments = saved && Array.isArray(saved.audioSegments) && saved.audioSegments.length;
+    const hasTextSegments = saved && Array.isArray(saved.segments) && saved.segments.length;
+    if (!hasAudioSegments && !hasTextSegments) return { resumed: false, stopIndex };
+
+    const requestId = `tts_resume_question_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    try {
+      if (typeof ttsMgr.resetForRun === 'function') ttsMgr.resetForRun({ requestId });
+    } catch (_) {
+      // ignore
+    }
+
+    try {
+      if (hasAudioSegments && typeof ttsMgr.enqueueAudioUrl === 'function') {
+        for (const s of saved.audioSegments) {
+          if (typeof allow === 'function' && !allow()) return { resumed: true, stopIndex };
+          const url = s && s.audio_url ? String(s.audio_url || '').trim() : '';
+          if (!url) continue;
+          const text = s && s.text ? String(s.text || '') : '';
+          ttsMgr.enqueueAudioUrl(url, { stopIndex: Number.isFinite(stopIndex) ? Number(stopIndex) : null, text });
+        }
+      } else if (hasTextSegments) {
+        for (const s of saved.segments) {
+          if (typeof allow === 'function' && !allow()) return { resumed: true, stopIndex };
+          if (typeof ttsMgr.enqueueText === 'function') ttsMgr.enqueueText(s, { stopIndex: Number.isFinite(stopIndex) ? Number(stopIndex) : null });
+        }
+      }
+      if (typeof ttsMgr.markRagDone === 'function') ttsMgr.markRagDone();
+      if (typeof ttsMgr.ensureRunning === 'function') ttsMgr.ensureRunning();
+      if (typeof ttsMgr.waitForIdle === 'function') await ttsMgr.waitForIdle();
+    } catch (_) {
+      // ignore
+    }
+
+    return { resumed: true, stopIndex };
+  }
+
   async continue() {
     const { continuousTourRef, tourStateRef, buildTourPrompt, beginDebugRun, askQuestion, getTourStops, tourResumeRef } = this.deps;
     this._ensurePreferredAudioContext();
@@ -309,8 +378,12 @@ export class TourController {
 
     // If user interrupted mid-playback, resume remaining segments first to avoid abrupt re-generation.
     try {
+      const qRes = await this._resumeQuestionFromInterrupt({ allow });
+      if (!allow()) return;
+      if (qRes && qRes.resumed && Number.isFinite(qRes.stopIndex) && qRes.stopIndex >= 0) stopIndex = qRes.stopIndex;
+
       const resumed = await this._resumeFromInterrupt({ stopIndex, action: 'continue', allow });
-      if (resumed) {
+      if (qRes.resumed || resumed) {
         if (!allow()) return;
         if (continuousTourRef && continuousTourRef.current) {
           // If prefetch worked, stopIndex will advance naturally as next-stop audio begins playing.
@@ -318,7 +391,8 @@ export class TourController {
           const after = tourStateRef && tourStateRef.current ? tourStateRef.current : null;
           const afterIndex =
             after && Number.isFinite(after.stopIndex) && Number(after.stopIndex) >= 0 ? Number(after.stopIndex) : stopIndex;
-          if (afterIndex === stopIndex) {
+          // Only auto-advance when we actually resumed tour-stop content; a question resume should NOT skip the stop.
+          if (resumed && afterIndex === stopIndex) {
             const stops = typeof getTourStops === 'function' ? getTourStops() : [];
             const n = Array.isArray(stops) ? stops.length : 0;
             const nextIndex = stopIndex + 1;

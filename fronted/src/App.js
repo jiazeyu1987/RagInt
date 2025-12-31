@@ -795,6 +795,7 @@ function App() {
       interruptCurrentRun,
       setTourState,
       getTourStopName,
+      setAnswer,
     });
     return tourControllerRef.current;
   };

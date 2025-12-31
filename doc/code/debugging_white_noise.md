@@ -1,51 +1,58 @@
-# Debugging “White Noise” (end-to-end)
+# 白噪声排查清单（端到端）
 
-This project can produce “white noise” during TTS playback due to **byte-stream corruption** or **format mismatches** between backend output and frontend decoding assumptions.
+这里的“白噪声”通常不是“模型说话难听”，而是字节流被当成了错误的 PCM 播放（或音频流被截断/错序）。
 
-## What “white noise” usually means here
+## 先确定 request_id 与 segment
 
-1) Frontend decoded non-audio bytes as PCM (e.g., WAV header bytes treated as PCM).
-2) Audio bytes were dropped/truncated in the backend stream (WAV corruption).
-3) Connection pool reused a “bad” websocket/synthesizer and contaminated later requests.
+前端会把同一个 `request_id` 贯穿：
+- `/api/ask`（SSE）
+- `/api/text_to_speech_stream`（TTS）
 
-## Fast checklist
+因此排查第一步：从浏览器控制台或 Network 拿到：
+- `request_id`（形如 `ask_xxx`）
+- 某段 TTS 的 `segment_index`
 
-### 1) Capture the request id and segment
+## 用后端观测接口回放时间线
 
-From frontend console:
-- Look for `[TTS] ...` logs and the `request_id` used when calling `/api/text_to_speech_stream`.
+### 1) 拉事件：`GET /api/events?request_id=...`
 
-### 2) Backend logs to grep
+重点关注：
+- `ask_*`：是否正常开始/结束、有无 `ask_stream_failed`
+- `tts_*`：是否出现 `tts_stream_failed`、`tts_cancelled_*`
+- `pcm_probe_suspect_white_noise`、`wav_probe_failed` 等（来自 `backend/services/tts_service.py`）
 
-Search backend console/log for the same `request_id`:
-- `dashscope_tts_first_chunk ... riff=...`
-- `wav_probe ...` / `wav_probe_failed`
-- `pcm_probe_suspect_white_noise ...`
-- `dashscope_tts_backpressure_wait ...`
-- `dashscope_tts_pool_skip_return ...`
+也可以用 `format=ndjson` 便于命令行 grep。
 
-If you see `riff=False`, `wav_probe_failed`, or `pcm_probe_suspect_white_noise`, the provider stream is likely malformed or not “single WAV header + PCM body”.
+### 2) 拉汇总状态：`GET /api/status?request_id=...`
 
-### 3) Frontend logs to grep
+关注字段：
+- `derived_ms.submit_to_tts_first_audio_ms`：首包音频是否异常慢
+- `tts_state`：是否出现 out-of-order/duplicate/gap（说明 segment_index 顺序异常）
+- `last_error`：最后一条 error 事件
 
-In `fronted/src/App.js`:
-- `PCM sanity check failed (white-noise suspected): ...`
-- `[TTS] Detected embedded WAV header mid-stream; resetting parser`
+## 前端侧确认是否“把 WAV header 当 PCM”
 
-If you see the “embedded WAV header” log, the provider is likely sending repeated RIFF headers.
+白噪声最常见的形态之一：TTS 流中间重复出现 WAV header（`RIFF....WAVE`）。
 
-## Current mitigations implemented
+检查点：
+- 前端播放代码：`fronted/src/audio/ttsAudio.js`
+  - 看到“embedded WAV header mid-stream”相关日志/分支时，说明后端/上游 provider 可能在每帧都带了 header
 
-Backend (`backend/services/tts_service.py`):
-- Avoids dropping audio bytes when queue is full.
-- If a stream looks suspicious or experienced backpressure, it closes the synthesizer instead of returning it to the pool.
+应对策略（当前实现已做 best-effort）：
+- 检测到 header 立即重置解析状态，避免把 header 当 PCM
+- 若仍频繁触发，优先从后端侧改为“只发 PCM”（或改为标准 WAV 单 header + PCM body）
 
-Frontend (`fronted/src/App.js`):
-- Detects RIFF/WAVE header appearing mid-stream and resets parsing state to avoid treating it as PCM.
+## 后端侧确认是否发生了“丢包/背压/复用污染”
 
-## Next steps if noise still happens
+TTS 后端关键点：`backend/services/tts_service.py`
 
-1) Prefer outputting **PCM-only** from backend (no WAV container) and switch frontend to PCM streaming.
-2) Disable connection pool temporarily (`tts.bailian.use_connection_pool=false`) to confirm whether contamination is pool-related.
-3) Dump and compare raw bytes for a failing stream vs a good stream (both backend-side and frontend received bytes).
+现有硬化点（与排查相关）：
+- 背压时尽量不丢字节（丢字节很容易导致 WAV/PCM 损坏）
+- 若检测到可疑流（WAV probe 异常、PCM probe 疑似白噪声、或发生背压等待），连接池对象不回收，避免污染后续请求
+
+## 最小复现建议
+
+1) 固定同一段文本（短句），重复调用 `/api/text_to_speech_stream`，观察是否“偶现”
+2) 关闭/开启连接池（配置 `tts.bailian.use_connection_pool`）对比是否与复用相关
+3) 抓取一条异常请求的原始字节（后端或浏览器），确认是否存在重复 header 或明显截断
 
