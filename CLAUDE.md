@@ -134,8 +134,8 @@ python api_v2.py
 
 2. **Terminal 2 - Start Backend:**
    ```bash
-   cd backend
-   python app.py
+   # From repo root (backend is now a package / app factory)
+   python -m backend.app
    # Runs on http://localhost:8000
    ```
 

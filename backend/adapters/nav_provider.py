@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import requests
 
-from services.config_utils import get_nested
+from backend.services.config_utils import get_nested
 
 
 @dataclass(frozen=True)

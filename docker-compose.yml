@@ -1,0 +1,37 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      RAGINT_HOST: 0.0.0.0
+      RAGINT_PORT: 8000
+      RAGINT_DEBUG: "0"
+      RAGINT_STATE_BACKEND: redis
+      RAGINT_REDIS_URL: redis://redis:6379/0
+      RAGINT_CORS_ORIGINS: http://localhost:3000
+      RAGINT_CONFIG_PATH: /app/ragflow_demo/ragflow_config.json
+      # Provide secrets via env in deployment (examples):
+      # RAGFLOW_API_KEY: ...
+      # RAGFLOW_BASE_URL: ...
+      # BAILIAN_API_KEY: ...
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+
+  fronted:
+    build:
+      context: .
+      dockerfile: fronted/Dockerfile
+      args:
+        REACT_APP_BACKEND_URL: http://localhost:8000
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend

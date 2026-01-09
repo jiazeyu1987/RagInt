@@ -1,8 +1,8 @@
 // Backend API client helpers (fetch wrappers).
 
-const BASE = 'http://localhost:8000';
+import { backendUrl as configBackendUrl } from '../config/backend';
 
-export const backendUrl = (path) => `${BASE}${path.startsWith('/') ? path : `/${path}`}`;
+export const backendUrl = configBackendUrl;
 
 export async function fetchJson(path, { method = 'GET', headers = {}, body, signal } = {}) {
   const resp = await fetch(backendUrl(path), {

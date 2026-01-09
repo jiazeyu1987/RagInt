@@ -5,8 +5,8 @@ import time
 from dataclasses import dataclass
 
 from .config_utils import get_nested
-from infra.cancellation import CancellationRegistry
-from infra.event_store import EventStore
+from backend.infra.cancellation import CancellationRegistry
+from backend.infra.event_store import EventStore
 from adapters.nav_provider import build_nav_provider
 
 

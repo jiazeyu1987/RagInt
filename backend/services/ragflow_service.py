@@ -8,6 +8,8 @@ from pathlib import Path
 import requests
 from ragflow_sdk import RAGFlow
 
+from backend.services.env_overrides import apply_env_overrides
+
 
 def _ragflow_chat_to_dict(chat):
     if chat is None:
@@ -62,7 +64,9 @@ class RagflowService:
     def __init__(self, config_path: Path, logger: logging.Logger | None = None):
         self._logger = logger or logging.getLogger(__name__)
         self._config_path = config_path
+        self._cfg_lock = threading.Lock()
         self._last_loaded_cfg: dict | None = None
+        self._last_loaded_mtime_ns: int | None = None
 
         self.client = None
         self.default_chat_name = None
@@ -71,13 +75,36 @@ class RagflowService:
         self._sessions = {}
         self._lock = threading.Lock()
 
-    def load_config(self) -> dict:
-        if self._config_path.exists():
-            with open(self._config_path, "r", encoding="utf-8") as f:
-                self._last_loaded_cfg = json.load(f)
+    def load_config(self, *, force: bool = False) -> dict:
+        """
+        Load JSON config from disk with a best-effort mtime cache.
+
+        - Keeps hot-reload behavior for local edits.
+        - Avoids per-request file I/O in production steady-state.
+        """
+        try:
+            st = self._config_path.stat()
+            mtime_ns = int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9)))
+        except Exception:
+            mtime_ns = None
+
+        with self._cfg_lock:
+            if not force and self._last_loaded_cfg is not None and mtime_ns is not None and mtime_ns == self._last_loaded_mtime_ns:
                 return self._last_loaded_cfg
-        self._last_loaded_cfg = {}
-        return self._last_loaded_cfg
+
+            if not self._config_path.exists():
+                self._last_loaded_cfg = {}
+                self._last_loaded_mtime_ns = mtime_ns
+                return self._last_loaded_cfg
+
+            with open(self._config_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+                self._last_loaded_cfg = apply_env_overrides(raw) if isinstance(raw, dict) else {}
+                self._last_loaded_mtime_ns = mtime_ns
+                return self._last_loaded_cfg
+
+    def reload_config(self) -> dict:
+        return self.load_config(force=True)
 
     def init(self) -> bool:
         cfg = self.load_config()

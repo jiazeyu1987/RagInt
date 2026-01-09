@@ -5,6 +5,8 @@ import re
 import time
 from dataclasses import dataclass
 
+from backend.orchestrators.guide_prompt import apply_guide_prompt
+
 
 @dataclass(frozen=True)
 class AskInput:
@@ -50,6 +52,8 @@ class ConversationOrchestrator:
         guide = inp.guide if isinstance(inp.guide, dict) else {}
 
         def _apply_guide_prompt(raw_question: str) -> str:
+            return apply_guide_prompt(raw_question=raw_question, guide=guide)
+            """
             if not guide.get("enabled", False):
                 return raw_question
             style = str(guide.get("style") or "friendly").strip().lower()
@@ -93,6 +97,7 @@ class ConversationOrchestrator:
                 "- 约束：不要编造；如果知识库/上下文没有依据，请明确说明不确定，并建议咨询现场工作人员。\n"
             )
             return f"{raw_question}\n\n{guide_text}"
+            """
 
         if cancel_event.is_set():
             self._logger.info(f"[{request_id}] ask_cancelled_before_start client_id={client_id}")
@@ -115,7 +120,7 @@ class ConversationOrchestrator:
             "done": False,
         }
 
-        question_for_rag = _apply_guide_prompt(question)
+        question_for_rag = apply_guide_prompt(raw_question=question, guide=guide)
 
         ragflow_config = ragflow_config or {}
         text_cleaning = ragflow_config.get("text_cleaning", {}) or {}
@@ -165,8 +170,8 @@ class ConversationOrchestrator:
 
         if enable_cleaning:
             try:
-                from text_cleaner import TTSTextCleaner
-                from tts_buffer import TTSBuffer
+                from ragflow_demo.text_cleaner import TTSTextCleaner
+                from ragflow_demo.tts_buffer import TTSBuffer
 
                 text_cleaner = TTSTextCleaner(language=language, cleaning_level=cleaning_level)
                 tts_buffer = TTSBuffer(max_chunk_size=max_chunk_size, language=language) if tts_buffer_enabled else None

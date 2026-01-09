@@ -11,6 +11,8 @@ from typing import Iterable, Iterator
 import requests
 from requests.exceptions import ChunkedEncodingError, RequestException
 
+from backend.services.env_overrides import apply_env_overrides
+
 
 class RagflowAgentService:
     def __init__(self, config_path: Path, logger: logging.Logger | None = None):
@@ -18,12 +20,34 @@ class RagflowAgentService:
         self._config_path = config_path
         self._lock = threading.Lock()
         self._agent_sessions: dict[str, str] = {}
+        self._cfg_lock = threading.Lock()
+        self._last_loaded_cfg: dict | None = None
+        self._last_loaded_mtime_ns: int | None = None
 
-    def load_config(self) -> dict:
-        if self._config_path.exists():
+    def load_config(self, *, force: bool = False) -> dict:
+        try:
+            st = self._config_path.stat()
+            mtime_ns = int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9)))
+        except Exception:
+            mtime_ns = None
+
+        with self._cfg_lock:
+            if not force and self._last_loaded_cfg is not None and mtime_ns is not None and mtime_ns == self._last_loaded_mtime_ns:
+                return self._last_loaded_cfg
+
+            if not self._config_path.exists():
+                self._last_loaded_cfg = {}
+                self._last_loaded_mtime_ns = mtime_ns
+                return self._last_loaded_cfg
+
             with open(self._config_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        return {}
+                raw = json.load(f)
+                self._last_loaded_cfg = apply_env_overrides(raw) if isinstance(raw, dict) else {}
+                self._last_loaded_mtime_ns = mtime_ns
+                return self._last_loaded_cfg
+
+    def reload_config(self) -> dict:
+        return self.load_config(force=True)
 
     def _auth_headers(self) -> tuple[str, dict]:
         cfg = self.load_config() or {}

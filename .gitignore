@@ -97,6 +97,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
 .venv
 env/
 venv/
@@ -174,4 +175,9 @@ resource/
 /tts_demo
 /.claude
 /backend/data/qa_history.db
+/backend/data/*.db
+/backend/data/recordings/*
+!/backend/data/recordings/.gitkeep
+/backend/data/recordings/*.db
 /fronted/node_modules
+/fronted/node_modules/

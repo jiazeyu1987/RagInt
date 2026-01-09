@@ -17,13 +17,17 @@ import { ChatPanel } from './components/ChatPanel';
 import { SettingsDrawer } from './components/SettingsDrawer';
 import { useBackendStatus } from './hooks/useBackendStatus';
 import { useBackendEvents } from './hooks/useBackendEvents';
-import { useLocalStorageState } from './hooks/useLocalStorageState';
+import { useAppSettings } from './hooks/useAppSettings';
+import { useClientId } from './hooks/useClientId';
 import { useTourBootstrap } from './hooks/useTourBootstrap';
 import { useRagflowBootstrap } from './hooks/useRagflowBootstrap';
 import { useTourState } from './hooks/useTourState';
 import { useTourPipelineManager } from './hooks/useTourPipelineManager';
 import { useRecorderWorkflow } from './hooks/useRecorderWorkflow';
 import { useAskWorkflowManager } from './hooks/useAskWorkflowManager';
+import { useTourRecordingOptions } from './hooks/useTourRecordingOptions';
+import { useTourRecordings } from './hooks/useTourRecordings';
+import { getBackendBase } from './config/backend';
 
 function App() {
   const [inputText, setInputText] = useState('');
@@ -32,78 +36,54 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [queueStatus, setQueueStatus] = useState('');
   const [ttsEnabled, setTtsEnabled] = useState(true);
-  const [ttsMode, setTtsMode] = useLocalStorageState('ttsMode', 'modelscope', {
-    serialize: (v) => String(v || 'modelscope'),
-    deserialize: (raw) => {
-      const m = String(raw || 'modelscope').trim().toLowerCase();
-      if (m === 'online') return 'modelscope'; // backward compat
-      if (m === 'local') return 'sovtts1'; // backward compat
-      if (m === 'sovtts1' || m === 'sovtts2' || m === 'modelscope' || m === 'flash' || m === 'sapi' || m === 'edge') return m;
-      return 'modelscope';
-    },
-  });
-  const [modelscopeVoice, setModelscopeVoice] = useLocalStorageState('ttsModelscopeVoice', '', {
-    serialize: (v) => String(v || ''),
-    deserialize: (raw) => String(raw || ''),
-  });
+  const {
+    ttsMode,
+    setTtsMode,
+    modelscopeVoice,
+    setModelscopeVoice,
+    guideEnabled,
+    setGuideEnabled,
+    continuousTour,
+    setContinuousTour,
+    tourRecordingEnabled,
+    setTourRecordingEnabled,
+    playTourRecordingEnabled,
+    setPlayTourRecordingEnabled,
+    selectedTourRecordingId,
+    setSelectedTourRecordingId,
+    guideDuration,
+    setGuideDuration,
+    guideStyle,
+    setGuideStyle,
+    showHistoryPanel,
+    setShowHistoryPanel,
+    showDebugPanel,
+    setShowDebugPanel,
+    tourZone,
+    setTourZone,
+    audienceProfile,
+    setAudienceProfile,
+    groupMode,
+    setGroupMode,
+    speakerName,
+    setSpeakerName,
+    tourSelectedStopIndex,
+    setTourSelectedStopIndex,
+  } = useAppSettings();
   const [debugInfo, setDebugInfo] = useState(null);
   const [chatOptions, setChatOptions] = useState([]);
   const [selectedChat, setSelectedChat] = useState('展厅聊天');
   const [agentOptions, setAgentOptions] = useState([]);
   const [selectedAgentId, setSelectedAgentId] = useState('');
   const [useAgentMode, setUseAgentMode] = useState(false);
-  const [guideEnabled, setGuideEnabled] = useLocalStorageState('guideEnabled', true, {
-    serialize: (v) => (v ? '1' : '0'),
-    deserialize: (raw) => String(raw) === '1',
-  });
-  const [continuousTour, setContinuousTour] = useLocalStorageState('continuousTour', false, {
-    serialize: (v) => (v ? '1' : '0'),
-    deserialize: (raw) => String(raw) === '1',
-  });
-  const [tourRecordingEnabled, setTourRecordingEnabled] = useLocalStorageState('tourRecordingEnabled', false, {
-    serialize: (v) => (v ? '1' : '0'),
-    deserialize: (raw) => String(raw) === '1',
-  });
-  const [playTourRecordingEnabled, setPlayTourRecordingEnabled] = useLocalStorageState('playTourRecordingEnabled', false, {
-    serialize: (v) => (v ? '1' : '0'),
-    deserialize: (raw) => String(raw) === '1',
-  });
-  const [selectedTourRecordingId, setSelectedTourRecordingId] = useLocalStorageState('selectedTourRecordingId', '', {
-    serialize: (v) => String(v || ''),
-    deserialize: (raw) => String(raw || ''),
-  });
-  const [tourRecordingOptions, setTourRecordingOptions] = useState([]);
-  const [guideDuration, setGuideDuration] = useLocalStorageState('guideDuration', '60', {
-    serialize: (v) => String(v || '60'),
-    deserialize: (raw) => String(raw || '60'),
-  });
-  const [guideStyle, setGuideStyle] = useLocalStorageState('guideStyle', 'friendly', {
-    serialize: (v) => String(v || 'friendly'),
-    deserialize: (raw) => String(raw || 'friendly'),
-  });
   const [historySort, setHistorySort] = useState('time'); // 'time' | 'count'
   const [historyItems, setHistoryItems] = useState([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [showHistoryPanel, setShowHistoryPanel] = useLocalStorageState('uiShowHistory', false, {
-    serialize: (v) => (v ? '1' : '0'),
-    deserialize: (raw) => String(raw) === '1',
+  const { options: tourRecordingOptions, refresh: refreshTourRecordingOptions } = useTourRecordingOptions({
+    enabled: settingsOpen || playTourRecordingEnabled,
+    limit: 50,
   });
-  const [showDebugPanel, setShowDebugPanel] = useLocalStorageState('uiShowDebug', false, {
-    serialize: (v) => (v ? '1' : '0'),
-    deserialize: (raw) => String(raw) === '1',
-  });
-  const [clientId] = useState(() => {
-    try {
-      const existing = localStorage.getItem('clientId');
-      if (existing) return existing;
-      const next =
-        (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `cid_${Date.now()}_${Math.random().toString(16).slice(2)}`);
-      localStorage.setItem('clientId', next);
-      return next;
-    } catch (_) {
-      return `cid_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    }
-  });
+  const clientId = useClientId();
   const [tourStops, setTourStops] = useState([]);
   const [tourStopDurations, setTourStopDurations] = useState([]); // aligned with tourStops
   const [tourStopTargetChars, setTourStopTargetChars] = useState([]); // aligned with tourStops
@@ -114,34 +94,11 @@ function App() {
     default_zone: '默认路线',
     default_profile: '大众',
   });
-  const [tourZone, setTourZone] = useLocalStorageState('tourZone', '', {
-    serialize: (v) => String(v || ''),
-    deserialize: (raw) => String(raw || ''),
-  });
-  const [audienceProfile, setAudienceProfile] = useLocalStorageState('audienceProfile', '', {
-    serialize: (v) => String(v || ''),
-    deserialize: (raw) => String(raw || ''),
-  });
-  const [groupMode, setGroupMode] = useLocalStorageState('groupMode', false, {
-    serialize: (v) => (v ? '1' : '0'),
-    deserialize: (raw) => String(raw) === '1',
-  });
-  const [speakerName, setSpeakerName] = useLocalStorageState('speakerName', '观众A', {
-    serialize: (v) => String(v || '观众A'),
-    deserialize: (raw) => String(raw || '观众A'),
-  });
   const [questionPriority, setQuestionPriority] = useState('normal'); // 'normal' | 'high'
   const [questionQueue, setQuestionQueue] = useState([]);
   const { status: serverStatus, error: serverStatusErr } = useBackendStatus(debugInfo && debugInfo.requestId);
   const { items: serverEvents, lastError: serverLastError, error: serverEventsErr } = useBackendEvents(debugInfo && debugInfo.requestId);
   const [currentIntent, setCurrentIntent] = useState(null);
-  const [tourSelectedStopIndex, setTourSelectedStopIndex] = useLocalStorageState('tourSelectedStopIndex', 0, {
-    serialize: (v) => String(Number.isFinite(Number(v)) ? Number(v) : 0),
-    deserialize: (raw) => {
-      const n = Number(raw);
-      return Number.isFinite(n) ? n : 0;
-    },
-  });
 
   useTourBootstrap({
     setTourMeta,
@@ -157,46 +114,6 @@ function App() {
     setSelectedAgentId,
   });
 
-  const formatRecordingLabel = (createdAtMs) => {
-    try {
-      const d = new Date(Number(createdAtMs) || Date.now());
-      const pad = (n) => String(Number(n) || 0).padStart(2, '0');
-      return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}/${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
-    } catch (_) {
-      return String(createdAtMs || '');
-    }
-  };
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const run = async () => {
-      try {
-        if (!settingsOpen && !playTourRecordingEnabled) return;
-        const data = await fetchJson('/api/recordings?limit=50');
-        if (cancelled) return;
-        const items = Array.isArray(data && data.items) ? data.items : [];
-        setTourRecordingOptions(
-          items.map((r) => {
-            const rid = String((r && r.recording_id) || '');
-            const displayName = r && r.display_name ? String(r.display_name || '').trim() : '';
-            return {
-              recording_id: rid,
-              label: displayName || formatRecordingLabel(r && r.created_at_ms),
-            };
-          })
-        );
-      } catch (_) {
-        if (cancelled) return;
-        setTourRecordingOptions([]);
-      }
-    };
-
-    run();
-    return () => {
-      cancelled = true;
-    };
-  }, [settingsOpen, playTourRecordingEnabled]);
   const messagesEndRef = useRef(null);
   const PREFERRED_TTS_SAMPLE_RATE = 16000;
   const ttsEnabledRef = useRef(true);
@@ -564,6 +481,21 @@ function App() {
     }, 200); // 每200ms更新一次状态
   };
 
+  const {
+    startTourRecordingArchive,
+    finishTourRecordingArchive,
+    loadTourRecordingMeta,
+    renameSelectedTourRecording,
+    deleteSelectedTourRecording,
+  } = useTourRecordings({
+    clientIdRef,
+    activeTourRecordingIdRef,
+    selectedTourRecordingIdRef,
+    setSelectedTourRecordingId,
+    refreshTourRecordingOptions,
+  });
+
+  /* legacy (kept for reference)
   async function startTourRecordingArchive(stops) {
     const list = Array.isArray(stops) ? stops.map((s) => String(s || '').trim()).filter(Boolean) : [];
     if (!list.length) return '';
@@ -603,20 +535,9 @@ function App() {
 
   const refreshTourRecordings = async () => {
     try {
-      const data = await fetchJson('/api/recordings?limit=50');
-      const items = Array.isArray(data && data.items) ? data.items : [];
-      setTourRecordingOptions(
-        items.map((r) => {
-          const rid = String((r && r.recording_id) || '');
-          const displayName = r && r.display_name ? String(r.display_name || '').trim() : '';
-          return {
-            recording_id: rid,
-            label: displayName || formatRecordingLabel(r && r.created_at_ms),
-          };
-        })
-      );
+      await refreshTourRecordingOptions();
     } catch (_) {
-      setTourRecordingOptions([]);
+      // ignore
     }
   };
 
@@ -651,6 +572,7 @@ function App() {
     }
     await refreshTourRecordings();
   };
+  */
 
   const {
     isRecording,
@@ -660,7 +582,7 @@ function App() {
     onRecordPointerUp,
     onRecordPointerCancel,
   } = useRecorderWorkflow({
-    baseUrl: 'http://localhost:8000',
+    baseUrl: getBackendBase(),
     minRecordMs: MIN_RECORD_MS,
     clientIdRef,
     setInputText,
@@ -672,7 +594,7 @@ function App() {
   });
 
   const { interruptCurrentRun, askQuestion } = useAskWorkflowManager({
-    baseUrl: 'http://localhost:8000',
+    baseUrl: getBackendBase(),
     getIsLoading: () => isLoading,
     requestSeqRef,
     interruptManagerRef,
