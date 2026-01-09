@@ -65,6 +65,89 @@ def _apply_tts_overrides(app_config: dict, *, provider: str, data: dict) -> dict
     return cfg
 
 
+def _parse_tts_speed(data: dict, headers) -> float | None:
+    raw = None
+    try:
+        raw = (data or {}).get("tts_speed")
+    except Exception:
+        raw = None
+    if raw is None:
+        try:
+            raw = headers.get("X-TTS-Speed") if headers is not None else None
+        except Exception:
+            raw = None
+    if raw is None:
+        return None
+    try:
+        v = float(raw)
+    except Exception:
+        return None
+    if not (0.1 <= v <= 5.0):
+        return None
+    return v
+
+
+def _apply_tts_speed_override(app_config: dict, *, provider: str, data: dict, headers) -> dict:
+    speed = _parse_tts_speed(data or {}, headers)
+    if speed is None or abs(float(speed) - 1.0) < 1e-6:
+        return app_config
+
+    provider_norm = str(provider or "").strip().lower()
+    cfg = copy.deepcopy(app_config or {})
+    if not isinstance(cfg, dict):
+        cfg = {}
+    if not isinstance(cfg.get("tts"), dict):
+        cfg["tts"] = {}
+
+    # Clamp for safety.
+    speed = max(0.5, min(float(speed), 2.0))
+
+    if provider_norm in ("modelscope", "bailian", "dashscope", "flash"):
+        if not isinstance(cfg["tts"].get("bailian"), dict):
+            cfg["tts"]["bailian"] = {}
+        try:
+            base = float(cfg["tts"]["bailian"].get("speech_rate") or 1.0)
+        except Exception:
+            base = 1.0
+        cfg["tts"]["bailian"]["speech_rate"] = max(0.5, min(base * speed, 2.0))
+        return cfg
+
+    if provider_norm == "edge":
+        if not isinstance(cfg["tts"].get("edge"), dict):
+            cfg["tts"]["edge"] = {}
+        base_rate = cfg["tts"]["edge"].get("rate", "0%")
+        base_pct = 0.0
+        try:
+            if isinstance(base_rate, (int, float)):
+                base_pct = float(base_rate)
+            else:
+                s = str(base_rate or "").strip()
+                if s.endswith("%"):
+                    base_pct = float(s[:-1])
+                else:
+                    base_pct = float(s)
+        except Exception:
+            base_pct = 0.0
+        delta_pct = (speed - 1.0) * 100.0
+        pct = max(-80.0, min(base_pct + delta_pct, 100.0))
+        sign = "+" if pct >= 0 else ""
+        cfg["tts"]["edge"]["rate"] = f"{sign}{pct:.0f}%"
+        return cfg
+
+    if provider_norm == "sapi":
+        if not isinstance(cfg["tts"].get("sapi"), dict):
+            cfg["tts"]["sapi"] = {}
+        try:
+            base = int(cfg["tts"]["sapi"].get("rate") or 0)
+        except Exception:
+            base = 0
+        delta = int(round((speed - 1.0) * 10.0))
+        cfg["tts"]["sapi"]["rate"] = max(-10, min(base + delta, 10))
+        return cfg
+
+    return app_config
+
+
 def create_blueprint(deps):
     bp = Blueprint("tts_api", __name__)
 
@@ -112,6 +195,7 @@ def create_blueprint(deps):
             if request.headers.get("X-TTS-Voice") and not data.get("tts_voice"):
                 data["tts_voice"] = request.headers.get("X-TTS-Voice")
         app_config = _apply_tts_overrides(app_config, provider=str(provider), data=data or {})
+        app_config = _apply_tts_speed_override(app_config, provider=str(provider), data=data or {}, headers=request.headers)
         deps.tts_service.tts_state_update(
             request_id,
             data.get("segment_index", None),
@@ -224,6 +308,7 @@ def create_blueprint(deps):
             if request.headers.get("X-TTS-Voice") and not data.get("tts_voice"):
                 data["tts_voice"] = request.headers.get("X-TTS-Voice")
         app_config = _apply_tts_overrides(app_config, provider=str(provider), data=data or {})
+        app_config = _apply_tts_speed_override(app_config, provider=str(provider), data=data or {}, headers=request.headers)
         deps.tts_service.tts_state_update(
             request_id,
             segment_index,

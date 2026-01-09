@@ -75,5 +75,11 @@ def apply_env_overrides(cfg: dict) -> dict:
     admin_present = bool(str(os.environ.get("RAGFLOW_ADMIN_API_KEY") or "").strip())
     meta["ragflow_admin_api_key_present"] = admin_present
 
+    # Knowledge base version (cache invalidation / traceability).
+    put("RAGINT_KB_VERSION", ["kb_version"])
+
+    # Safety blacklist (comma/semicolon/newline separated).
+    put("RAGINT_SENSITIVE_WORDS", ["safety", "blacklist"])
+
     return out
 

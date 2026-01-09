@@ -164,6 +164,40 @@ export class RunCoordinator {
     if (!q) return { ok: false, kind: 'empty' };
     if (useAgentMode && !selectedAgentId) return { ok: false, kind: 'missing_agent' };
 
+    // Voice tour commands (next/prev/jump/restart/...) take precedence when guide is enabled.
+    try {
+      const { guideEnabledRef, clientIdRef, getTourStops, parseTourCommand, setQueueStatus } = this.deps || {};
+      const guideOn = !!(guideEnabledRef && guideEnabledRef.current);
+      if (guideOn && typeof parseTourCommand === 'function') {
+        const stops = typeof getTourStops === 'function' ? getTourStops() : [];
+        const res = await parseTourCommand({
+          clientId: clientIdRef ? clientIdRef.current : '',
+          text: q,
+          stops: Array.isArray(stops) ? stops : [],
+        });
+        if (res && res.intent === 'tour_command' && res.action && Number(res.confidence || 0) >= 0.75) {
+          const action = String(res.action || '').trim();
+          const stopIndex = Number.isFinite(res.stop_index) ? Number(res.stop_index) : null;
+          if (action === 'pause') this.interrupt(RUN_REASON.USER_STOP);
+          else if (action === 'resume') await this.continueTour();
+          else if (action === 'next') await this.nextTourStop();
+          else if (action === 'prev') await this.prevTourStop();
+          else if (action === 'start') await this.startTour();
+          else if (action === 'restart') {
+            this.resetTour();
+            await this.startTour();
+          } else if (action === 'jump' && stopIndex != null) await this.jumpTourStop(stopIndex);
+          if (typeof setQueueStatus === 'function') {
+            const msg = action === 'jump' && stopIndex != null ? `语音指令：跳到第${stopIndex + 1}站` : `语音指令：${action}`;
+            setQueueStatus(msg);
+          }
+          return { ok: true, kind: 'tour_command', action };
+        }
+      }
+    } catch (_) {
+      // ignore parse failures; fall back to normal ask
+    }
+
     if (groupMode) {
       const active = this._isActiveRun();
       const item = this.enqueueQuestion({ speaker: speakerName, text: q, priority });

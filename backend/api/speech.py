@@ -220,6 +220,7 @@ def create_blueprint(deps):
             ragflow_agent_service=deps.ragflow_agent_service,
             intent_service=deps.intent_service,
             history_store=deps.history_store,
+            selling_points_store=getattr(deps, "selling_points_store", None),
             logger=deps.logger,
             timings_set=deps.ask_timings.set,
             timings_get=deps.ask_timings.get,

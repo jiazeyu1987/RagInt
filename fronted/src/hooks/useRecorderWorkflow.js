@@ -58,6 +58,10 @@ export function useRecorderWorkflow({
     mgrRef.current.stop();
   }, []);
 
+  const recordOnce = useCallback(async ({ maxRecordMs, totalTimeoutMs } = {}) => {
+    return mgrRef.current.recordOnce({ maxRecordMs, totalTimeoutMs });
+  }, []);
+
   const onRecordPointerDown = useCallback(
     async (e) => {
       await mgrRef.current.onPointerDown(e);
@@ -80,6 +84,7 @@ export function useRecorderWorkflow({
     isRecording,
     startRecording,
     stopRecording,
+    recordOnce,
     onRecordPointerDown,
     onRecordPointerUp,
     onRecordPointerCancel,

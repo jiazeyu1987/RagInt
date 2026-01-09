@@ -56,6 +56,7 @@ export class TourController {
       audienceProfileRef,
       guideDurationRef,
       tourMetaRef,
+      tourStopsOverrideRef,
       setTourStops,
       setTourStopDurations,
       setTourStopTargetChars,
@@ -70,10 +71,14 @@ export class TourController {
       const zone = String((tourZoneRef && tourZoneRef.current) || (meta && meta.default_zone) || '默认路线');
       const profile = String((audienceProfileRef && audienceProfileRef.current) || (meta && meta.default_profile) || '大众');
       const duration = Number((guideDurationRef && guideDurationRef.current) || 60);
+      const body = { zone, profile, duration_s: duration };
+      const stopsOverride = tourStopsOverrideRef && Array.isArray(tourStopsOverrideRef.current) ? tourStopsOverrideRef.current : [];
+      if (Array.isArray(stopsOverride) && stopsOverride.length) body.stops_override = stopsOverride;
+
       const data = await fetchJson('/api/tour/plan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ zone, profile, duration_s: duration }),
+        body: JSON.stringify(body),
       });
 
       const stops = Array.isArray(data && data.stops) ? data.stops.map((s) => String(s || '').trim()).filter(Boolean) : [];

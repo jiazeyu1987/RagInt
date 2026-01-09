@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 
 from backend.orchestrators.guide_prompt import apply_guide_prompt
+from backend.services.safety_filter import SensitiveWordsFilter
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class ConversationOrchestrator:
         ragflow_agent_service,
         intent_service,
         history_store,
+        selling_points_store=None,
         logger,
         timings_set,
         timings_get,
@@ -37,6 +39,7 @@ class ConversationOrchestrator:
         self._ragflow_agent_service = ragflow_agent_service
         self._intent_service = intent_service
         self._history_store = history_store
+        self._selling_points_store = selling_points_store
         self._logger = logger
         self._timings_set = timings_set
         self._timings_get = timings_get
@@ -120,9 +123,63 @@ class ConversationOrchestrator:
             "done": False,
         }
 
+        ragflow_config = ragflow_config or {}
+        safety_filter = SensitiveWordsFilter.from_config(ragflow_config)
+        safety_block_msg = "抱歉，你的内容可能涉及敏感信息，我无法回答。"
+        kb_version = ""
+        try:
+            if isinstance(ragflow_config, dict):
+                kb_version = str(
+                    ragflow_config.get("kb_version")
+                    or ((ragflow_config.get("kb") or {}).get("version") if isinstance(ragflow_config.get("kb"), dict) else "")
+                    or ""
+                ).strip()
+        except Exception:
+            kb_version = ""
+
+        if safety_filter.enabled:
+            matched = safety_filter.match_text(question)
+            if matched:
+                self._logger.warning(f"[{request_id}] safety_block_input term={matched!r}")
+                yield {"chunk": safety_block_msg, "done": False, "safety": {"blocked": True, "where": "input"}}
+                yield {"chunk": "", "done": True, "safety": {"blocked": True, "where": "input"}}
+                return
+
+        cache_cfg = ragflow_config.get("qa_cache", {}) if isinstance(ragflow_config, dict) else {}
+        if not isinstance(cache_cfg, dict):
+            cache_cfg = {}
+        cache_enabled = bool(cache_cfg.get("enabled", True))
+        try:
+            cache_ttl_s = float(cache_cfg.get("ttl_s", 3600.0))
+        except Exception:
+            cache_ttl_s = 3600.0
+        cache_ttl_s = max(0.0, cache_ttl_s)
+
+        if cache_enabled and kb_version and hasattr(self._history_store, "cache_get"):
+            with contextlib.suppress(Exception):
+                cached_answer = self._history_store.cache_get(question=question, kb_version=kb_version)
+            if cached_answer:
+                cached_answer = str(cached_answer or "")
+                if safety_filter.enabled and safety_filter.match_text(cached_answer):
+                    self._logger.warning(f"[{request_id}] safety_skip_cache_hit kb_version={kb_version!r}")
+                    cached_answer = ""
+            if cached_answer:
+                yield {"chunk": cached_answer, "done": False, "cache": {"hit": True, "kb_version": kb_version}}
+                yield {"chunk": "", "done": True, "cache": {"hit": True, "kb_version": kb_version}}
+                if inp.save_history:
+                    with contextlib.suppress(Exception):
+                        self._history_store.add_entry(
+                            request_id=request_id,
+                            question=question,
+                            answer=cached_answer,
+                            mode="agent" if agent_id else "chat",
+                            chat_name=conversation_name,
+                            agent_id=agent_id,
+                        )
+                return
+
         question_for_rag = apply_guide_prompt(raw_question=question, guide=guide)
 
-        ragflow_config = ragflow_config or {}
         text_cleaning = ragflow_config.get("text_cleaning", {}) or {}
 
         qa_cfg = ragflow_config.get("qa_constraints", {}) if isinstance(ragflow_config, dict) else {}
@@ -151,6 +208,32 @@ class ConversationOrchestrator:
                 req_lines.append(f"- \u603b\u5b57\u6570\u4e0d\u8d85\u8fc7{qa_max_answer_chars}\u5b57\u3002")
             if req_lines:
                 question_for_rag = f"{question_for_rag}\n\n\u3010\u56de\u7b54\u8981\u6c42\u3011\n" + "\n".join(req_lines) + "\n"
+
+        # Selling points TopN hint (guide mode only).
+        sp_store = self._selling_points_store
+        stop_name_for_sp = str((guide.get("stop_name") or "")).strip()
+        if bool(guide.get("enabled", False)) and sp_store is not None and stop_name_for_sp:
+            try:
+                duration_s_for_sp = int(guide.get("duration_s") or 0)
+            except Exception:
+                duration_s_for_sp = 0
+            profile_for_sp = str((guide.get("audience_profile") or "")).strip()
+            try:
+                n = 2 if duration_s_for_sp and duration_s_for_sp <= 35 else 3 if duration_s_for_sp and duration_s_for_sp <= 90 else 5
+                if profile_for_sp in ("专业", "pro", "professional"):
+                    n += 1
+                n = max(1, min(int(n), 8))
+            except Exception:
+                n = 3
+            try:
+                pts = sp_store.list(stop_name=stop_name_for_sp, limit=max(50, n))
+                picked = sp_store.pick_topn(points=pts, n=n)
+            except Exception:
+                picked = []
+            if picked:
+                lines = [f"- {p.text}" for p in picked if getattr(p, "text", None)]
+                if lines:
+                    question_for_rag = f"{question_for_rag}\n\n【本展柜卖点 Top{len(lines)}】\n" + "\n".join(lines) + "\n"
 
         enable_cleaning = bool(text_cleaning.get("enabled", False))
         cleaning_level = text_cleaning.get("cleaning_level", "standard")
@@ -196,6 +279,11 @@ class ConversationOrchestrator:
                 fast_answer = "你好！我在～你可以直接问我展厅/产品相关问题，或说“开始讲解”。"
 
             fast_answer = _trim_answer(fast_answer)
+            if safety_filter.enabled and safety_filter.match_text(fast_answer):
+                self._logger.warning(f"[{request_id}] safety_block_fast_answer")
+                yield {"chunk": safety_block_msg, "done": False, "safety": {"blocked": True, "where": "output"}}
+                yield {"chunk": "", "done": True, "safety": {"blocked": True, "where": "output"}}
+                return
             yield {"chunk": fast_answer, "done": False}
             yield {"chunk": "", "done": True}
             if inp.save_history:
@@ -218,6 +306,10 @@ class ConversationOrchestrator:
             self._logger.warning("RAGFlow不可用，使用固定回答")
             fallback_answer = f"我收到了你的问题：{question}。由于RAGFlow服务暂时不可用，我现在只能给你一个固定的回答。请确保RAGFlow服务正在运行。"
             last_complete_content = _trim_answer(fallback_answer)
+            blocked_fallback = False
+            if safety_filter.enabled and safety_filter.match_text(last_complete_content):
+                blocked_fallback = True
+                last_complete_content = safety_block_msg
 
             for char in last_complete_content:
                 if cancel_event.is_set():
@@ -246,7 +338,7 @@ class ConversationOrchestrator:
                     yield {"segment": seg, "done": False}
 
             yield {"chunk": "", "done": True}
-            if inp.save_history:
+            if inp.save_history and not blocked_fallback:
                 with contextlib.suppress(Exception):
                     self._history_store.add_entry(
                         request_id=request_id,
@@ -262,6 +354,7 @@ class ConversationOrchestrator:
         response = None
         last_complete_content = ""
         last_ragflow_content = ""
+        safety_stream_tail_norm = ""
         try:
             if agent_id:
                 self._logger.info(f"[{request_id}] 开始RAGFlow Agent流式响应 agent_id={agent_id}")
@@ -369,6 +462,18 @@ class ConversationOrchestrator:
                             break
                         if len(new_part) > remaining:
                             new_part = new_part[:remaining]
+
+                    if safety_filter.enabled and new_part:
+                        matched, safety_stream_tail_norm = safety_filter.update_stream_tail_and_match(
+                            tail_norm=safety_stream_tail_norm, new_text=new_part
+                        )
+                        if matched:
+                            self._logger.warning(f"[{request_id}] safety_block_output term={matched!r}")
+                            with contextlib.suppress(Exception):
+                                getattr(response, "close")()
+                            yield {"chunk": safety_block_msg, "done": False, "safety": {"blocked": True, "where": "output"}}
+                            yield {"chunk": "", "done": True, "safety": {"blocked": True, "where": "output"}}
+                            return
                     yield {"chunk": new_part, "done": False}
 
                     if text_cleaner and tts_buffer:
@@ -462,6 +567,14 @@ class ConversationOrchestrator:
                         chat_name=conversation_name,
                         agent_id=agent_id,
                     )
+                    if cache_enabled and kb_version and hasattr(self._history_store, "cache_put"):
+                        with contextlib.suppress(Exception):
+                            self._history_store.cache_put(
+                                question=question,
+                                answer=last_complete_content,
+                                kb_version=kb_version,
+                                ttl_s=cache_ttl_s,
+                            )
         except GeneratorExit:
             self._logger.info(f"[{request_id}] ask_stream_generator_exit (client_disconnect?)")
             raise

@@ -22,10 +22,16 @@ from backend.infra.ask_timings import AskTimings
 
 from backend.api.offline import create_blueprint as create_offline_blueprint
 from backend.api.ragflow_tour_history import create_blueprint as create_ragflow_tour_history_blueprint
+from backend.api.breakpoint import create_blueprint as create_breakpoint_blueprint
 from backend.api.recordings import create_blueprint as create_recordings_blueprint
 from backend.api.speech import create_blueprint as create_speech_blueprint
 from backend.api.system import create_blueprint as create_system_blueprint
 from backend.api.tts import create_blueprint as create_tts_blueprint
+from backend.api.wake_word import create_blueprint as create_wake_word_blueprint
+from backend.api.tour_control import create_blueprint as create_tour_control_blueprint
+from backend.api.tour_command import create_blueprint as create_tour_command_blueprint
+from backend.api.selling_points import create_blueprint as create_selling_points_blueprint
+from backend.api.ops import create_blueprint as create_ops_blueprint
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -126,6 +132,7 @@ def create_app() -> Flask:
     from backend.infra.cancellation import CancellationRegistry
     from backend.infra.event_store import EventStore, RedisEventStore
     from backend.services.asr_service import ASRService
+    from backend.services.breakpoint_store import BreakpointStore
     from backend.services.history_store import HistoryStore
     from backend.services.intent_service import IntentService
     from backend.services.ragflow_agent_service import RagflowAgentService
@@ -133,6 +140,11 @@ def create_app() -> Flask:
     from backend.services.recording_store import RecordingStore
     from backend.services.tour_planner import TourPlanner
     from backend.services.tts_service import TTSSvc
+    from backend.services.wake_word_service import WakeWordService
+    from backend.services.tour_control_store import TourControlStore
+    from backend.services.tour_command_service import TourCommandService
+    from backend.services.selling_points_store import SellingPointsStore
+    from backend.services.ops_store import OpsStore
 
     app = Flask(__name__)
 
@@ -151,6 +163,8 @@ def create_app() -> Flask:
     ragflow_service = RagflowService(config_path, logger=logger)
     ragflow_agent_service = RagflowAgentService(config_path, logger=logger)
     history_store = HistoryStore(Path(__file__).parent / "data" / "qa_history.db", logger=logger)
+    breakpoint_db_path = Path(os.environ.get("RAGINT_BREAKPOINT_DB_PATH") or (Path(__file__).parent / "data" / "breakpoints.db"))
+    breakpoint_store = BreakpointStore(breakpoint_db_path, logger=logger)
     asr_service = ASRService(logger=logger)
     tts_service = TTSSvc(logger=logger)
     intent_service = IntentService()
@@ -162,6 +176,16 @@ def create_app() -> Flask:
         event_store = EventStore()
     recording_store = RecordingStore(Path(__file__).parent / "data" / "recordings", logger=logger)
     ask_timings = AskTimings()
+    wake_word_service = WakeWordService()
+    tour_control_db_path = Path(os.environ.get("RAGINT_TOUR_CONTROL_DB_PATH") or (Path(__file__).parent / "data" / "tour_control.db"))
+    tour_control_store = TourControlStore(tour_control_db_path, logger=logger)
+    tour_command_service = TourCommandService()
+    selling_points_db_path = Path(
+        os.environ.get("RAGINT_SELLING_POINTS_DB_PATH") or (Path(__file__).parent / "data" / "selling_points.db")
+    )
+    selling_points_store = SellingPointsStore(selling_points_db_path, logger=logger)
+    ops_db_path = Path(os.environ.get("RAGINT_OPS_DB_PATH") or (Path(__file__).parent / "data" / "ops.db"))
+    ops_store = OpsStore(ops_db_path, logger=logger)
 
     deps = AppDeps(
         base_dir=Path(__file__).parent,
@@ -177,6 +201,12 @@ def create_app() -> Flask:
         event_store=event_store,
         recording_store=recording_store,
         ask_timings=ask_timings,
+        breakpoint_store=breakpoint_store,
+        wake_word_service=wake_word_service,
+        tour_control_store=tour_control_store,
+        tour_command_service=tour_command_service,
+        selling_points_store=selling_points_store,
+        ops_store=ops_store,
     )
 
     def _init_ragflow() -> bool:
@@ -194,6 +224,12 @@ def create_app() -> Flask:
     app.register_blueprint(create_ragflow_tour_history_blueprint(deps))
     app.register_blueprint(create_offline_blueprint(deps))
     app.register_blueprint(create_system_blueprint(deps))
+    app.register_blueprint(create_breakpoint_blueprint(deps))
+    app.register_blueprint(create_wake_word_blueprint(deps))
+    app.register_blueprint(create_tour_control_blueprint(deps))
+    app.register_blueprint(create_tour_command_blueprint(deps))
+    app.register_blueprint(create_selling_points_blueprint(deps))
+    app.register_blueprint(create_ops_blueprint(deps))
     app.register_blueprint(create_speech_blueprint(deps))
     app.register_blueprint(create_recordings_blueprint(deps))
     app.register_blueprint(create_tts_blueprint(deps))

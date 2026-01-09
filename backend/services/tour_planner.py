@@ -61,7 +61,8 @@ class TourPlanner:
             duration_s = int(duration_s)
         except Exception:
             duration_s = 60
-        duration_s = max(15, min(duration_s, 600))
+        # Support longer tours (e.g. 20min = 1200s) while keeping a safe upper bound.
+        duration_s = max(15, min(duration_s, 3600))
 
         tour_cfg = (cfg or {}).get("tour_planner") if isinstance(cfg, dict) else {}
         if not isinstance(tour_cfg, dict):
@@ -164,4 +165,32 @@ class TourPlanner:
             stop_durations_s=tuple(stop_durations),
             stop_target_chars=tuple(stop_target_chars),
             source=source,
+        )
+
+    def make_plan_from_stops(self, *, zone: str, profile: str, duration_s: int, stops: list[str], source: str = "override") -> TourPlan:
+        zone = self._normalize_str(zone) or "默认路线"
+        profile = self._normalize_str(profile) or "大众"
+        try:
+            duration_s = int(duration_s)
+        except Exception:
+            duration_s = 60
+        duration_s = max(15, min(duration_s, 3600))
+
+        stops_norm = [self._normalize_str(s) for s in (stops or []) if self._normalize_str(s)]
+        if not stops_norm:
+            return self.make_plan({}, zone=zone, profile=profile, duration_s=duration_s)
+
+        per = max(15, int(round(float(duration_s) / max(1, len(stops_norm)))))
+        stop_durations = [per for _ in stops_norm]
+
+        cps = 4.5
+        stop_target_chars = [max(20, int(round(float(d) * cps))) for d in stop_durations]
+        return TourPlan(
+            zone=zone,
+            profile=profile,
+            duration_s=duration_s,
+            stops=tuple(stops_norm),
+            stop_durations_s=tuple(stop_durations),
+            stop_target_chars=tuple(stop_target_chars),
+            source=str(source or "override"),
         )

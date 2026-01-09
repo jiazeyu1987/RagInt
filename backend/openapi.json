@@ -78,6 +78,241 @@
         }
       }
     },
+    "/api/breakpoint": {
+      "get": {
+        "summary": "Get client breakpoint state",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "default": "tour" }
+          },
+          {
+            "name": "X-Client-ID",
+            "in": "header",
+            "required": false,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "post": {
+        "summary": "Upsert client breakpoint state",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["state"],
+                "properties": {
+                  "kind": { "type": "string", "default": "tour" },
+                  "client_id": { "type": "string" },
+                  "state": { "type": "object" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "OK" } }
+      },
+      "delete": {
+        "summary": "Clear client breakpoint state",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "default": "tour" }
+          },
+          {
+            "name": "X-Client-ID",
+            "in": "header",
+            "required": false,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/api/tour/control": {
+      "get": {
+        "summary": "Get tour control state + commands",
+        "parameters": [
+          { "name": "since_id", "in": "query", "required": false, "schema": { "type": "integer", "default": 0 } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 50 } },
+          { "name": "X-Client-ID", "in": "header", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "post": {
+        "summary": "Send a tour control command",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["action"],
+                "properties": {
+                  "action": { "type": "string" },
+                  "payload": { "type": "object" },
+                  "client_id": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/api/tour/control/consume": {
+      "post": {
+        "summary": "Consume a tour control command",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["command_id"],
+                "properties": {
+                  "command_id": { "type": "integer" },
+                  "client_id": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/api/tour/templates": {
+      "get": {
+        "summary": "List basic tour templates",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/api/tour/plan": {
+      "post": {
+        "summary": "Build a tour plan",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "zone": { "type": "string" },
+                  "profile": { "type": "string" },
+                  "duration_s": { "type": "integer" },
+                  "stops_override": { "type": "array", "items": { "type": "string" } }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/api/tour/command/parse": {
+      "post": {
+        "summary": "Parse a voice tour command",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["text"],
+                "properties": {
+                  "text": { "type": "string" },
+                  "stops": { "type": "array", "items": { "type": "string" } },
+                  "request_id": { "type": "string" },
+                  "client_id": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/api/selling_points": {
+      "get": {
+        "summary": "List selling points for a stop",
+        "parameters": [
+          { "name": "stop_name", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 50 } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      },
+      "post": {
+        "summary": "Upsert a selling point",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["stop_name", "text"],
+                "properties": {
+                  "stop_name": { "type": "string" },
+                  "text": { "type": "string" },
+                  "weight": { "type": ["number", "string", "null"] },
+                  "tags": { "type": "array", "items": { "type": "string" } }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "OK" } }
+      },
+      "delete": {
+        "summary": "Delete a selling point",
+        "parameters": [
+          { "name": "stop_name", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "text", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/api/selling_points/topn": {
+      "get": {
+        "summary": "Get TopN selling points",
+        "parameters": [
+          { "name": "stop_name", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "n", "in": "query", "required": false, "schema": { "type": "integer" } },
+          { "name": "duration_s", "in": "query", "required": false, "schema": { "type": "integer" } },
+          { "name": "profile", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/api/wake_word/detect": {
+      "post": {
+        "summary": "Detect wake word (helper)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["text"],
+                "properties": {
+                  "text": { "type": "string" },
+                  "wake_words": { "type": "array", "items": { "type": "string" } },
+                  "cooldown_ms": { "type": "integer" },
+                  "match_mode": { "type": "string", "enum": ["contains", "prefix"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
     "/api/speech_to_text": {
       "post": {
         "summary": "ASR (audio file upload)",
@@ -118,6 +353,7 @@
                   "tts_provider": { "type": "string" },
                   "tts_voice": { "type": "string" },
                   "tts_model": { "type": "string" },
+                  "tts_speed": { "type": ["number", "string", "null"] },
                   "segment_index": { "type": ["integer", "string", "null"] }
                 }
               }
@@ -154,7 +390,26 @@
           "200": { "description": "OK" }
         }
       }
+    },
+    "/api/version": {
+      "get": {
+        "summary": "Backend version",
+        "responses": {
+          "200": { "description": "OK" }
+        }
+      }
+    },
+    "/api/diagnostics": {
+      "get": {
+        "summary": "Download diagnostics bundle (zip)",
+        "parameters": [
+          { "name": "key", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "ZIP bundle" },
+          "403": { "description": "Forbidden" }
+        }
+      }
     }
   }
 }
-

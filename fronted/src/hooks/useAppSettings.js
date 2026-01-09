@@ -19,6 +19,14 @@ export function useAppSettings() {
     deserialize: (raw) => String(raw || ''),
   });
 
+  const [ttsSpeed, setTtsSpeed] = useLocalStorageState('ttsSpeed', 1.0, {
+    serialize: (v) => String(Number.isFinite(Number(v)) ? Number(v) : 1.0),
+    deserialize: (raw) => {
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : 1.0;
+    },
+  });
+
   const [guideEnabled, setGuideEnabled] = useLocalStorageState('guideEnabled', true, {
     serialize: (v) => (v ? '1' : '0'),
     deserialize: (raw) => String(raw) === '1',
@@ -92,11 +100,62 @@ export function useAppSettings() {
     },
   });
 
+  const [tourMode, setTourMode] = useLocalStorageState('tourMode', 'basic', {
+    serialize: (v) => String(v || 'basic'),
+    deserialize: (raw) => {
+      const m = String(raw || 'basic').trim().toLowerCase();
+      if (m === 'personalized' || m === 'basic') return m;
+      return 'basic';
+    },
+  });
+
+  const [tourTemplateId, setTourTemplateId] = useLocalStorageState('tourTemplateId', '', {
+    serialize: (v) => String(v || ''),
+    deserialize: (raw) => String(raw || ''),
+  });
+
+  const [tourStopsOverride, setTourStopsOverride] = useLocalStorageState('tourStopsOverride', [], {
+    serialize: (v) => JSON.stringify(Array.isArray(v) ? v : []),
+    deserialize: (raw) => {
+      try {
+        const arr = JSON.parse(raw);
+        return Array.isArray(arr) ? arr.map((x) => String(x || '').trim()).filter(Boolean) : [];
+      } catch (_) {
+        return [];
+      }
+    },
+  });
+
+  const [wakeWordEnabled, setWakeWordEnabled] = useLocalStorageState('wakeWordEnabled', false, {
+    serialize: (v) => (v ? '1' : '0'),
+    deserialize: (raw) => String(raw) === '1',
+  });
+
+  const [wakeWord, setWakeWord] = useLocalStorageState('wakeWord', '你好小R', {
+    serialize: (v) => String(v || '你好小R'),
+    deserialize: (raw) => String(raw || '你好小R'),
+  });
+
+  const [wakeWordCooldownMs, setWakeWordCooldownMs] = useLocalStorageState('wakeWordCooldownMs', 5000, {
+    serialize: (v) => String(Number.isFinite(Number(v)) ? Number(v) : 5000),
+    deserialize: (raw) => {
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : 5000;
+    },
+  });
+
+  const [wakeWordStrict, setWakeWordStrict] = useLocalStorageState('wakeWordStrict', true, {
+    serialize: (v) => (v ? '1' : '0'),
+    deserialize: (raw) => String(raw) === '1',
+  });
+
   return {
     ttsMode,
     setTtsMode,
     modelscopeVoice,
     setModelscopeVoice,
+    ttsSpeed,
+    setTtsSpeed,
     guideEnabled,
     setGuideEnabled,
     continuousTour,
@@ -125,6 +184,19 @@ export function useAppSettings() {
     setSpeakerName,
     tourSelectedStopIndex,
     setTourSelectedStopIndex,
+    tourMode,
+    setTourMode,
+    tourTemplateId,
+    setTourTemplateId,
+    tourStopsOverride,
+    setTourStopsOverride,
+    wakeWordEnabled,
+    setWakeWordEnabled,
+    wakeWord,
+    setWakeWord,
+    wakeWordCooldownMs,
+    setWakeWordCooldownMs,
+    wakeWordStrict,
+    setWakeWordStrict,
   };
 }
-

@@ -22,6 +22,12 @@ class AppDeps:
     event_store: Any
     recording_store: Any
     ask_timings: Any
+    breakpoint_store: Any
+    wake_word_service: Any
+    tour_control_store: Any
+    tour_command_service: Any
+    selling_points_store: Any
+    ops_store: Any
 
     session: Any = None
     ragflow_default_chat_name: str = ""

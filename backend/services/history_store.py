@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from backend.services.question_normalizer import normalize_question
+
 
 @dataclass(frozen=True)
 class HistoryEntry:
@@ -55,6 +57,23 @@ class HistoryStore:
                 )
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_qa_history_created_at ON qa_history(created_at_ms);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_qa_history_question ON qa_history(question);")
+
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS qa_cache (
+                        normalized_question TEXT NOT NULL,
+                        kb_version TEXT NOT NULL,
+                        answer TEXT NOT NULL,
+                        created_at_ms INTEGER NOT NULL,
+                        updated_at_ms INTEGER NOT NULL,
+                        expires_at_ms INTEGER NOT NULL,
+                        hit_count INTEGER NOT NULL DEFAULT 0,
+                        last_hit_at_ms INTEGER,
+                        PRIMARY KEY (normalized_question, kb_version)
+                    );
+                    """
+                )
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_qa_cache_expires_at ON qa_cache(expires_at_ms);")
                 conn.commit()
             finally:
                 conn.close()
@@ -182,5 +201,97 @@ class HistoryStore:
                     (limit,),
                 ).fetchall()
                 return [dict(r) for r in rows]
+            finally:
+                conn.close()
+
+    def cache_get(
+        self,
+        *,
+        question: str,
+        kb_version: str,
+        now_ms: int | None = None,
+    ) -> str | None:
+        qn = normalize_question(question)
+        kv = str(kb_version or "").strip()
+        if not qn or not kv:
+            return None
+        if now_ms is None:
+            now_ms = int(time.time() * 1000)
+
+        with self._lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    """
+                    SELECT answer, expires_at_ms
+                    FROM qa_cache
+                    WHERE normalized_question = ? AND kb_version = ?
+                    """,
+                    (qn, kv),
+                ).fetchone()
+                if not row:
+                    return None
+
+                expires_at_ms = int(row["expires_at_ms"] or 0)
+                if expires_at_ms > 0 and int(now_ms) >= expires_at_ms:
+                    conn.execute(
+                        "DELETE FROM qa_cache WHERE normalized_question = ? AND kb_version = ?",
+                        (qn, kv),
+                    )
+                    conn.commit()
+                    return None
+
+                conn.execute(
+                    """
+                    UPDATE qa_cache
+                    SET hit_count = hit_count + 1, last_hit_at_ms = ?
+                    WHERE normalized_question = ? AND kb_version = ?
+                    """,
+                    (int(now_ms), qn, kv),
+                )
+                conn.commit()
+                return str(row["answer"] or "")
+            finally:
+                conn.close()
+
+    def cache_put(
+        self,
+        *,
+        question: str,
+        answer: str,
+        kb_version: str,
+        ttl_s: float = 3600.0,
+        now_ms: int | None = None,
+    ) -> bool:
+        qn = normalize_question(question)
+        kv = str(kb_version or "").strip()
+        a = str(answer or "").strip()
+        if not qn or not kv or not a:
+            return False
+
+        if now_ms is None:
+            now_ms = int(time.time() * 1000)
+        ttl_s = float(ttl_s or 0.0)
+        expires_at_ms = int(now_ms + max(0.0, ttl_s) * 1000.0) if ttl_s > 0 else 0
+
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO qa_cache (
+                        normalized_question, kb_version, answer,
+                        created_at_ms, updated_at_ms, expires_at_ms, hit_count, last_hit_at_ms
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, 0, NULL)
+                    ON CONFLICT(normalized_question, kb_version) DO UPDATE SET
+                        answer = excluded.answer,
+                        updated_at_ms = excluded.updated_at_ms,
+                        expires_at_ms = excluded.expires_at_ms
+                    """,
+                    (qn, kv, a, int(now_ms), int(now_ms), int(expires_at_ms)),
+                )
+                conn.commit()
+                return True
             finally:
                 conn.close()

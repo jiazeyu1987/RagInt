@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 from pathlib import Path
 import time
+import zipfile
+from io import BytesIO
 
 from flask import Blueprint, Response, jsonify, request
+
+from backend.version import get_version
 
 
 def create_blueprint(deps):
@@ -20,6 +25,69 @@ def create_blueprint(deps):
         except Exception:
             data = {"openapi": "3.0.3", "info": {"title": "RagInt Backend API", "version": "0.0.0"}, "paths": {}}
         return jsonify(data)
+
+    @bp.route("/api/version", methods=["GET"])
+    def api_version():
+        return jsonify(
+            {
+                "name": "ragint-backend",
+                "version": get_version(),
+            }
+        )
+
+    def _redact(obj):
+        if isinstance(obj, list):
+            return [_redact(x) for x in obj]
+        if not isinstance(obj, dict):
+            return obj
+        out = {}
+        for k, v in obj.items():
+            key = str(k or "")
+            low = key.lower()
+            if any(s in low for s in ("api_key", "apikey", "token", "secret", "password")):
+                out[key] = "***REDACTED***"
+            else:
+                out[key] = _redact(v)
+        return out
+
+    def _diagnostics_authorized() -> bool:
+        required = str(os.environ.get("RAGINT_DIAGNOSTICS_KEY") or "").strip()
+        if not required:
+            return True
+        supplied = str(request.headers.get("X-Diagnostics-Key") or request.args.get("key") or "").strip()
+        return supplied == required
+
+    @bp.route("/api/diagnostics", methods=["GET"])
+    def api_diagnostics():
+        if not _diagnostics_authorized():
+            return jsonify({"ok": False, "error": "forbidden"}), 403
+
+        buf = BytesIO()
+        with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as z:
+            z.writestr("version.json", json.dumps({"name": "ragint-backend", "version": get_version()}, ensure_ascii=False, indent=2))
+
+            with contextlib.suppress(Exception):
+                cfg = deps.ragflow_service.load_config() or {}
+                z.writestr("config.json", json.dumps(_redact(cfg), ensure_ascii=False, indent=2))
+
+            with contextlib.suppress(Exception):
+                z.writestr(
+                    "events_recent.json",
+                    json.dumps({"items": deps.event_store.list_recent(limit=500)}, ensure_ascii=False, indent=2),
+                )
+
+            with contextlib.suppress(Exception):
+                path = (Path(deps.base_dir) / "openapi.json").resolve()
+                if path.exists():
+                    z.write(str(path), arcname="openapi.json")
+
+        buf.seek(0)
+        ts = int(time.time())
+        return Response(
+            buf.getvalue(),
+            mimetype="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="ragint-diagnostics-{ts}.zip"'},
+        )
 
     @bp.route("/api/events", methods=["GET"])
     def api_events():

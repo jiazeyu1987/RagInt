@@ -27,6 +27,8 @@ export class RecordingWorkflowManager {
 
     this._recorder = null;
     this._asrMode = 'http';
+
+    this._pendingFinalText = [];
   }
 
   setDeps(next = {}) {
@@ -67,6 +69,26 @@ export class RecordingWorkflowManager {
       setInputText(t);
     } catch (_) {
       // ignore
+    }
+  }
+
+  _emitFinalText(text) {
+    const t = safeTrim(text);
+    const resolvers = this._pendingFinalText.splice(0, this._pendingFinalText.length);
+    for (const r of resolvers) {
+      try {
+        r(t);
+      } catch (_) {
+        // ignore
+      }
+    }
+    const onFinalText = this._deps.onFinalText;
+    if (typeof onFinalText === 'function') {
+      try {
+        onFinalText(t);
+      } catch (_) {
+        // ignore
+      }
     }
   }
 
@@ -148,8 +170,10 @@ export class RecordingWorkflowManager {
           // ignore
         }
       }
+      this._emitFinalText(text);
     } catch (err) {
       if (this._log) this._log('[REC] processAudioHttp error', err);
+      this._emitFinalText('');
     } finally {
       if (this._asrAbort) {
         try {
@@ -188,10 +212,12 @@ export class RecordingWorkflowManager {
           const base = safeTrim(this._wsBaseText);
           if (t) this._appendOrReplaceInputText(base ? `${base} ${t}` : t);
           this._setLoading(false);
+          this._emitFinalText(t);
         },
         onError: (msg) => {
           this._setLoading(false);
           if (this._log) this._log('[REC] ws error', msg);
+          this._emitFinalText('');
         },
         onLog: (...args) => (this._log ? this._log(...args) : null),
       });
@@ -257,6 +283,36 @@ export class RecordingWorkflowManager {
       this._recorder.stop();
     } catch (_) {
       // ignore
+    }
+  }
+
+  async recordOnce({ maxRecordMs = 3500, totalTimeoutMs = 12000 } = {}) {
+    if (this.isRecording) return '';
+    const maxMs = Math.max(500, Number(maxRecordMs) || 3500);
+    const totalMs = Math.max(maxMs + 500, Number(totalTimeoutMs) || 12000);
+
+    let stopTimer = null;
+    let timeoutTimer = null;
+    try {
+      const p = new Promise((resolve) => {
+        this._pendingFinalText.push(resolve);
+        timeoutTimer = setTimeout(() => resolve(''), totalMs);
+      });
+
+      await this.start();
+      stopTimer = setTimeout(() => {
+        try {
+          this.stop();
+        } catch (_) {
+          // ignore
+        }
+      }, maxMs);
+
+      const text = await p;
+      return safeTrim(text);
+    } finally {
+      if (stopTimer) clearTimeout(stopTimer);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
     }
   }
 

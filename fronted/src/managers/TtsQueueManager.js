@@ -58,6 +58,7 @@ export class TtsQueueManager {
     this._useSavedTts = !!options.useSavedTts;
     this._ttsProvider = String(options.ttsProvider || '').trim();
     this._ttsVoice = String(options.ttsVoice || '').trim();
+    this._ttsSpeed = Number.isFinite(Number(options.ttsSpeed)) ? Number(options.ttsSpeed) : 1.0;
     this._recordingId = String(options.recordingId || '').trim();
     this._maxPreGenerateCount = Math.max(0, Number(options.maxPreGenerateCount || 2) || 2);
 
@@ -275,6 +276,7 @@ export class TtsQueueManager {
     if (cid) url.searchParams.set('client_id', cid);
     if (this._ttsProvider) url.searchParams.set('tts_provider', this._ttsProvider);
     if (this._ttsVoice) url.searchParams.set('tts_voice', this._ttsVoice);
+    if (Number.isFinite(this._ttsSpeed) && Math.abs(Number(this._ttsSpeed) - 1.0) > 1e-6) url.searchParams.set('tts_speed', String(this._ttsSpeed));
     url.searchParams.set('segment_index', String(this._segmentIndex++));
     if (this._recordingId) url.searchParams.set('recording_id', this._recordingId);
     const stopIndex = meta && Number.isFinite(meta.stopIndex) ? Number(meta.stopIndex) : null;
@@ -335,6 +337,16 @@ export class TtsQueueManager {
     // Stop current playback/fetch to avoid mixing voices mid-run.
     const rid = this._requestId;
     this.stop('tts_voice_changed');
+    if (rid) this._resetStateForRun(rid);
+  }
+
+  setTtsSpeed(next, reason) {
+    const val = Number.isFinite(Number(next)) ? Number(next) : 1.0;
+    if (Math.abs(val - this._ttsSpeed) < 1e-6) return;
+    this._ttsSpeed = val;
+    if (reason) this._log('[TTSQ] tts_speed_changed', val, reason);
+    const rid = this._requestId;
+    this.stop('tts_speed_changed');
     if (rid) this._resetStateForRun(rid);
   }
 

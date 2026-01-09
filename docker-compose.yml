@@ -16,6 +16,8 @@ services:
       RAGINT_REDIS_URL: redis://redis:6379/0
       RAGINT_CORS_ORIGINS: http://localhost:3000
       RAGINT_CONFIG_PATH: /app/ragflow_demo/ragflow_config.json
+      # Optional safety filter:
+      # RAGINT_SENSITIVE_WORDS: 涉密词1,涉密词2
       # Provide secrets via env in deployment (examples):
       # RAGFLOW_API_KEY: ...
       # RAGFLOW_BASE_URL: ...

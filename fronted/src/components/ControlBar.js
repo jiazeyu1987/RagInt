@@ -28,6 +28,8 @@ export function ControlBar({
   onChangeTtsEnabled,
   ttsMode,
   onChangeTtsMode,
+  ttsSpeed,
+  onChangeTtsSpeed,
   continuousTour,
   onChangeContinuousTour,
   tourRecordingEnabled,
@@ -39,6 +41,15 @@ export function ControlBar({
   onChangeSelectedTourRecordingId,
   onRenameSelectedTourRecording,
   onDeleteSelectedTourRecording,
+
+  wakeWordEnabled,
+  onChangeWakeWordEnabled,
+  wakeWord,
+  onChangeWakeWord,
+  wakeWordCooldownMs,
+  onChangeWakeWordCooldownMs,
+  wakeWordStrict,
+  onChangeWakeWordStrict,
 
   tourState,
   currentIntent,
@@ -92,6 +103,7 @@ export function ControlBar({
             <option value="30">30秒</option>
             <option value="60">1分钟</option>
             <option value="180">3分钟</option>
+            <option value="1200">20分钟</option>
           </select>
         </label>
       ) : null}
@@ -152,6 +164,17 @@ export function ControlBar({
             <option value="flash">Flash(cosyvoice-v3-flash)</option>
             <option value="sapi">SAPI</option>
             <option value="edge">Edge</option>
+          </select>
+        </label>
+      ) : null}
+
+      {ttsEnabled ? (
+        <label className="kb-select">
+          <span>语速</span>
+          <select value={String(ttsSpeed || 1.0)} onChange={(e) => onChangeTtsSpeed && onChangeTtsSpeed(Number(e.target.value) || 1.0)}>
+            <option value="1">标准(1.0x)</option>
+            <option value="1.25">加速(1.25x)</option>
+            <option value="1.5">更快(1.5x)</option>
           </select>
         </label>
       ) : null}
@@ -241,6 +264,36 @@ export function ControlBar({
             删除
           </button>
         </div>
+      ) : null}
+
+      <label className="tts-toggle" title="Software wake word (browser SpeechRecognition).">
+        <input type="checkbox" checked={!!wakeWordEnabled} onChange={(e) => onChangeWakeWordEnabled && onChangeWakeWordEnabled(e.target.checked)} />
+        <span>Wake Word</span>
+      </label>
+
+      {wakeWordEnabled ? (
+        <label className="kb-select">
+          <span>Word</span>
+          <input value={String(wakeWord || '')} onChange={(e) => onChangeWakeWord && onChangeWakeWord(e.target.value)} placeholder="e.g. 你好小R" />
+        </label>
+      ) : null}
+
+      {wakeWordEnabled ? (
+        <label className="kb-select">
+          <span>Cooldown(ms)</span>
+          <input
+            value={String(wakeWordCooldownMs)}
+            onChange={(e) => onChangeWakeWordCooldownMs && onChangeWakeWordCooldownMs(Number(e.target.value) || 0)}
+            placeholder="5000"
+          />
+        </label>
+      ) : null}
+
+      {wakeWordEnabled ? (
+        <label className="tts-toggle" title="Strict mode uses prefix match to reduce false triggers.">
+          <input type="checkbox" checked={!!wakeWordStrict} onChange={(e) => onChangeWakeWordStrict && onChangeWakeWordStrict(e.target.checked)} />
+          <span>Strict</span>
+        </label>
       ) : null}
     </div>
   );

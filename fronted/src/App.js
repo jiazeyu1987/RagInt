@@ -15,6 +15,9 @@ import { DebugPanel } from './components/DebugPanel';
 import { ControlBar } from './components/ControlBar';
 import { ChatPanel } from './components/ChatPanel';
 import { SettingsDrawer } from './components/SettingsDrawer';
+import { StagePanel } from './components/StagePanel';
+import { TourModePanel } from './components/TourModePanel';
+import { SellingPointsPanel } from './components/SellingPointsPanel';
 import { useBackendStatus } from './hooks/useBackendStatus';
 import { useBackendEvents } from './hooks/useBackendEvents';
 import { useAppSettings } from './hooks/useAppSettings';
@@ -22,12 +25,17 @@ import { useClientId } from './hooks/useClientId';
 import { useTourBootstrap } from './hooks/useTourBootstrap';
 import { useRagflowBootstrap } from './hooks/useRagflowBootstrap';
 import { useTourState } from './hooks/useTourState';
+import { useBreakpointSync } from './hooks/useBreakpointSync';
+import { useWakeWordListener } from './hooks/useWakeWordListener';
+import { useTourTemplates } from './hooks/useTourTemplates';
 import { useTourPipelineManager } from './hooks/useTourPipelineManager';
 import { useRecorderWorkflow } from './hooks/useRecorderWorkflow';
 import { useAskWorkflowManager } from './hooks/useAskWorkflowManager';
 import { useTourRecordingOptions } from './hooks/useTourRecordingOptions';
 import { useTourRecordings } from './hooks/useTourRecordings';
 import { getBackendBase } from './config/backend';
+import { sendTourControl } from './api/tourControl';
+import { parseTourCommand } from './api/tourCommand';
 
 function App() {
   const [inputText, setInputText] = useState('');
@@ -41,6 +49,8 @@ function App() {
     setTtsMode,
     modelscopeVoice,
     setModelscopeVoice,
+    ttsSpeed,
+    setTtsSpeed,
     guideEnabled,
     setGuideEnabled,
     continuousTour,
@@ -69,6 +79,20 @@ function App() {
     setSpeakerName,
     tourSelectedStopIndex,
     setTourSelectedStopIndex,
+    tourMode,
+    setTourMode,
+    tourTemplateId,
+    setTourTemplateId,
+    tourStopsOverride,
+    setTourStopsOverride,
+    wakeWordEnabled,
+    setWakeWordEnabled,
+    wakeWord,
+    setWakeWord,
+    wakeWordCooldownMs,
+    setWakeWordCooldownMs,
+    wakeWordStrict,
+    setWakeWordStrict,
   } = useAppSettings();
   const [debugInfo, setDebugInfo] = useState(null);
   const [chatOptions, setChatOptions] = useState([]);
@@ -96,6 +120,8 @@ function App() {
   });
   const [questionPriority, setQuestionPriority] = useState('normal'); // 'normal' | 'high'
   const [questionQueue, setQuestionQueue] = useState([]);
+  const [stageSpeedMode, setStageSpeedMode] = useState('normal'); // 'normal' | 'fast'
+  const { templates: tourTemplates } = useTourTemplates({ enabled: settingsOpen || !!guideEnabled });
   const { status: serverStatus, error: serverStatusErr } = useBackendStatus(debugInfo && debugInfo.requestId);
   const { items: serverEvents, lastError: serverLastError, error: serverEventsErr } = useBackendEvents(debugInfo && debugInfo.requestId);
   const [currentIntent, setCurrentIntent] = useState(null);
@@ -114,6 +140,44 @@ function App() {
     setSelectedAgentId,
   });
 
+  useBreakpointSync({
+    clientId,
+    kind: 'tour',
+    enabled: true,
+    state: {
+      tourState,
+      tourSelectedStopIndex,
+      tourZone,
+      audienceProfile,
+      guideEnabled,
+      continuousTour,
+      guideDuration,
+      guideStyle,
+      tourMode,
+      tourTemplateId,
+      tourStopsOverride,
+    },
+    onRestore: (bp) => {
+      try {
+        if (bp && typeof bp === 'object') {
+          if (bp.tourState && typeof bp.tourState === 'object') setTourState(bp.tourState);
+          if (Number.isFinite(bp.tourSelectedStopIndex)) setTourSelectedStopIndex(Number(bp.tourSelectedStopIndex));
+          if (typeof bp.tourZone === 'string' && bp.tourZone) setTourZone(bp.tourZone);
+          if (typeof bp.audienceProfile === 'string' && bp.audienceProfile) setAudienceProfile(bp.audienceProfile);
+          if (typeof bp.guideEnabled === 'boolean') setGuideEnabled(bp.guideEnabled);
+          if (typeof bp.continuousTour === 'boolean') setContinuousTour(bp.continuousTour);
+          if (typeof bp.guideDuration === 'string' && bp.guideDuration) setGuideDuration(bp.guideDuration);
+          if (typeof bp.guideStyle === 'string' && bp.guideStyle) setGuideStyle(bp.guideStyle);
+          if (typeof bp.tourMode === 'string' && bp.tourMode) setTourMode(bp.tourMode);
+          if (typeof bp.tourTemplateId === 'string') setTourTemplateId(bp.tourTemplateId);
+          if (Array.isArray(bp.tourStopsOverride)) setTourStopsOverride(bp.tourStopsOverride);
+        }
+      } catch (_) {
+        // ignore
+      }
+    },
+  });
+
   const messagesEndRef = useRef(null);
   const PREFERRED_TTS_SAMPLE_RATE = 16000;
   const ttsEnabledRef = useRef(true);
@@ -128,6 +192,9 @@ function App() {
   const audienceProfileRef = useRef(audienceProfile);
   const guideDurationRef = useRef(guideDuration);
   const guideStyleRef = useRef(guideStyle);
+  const tourModeRef = useRef(tourMode);
+  const tourTemplateIdRef = useRef(tourTemplateId);
+  const tourStopsOverrideRef = useRef(tourStopsOverride);
   const useAgentModeRef = useRef(useAgentMode);
   const selectedChatRef = useRef(selectedChat);
   const selectedAgentIdRef = useRef(selectedAgentId);
@@ -200,6 +267,7 @@ function App() {
       maxPreGenerateCount: MAX_PRE_GENERATE_COUNT,
       ttsMode,
       ttsVoice: ttsMode === 'modelscope' ? modelscopeVoice : '',
+      ttsSpeed,
       emitClientEvent: (evt) => emitClientEventExt({ ...(evt || {}), clientId: clientIdRef.current }),
       onStopIndexChange: createTtsOnStopIndexChange({
         guideEnabledRef,
@@ -314,6 +382,15 @@ function App() {
   }, [ttsMode, modelscopeVoice]);
 
   useEffect(() => {
+    try {
+      const mgr = ttsManagerRef.current;
+      if (mgr && typeof mgr.setTtsSpeed === 'function') mgr.setTtsSpeed(ttsSpeed, 'ui_change');
+    } catch (_) {
+      // ignore
+    }
+  }, [ttsSpeed]);
+
+  useEffect(() => {
     continuousTourRef.current = !!continuousTour;
   }, [continuousTour]);
 
@@ -365,6 +442,12 @@ function App() {
     guideDurationRef.current = guideDuration;
     guideStyleRef.current = guideStyle;
   }, [guideDuration, guideStyle]);
+
+  useEffect(() => {
+    tourModeRef.current = String(tourMode || 'basic');
+    tourTemplateIdRef.current = String(tourTemplateId || '');
+    tourStopsOverrideRef.current = Array.isArray(tourStopsOverride) ? tourStopsOverride : [];
+  }, [tourMode, tourTemplateId, tourStopsOverride]);
 
   useEffect(() => {
     useAgentModeRef.current = !!useAgentMode;
@@ -578,6 +661,7 @@ function App() {
     isRecording,
     startRecording,
     stopRecording,
+    recordOnce,
     onRecordPointerDown,
     onRecordPointerUp,
     onRecordPointerCancel,
@@ -626,6 +710,7 @@ function App() {
     guideEnabledRef,
     guideDurationRef,
     guideStyleRef,
+    audienceProfileRef,
     useAgentModeRef,
     selectedChatRef,
     selectedAgentIdRef,
@@ -641,6 +726,40 @@ function App() {
     getHistorySort: () => historySort,
     fetchHistory,
     runCoordinatorRef,
+  });
+
+  useWakeWordListener({
+    enabled: !!wakeWordEnabled,
+    clientId,
+    wakeWord,
+    strictMode: !!wakeWordStrict,
+    cooldownMs: wakeWordCooldownMs,
+    isBusy: () => !!isLoading || !!isRecording,
+    recordOnce,
+    askQuestion,
+    submitText: async (q) => {
+      return getRunCoordinator().submitUserText({
+        text: q,
+        trigger: 'wake_word',
+        groupMode: false,
+        speakerName,
+        priority: 'normal',
+        useAgentMode,
+        selectedAgentId,
+      });
+    },
+    maxRecordMs: 3500,
+    onFeedback: ({ message } = {}) => {
+      const m = String(message || '').trim();
+      if (!m) return;
+      setQueueStatus(m);
+      try {
+        window.clearTimeout(window.__wakeWordStatusTimer);
+      } catch (_) {
+        // ignore
+      }
+      window.__wakeWordStatusTimer = window.setTimeout(() => setQueueStatus(''), 2000);
+    },
   });
 
 
@@ -703,6 +822,9 @@ function App() {
       playTourRecordingEnabledRef,
       selectedTourRecordingIdRef,
       activeTourRecordingIdRef,
+      tourModeRef,
+      tourTemplateIdRef,
+      tourStopsOverrideRef,
       interruptManagerRef,
       startTourRecordingArchive,
       loadTourRecordingMeta,
@@ -742,6 +864,9 @@ function App() {
       lastSpeakerRef,
       groupModeRef,
       tourPipelineRef,
+      guideEnabledRef,
+      getTourStops: () => (tourStopsRef.current || []),
+      parseTourCommand: ({ clientId, text, stops }) => parseTourCommand({ clientId, text, stops }),
     });
     return runCoordinatorRef.current;
   };
@@ -752,6 +877,14 @@ function App() {
   const nextTourStop = async () => getRunCoordinator().nextTourStop();
   const jumpTourStop = async (idx) => getRunCoordinator().jumpTourStop(idx);
   const resetTour = () => getRunCoordinator().resetTour();
+
+  const sendStageCommand = async (action, payload) => {
+    try {
+      await sendTourControl({ clientId: clientIdRef.current, action, payload: payload || {} });
+    } catch (_) {
+      // ignore
+    }
+  };
 
   useEffect(() => {
     if (!messagesEndRef.current) return;
@@ -913,6 +1046,8 @@ function App() {
             onChangeTtsEnabled={setTtsEnabled}
             ttsMode={ttsMode}
             onChangeTtsMode={setTtsMode}
+            ttsSpeed={ttsSpeed}
+            onChangeTtsSpeed={setTtsSpeed}
             continuousTour={continuousTour}
             onChangeContinuousTour={setContinuousTour}
             tourRecordingEnabled={tourRecordingEnabled}
@@ -924,6 +1059,14 @@ function App() {
             onChangeSelectedTourRecordingId={setSelectedTourRecordingId}
             onRenameSelectedTourRecording={renameSelectedTourRecording}
             onDeleteSelectedTourRecording={deleteSelectedTourRecording}
+            wakeWordEnabled={wakeWordEnabled}
+            onChangeWakeWordEnabled={setWakeWordEnabled}
+            wakeWord={wakeWord}
+            onChangeWakeWord={setWakeWord}
+            wakeWordCooldownMs={wakeWordCooldownMs}
+            onChangeWakeWordCooldownMs={setWakeWordCooldownMs}
+            wakeWordStrict={wakeWordStrict}
+            onChangeWakeWordStrict={setWakeWordStrict}
             tourState={tourState}
             currentIntent={currentIntent}
             tourStops={tourStops}
@@ -938,6 +1081,62 @@ function App() {
             }}
             onReset={resetTour}
           />
+
+          <div className="settings-divider" />
+
+          <StagePanel
+            disabled={false}
+            speedLabel={stageSpeedMode === 'fast' ? '快' : '标准'}
+            onPause={async () => {
+              interruptCurrentRun('user_stop');
+              await sendStageCommand('pause');
+              setQueueStatus('已暂停');
+            }}
+            onContinue={async () => {
+              await continueTour();
+              await sendStageCommand('resume');
+              setQueueStatus('继续');
+            }}
+            onSkip={async () => {
+              await nextTourStop();
+              await sendStageCommand('skip');
+              setQueueStatus('跳过 → 下一站');
+            }}
+            onRestart={async () => {
+              resetTour();
+              await startTour();
+              await sendStageCommand('restart');
+              setQueueStatus('重来');
+            }}
+            onToggleSpeed={async () => {
+              const next = stageSpeedMode === 'fast' ? 'normal' : 'fast';
+              setStageSpeedMode(next);
+              if (next === 'fast') {
+                setGuideDuration('30');
+                await sendStageCommand('speed', { speed: 2.0 });
+                setQueueStatus('加速：30秒档');
+              } else {
+                setGuideDuration('60');
+                await sendStageCommand('speed', { speed: 1.0 });
+                setQueueStatus('加速：关闭');
+              }
+            }}
+          />
+
+          <div className="settings-divider" />
+          <TourModePanel
+            tourMode={tourMode}
+            onChangeTourMode={setTourMode}
+            templates={tourTemplates}
+            tourTemplateId={tourTemplateId}
+            onChangeTourTemplateId={setTourTemplateId}
+            tourStopsOverride={tourStopsOverride}
+            onChangeTourStopsOverride={setTourStopsOverride}
+            onApplyTemplateZone={(z) => setTourZone(z)}
+          />
+
+          <div className="settings-divider" />
+          <SellingPointsPanel stopName={getTourStopName(tourSelectedStopIndex)} />
 
           {ttsMode === 'modelscope' ? (
             <>

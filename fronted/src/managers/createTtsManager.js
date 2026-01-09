@@ -12,6 +12,7 @@ export function createOrGetTtsManager({
   maxPreGenerateCount,
   ttsMode,
   ttsVoice,
+  ttsSpeed,
   onStopIndexChange,
   emitClientEvent,
   debugRef,
@@ -37,6 +38,7 @@ export function createOrGetTtsManager({
     maxPreGenerateCount,
     ttsProvider: String(ttsMode || ''),
     ttsVoice: String(ttsVoice || ''),
+    ttsSpeed: Number.isFinite(Number(ttsSpeed)) ? Number(ttsSpeed) : 1.0,
     onStopIndexChange,
     emitClientEvent: typeof emitClientEvent === 'function' ? emitClientEvent : null,
     onDebug: (evt) => {
