@@ -1,0 +1,18 @@
+p, admin, *, *
+p, reviewer, kb_documents, view
+p, reviewer, kb_documents, review
+p, reviewer, kb_documents, approve
+p, reviewer, kb_documents, reject
+p, reviewer, kb_documents, delete
+p, reviewer, ragflow_documents, view
+p, reviewer, ragflow_documents, delete
+p, operator, kb_documents, view
+p, operator, kb_documents, upload
+p, operator, ragflow_documents, view
+p, viewer, ragflow_documents, view
+p, guest, ragflow_documents, view
+p, reviewer, users, view
+p, admin, users, view
+p, admin, users, manage
+g, 1893f18d-ac19-4417-aaac-a11ece9495dd, admin
+g, 44fc7854-eade-447d-9a12-fd0b829ef3eb, viewer
