@@ -127,9 +127,69 @@ async def delete_ragflow_document(
     dataset_name: str = "展厅",
 ):
     """Delete document from RAGFlow"""
+    import logging
+    logger = logging.getLogger(__name__)
+
+    logger.info("=" * 80)
+    logger.info("[DELETE RAGFLOW] delete_ragflow_document() called")
+    logger.info(f"[DELETE RAGFLOW]   doc_id: {doc_id}")
+    logger.info(f"[DELETE RAGFLOW]   dataset_name: {dataset_name}")
+    logger.info(f"[DELETE RAGFLOW]   deleted_by: {payload.sub}")
+
+    # 查找本地数据库中对应的文档记录
+    local_doc = deps.kb_store.get_document_by_ragflow_id(doc_id, dataset_name)
+
+    # 从RAGFlow删除文档
     success = deps.ragflow_service.delete_document(doc_id, dataset_name)
     if not success:
+        logger.error(f"[DELETE RAGFLOW] Failed to delete from RAGFlow: {doc_id}")
         raise HTTPException(status_code=404, detail="文档不存在或删除失败")
+
+    logger.info("[DELETE RAGFLOW] RAGFlow document deleted successfully")
+
+    # 如果本地有记录，也删除本地记录并记录到deletion_logs
+    if local_doc:
+        logger.info(f"[DELETE RAGFLOW] Found local record: {local_doc.doc_id}, filename={local_doc.filename}")
+
+        # 记录到删除日志
+        deps.deletion_log_store.log_deletion(
+            doc_id=local_doc.doc_id,
+            filename=local_doc.filename,
+            kb_id=local_doc.kb_id,
+            deleted_by=payload.sub,
+            original_uploader=local_doc.uploaded_by,
+            original_reviewer=local_doc.reviewed_by,
+            ragflow_doc_id=doc_id,
+        )
+        logger.info("[DELETE RAGFLOW] Deletion logged to local database")
+
+        # 删除本地文件（如果存在）
+        import os
+        if os.path.exists(local_doc.file_path):
+            logger.info(f"[DELETE RAGFLOW] Deleting local file: {local_doc.file_path}")
+            os.remove(local_doc.file_path)
+            logger.info("[DELETE RAGFLOW] Local file deleted")
+
+        # 删除本地数据库记录
+        deps.kb_store.delete_document(local_doc.doc_id)
+        logger.info("[DELETE RAGFLOW] Local database record deleted")
+    else:
+        logger.warning(f"[DELETE RAGFLOW] No local record found for RAGFlow doc_id: {doc_id}")
+        # 即使没有本地记录，也记录到deletion_logs（使用RAGFlow的doc_id）
+        deps.deletion_log_store.log_deletion(
+            doc_id=doc_id,  # 使用RAGFlow的doc_id
+            filename=f"RAGFlow文档({doc_id[:8]}...)",  # 文件名未知
+            kb_id=dataset_name,
+            deleted_by=payload.sub,
+            original_uploader=None,
+            original_reviewer=None,
+            ragflow_doc_id=doc_id,
+        )
+        logger.info("[DELETE RAGFLOW] Deletion logged (RAGFlow only)")
+
+    logger.info("[DELETE RAGFLOW] Delete operation completed successfully")
+    logger.info("=" * 80)
+
     return {"message": "文档已从RAGFlow删除"}
 
 

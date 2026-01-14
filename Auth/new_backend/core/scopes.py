@@ -12,16 +12,15 @@ ROLE_SCOPES: Dict[str, List[str]] = {
     ],
     "reviewer": [
         "kb_documents:view",
+        "kb_documents:upload",
         "kb_documents:review",
         "kb_documents:approve",
         "kb_documents:reject",
         "kb_documents:delete",
         "ragflow_documents:view",
         "ragflow_documents:delete",
-        "users:view",
     ],
     "operator": [
-        "kb_documents:view",
         "kb_documents:upload",
         "ragflow_documents:view",
     ],

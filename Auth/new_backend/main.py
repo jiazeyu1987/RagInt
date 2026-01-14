@@ -63,13 +63,14 @@ def create_app() -> FastAPI:
         )
 
     # Import and register all routers
-    from api import auth, users, knowledge, review, ragflow
+    from api import auth, users, knowledge, review, ragflow, user_kb_permissions
 
     app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
     app.include_router(users.router, prefix="/api/users", tags=["Users"])
     app.include_router(knowledge.router, prefix="/api/knowledge", tags=["Knowledge Base"])
     app.include_router(review.router, prefix="/api/knowledge", tags=["Document Review"])
     app.include_router(ragflow.router, prefix="/api/ragflow", tags=["RAGFlow Integration"])
+    app.include_router(user_kb_permissions.router, prefix="/api", tags=["User KB Permissions"])
 
     @app.get("/health")
     async def health_check():

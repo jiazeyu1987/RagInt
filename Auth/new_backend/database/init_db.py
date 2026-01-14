@@ -67,6 +67,40 @@ def init_database(db_path: str = None):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_docs_status ON kb_documents(status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_docs_kb ON kb_documents(kb_id)")
 
+    # Create user_kb_permissions table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_kb_permissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            kb_id TEXT NOT NULL,
+            granted_by TEXT NOT NULL,
+            granted_at_ms INTEGER NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(user_id),
+            FOREIGN KEY (granted_by) REFERENCES users(user_id),
+            UNIQUE(user_id, kb_id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_kb_user ON user_kb_permissions(user_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_kb_kb ON user_kb_permissions(kb_id)")
+
+    # Create deletion_logs table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS deletion_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            doc_id TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            kb_id TEXT NOT NULL,
+            deleted_by TEXT NOT NULL,
+            deleted_at_ms INTEGER NOT NULL,
+            original_uploader TEXT,
+            original_reviewer TEXT,
+            ragflow_doc_id TEXT,
+            FOREIGN KEY (deleted_by) REFERENCES users(user_id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_deletion_logs_kb ON deletion_logs(kb_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_deletion_logs_time ON deletion_logs(deleted_at_ms)")
+
     # Note: user_sessions and auth_audit tables are removed for AuthX
 
     # Create default admin user if not exists

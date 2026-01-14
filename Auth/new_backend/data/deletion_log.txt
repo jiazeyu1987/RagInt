@@ -1,0 +1,2 @@
+[2026-01-14 23:24:01] [DELETE] 文件删除记录已保存: doc_id=5f821bd2d4b911f0933cc228c577fa54, filename=RAGFlow文档(5f821bd2...), kb_id=瑛泰生活, deleted_by=3a73a77e-edca-4e2b-980b-25ab48fbe3cc
+[2026-01-14 23:57:42] [DELETE] 文件删除记录已保存: doc_id=4ff713e5-988c-485b-9358-8c6bf51db850, filename=展厅讲解智能体需求分析(1).md, kb_id=intlife, deleted_by=3a73a77e-edca-4e2b-980b-25ab48fbe3cc
