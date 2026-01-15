@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>数据库调试工具</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #f5f5f5; }
+        .section { background: white; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        h2 { margin-top: 0; color: #333; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background: #4CAF50; color: white; }
+        tr:nth-child(even) { background: #f2f2f2; }
+        .user-id { font-size: 11px; color: #666; }
+        .match-yes { color: green; font-weight: bold; }
+        .match-no { color: red; font-weight: bold; }
+        pre { background: #f4f4f4; padding: 10px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>🔍 数据库调试工具</h1>
+
+    <div class="section">
+        <h2>所有用户</h2>
+        <div id="users">加载中...</div>
+    </div>
+
+    <div class="section">
+        <h2>intlife知识库的文档</h2>
+        <div id="documents">加载中...</div>
+    </div>
+
+    <div class="section">
+        <h2>原始JSON数据</h2>
+        <pre id="raw-data">加载中...</pre>
+    </div>
+
+    <script>
+        async function loadData() {
+            try {
+                // 加载用户列表
+                const usersRes = await fetch('http://localhost:8001/api/users', {
+                    credentials: 'include'
+                });
+                const users = await usersRes.json();
+
+                // 加载文档列表
+                const docsRes = await fetch('http://localhost:8001/api/knowledge/documents?kb_id=intlife', {
+                    credentials: 'include'
+                });
+                const docsData = await docsRes.json();
+
+                // 显示用户列表
+                let usersHtml = '<table><tr><th>用户名</th><th>user_id</th><th>角色</th></tr>';
+                users.forEach(u => {
+                    usersHtml += `<tr>
+                        <td><strong>${u.username}</strong></td>
+                        <td class="user-id">${u.user_id}</td>
+                        <td>${u.role}</td>
+                    </tr>`;
+                });
+                usersHtml += '</table>';
+                document.getElementById('users').innerHTML = usersHtml;
+
+                // 显示文档列表
+                const userMap = {};
+                users.forEach(u => userMap[u.user_id] = u.username);
+
+                let docsHtml = '<table><tr><th>文件名</th><th>上传者</th><th>审核者</th><th>状态</th></tr>';
+                docsData.documents.forEach(doc => {
+                    const uploader = userMap[doc.uploaded_by];
+                    const reviewer = doc.reviewed_by ? userMap[doc.reviewed_by] : null;
+
+                    docsHtml += `<tr>
+                        <td>${doc.filename}</td>
+                        <td>
+                            ${uploader ?
+                                `<span class="match-yes">✓ ${uploader}</span>` :
+                                `<span class="match-no">✗ 未找到 (${doc.uploaded_by})</span>`}
+                            <br><span class="user-id">${doc.uploaded_by}</span>
+                        </td>
+                        <td>
+                            ${doc.reviewed_by ?
+                                (reviewer ?
+                                    `<span class="match-yes">✓ ${reviewer}</span>` :
+                                    `<span class="match-no">✗ 未找到 (${doc.reviewed_by})</span>`) :
+                                '<span style="color: #999;">NULL (未审核)</span>'}
+                            ${doc.reviewed_by ? `<br><span class="user-id">${doc.reviewed_by}</span>` : ''}
+                        </td>
+                        <td>${doc.status}</td>
+                    </tr>`;
+                });
+                docsHtml += '</table>';
+                document.getElementById('documents').innerHTML = docsHtml;
+
+                // 显示原始数据
+                document.getElementById('raw-data').textContent = JSON.stringify({
+                    users: users,
+                    documents: docsData.documents
+                }, null, 2);
+
+            } catch (error) {
+                document.getElementById('users').innerHTML = `<p style="color: red;">错误: ${error.message}</p>`;
+                document.getElementById('documents').innerHTML = '';
+                document.getElementById('raw-data').textContent = error.stack;
+            }
+        }
+
+        loadData();
+    </script>
+</body>
+</html>

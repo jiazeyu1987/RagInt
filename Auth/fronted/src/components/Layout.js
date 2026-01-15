@@ -21,6 +21,7 @@ const Layout = ({ children }) => {
     { name: '文档管理', path: '/documents', permission: { resource: 'kb_documents', action: 'view' } },
     { name: '上传文档', path: '/upload', permission: { resource: 'kb_documents', action: 'upload' } },
     { name: '用户管理', path: '/users', permission: { resource: 'users', action: 'view' } },
+    { name: '审核记录', path: '/audit', allowedRoles: ['admin'] },
   ];
 
   return (
@@ -58,35 +59,71 @@ const Layout = ({ children }) => {
         </div>
 
         <nav style={{ flex: 1, padding: '10px 0' }}>
-          {navigation.map((item) => (
-            <PermissionGuard key={item.path} permission={item.permission} fallback={null}>
-              <Link
-                to={item.path}
-                style={{
-                  display: 'block',
-                  padding: '12px 20px',
-                  color: isActive(item.path) ? '#60a5fa' : '#d1d5db',
-                  textDecoration: 'none',
-                  backgroundColor: isActive(item.path) ? '#374151' : 'transparent',
-                  transition: 'background-color 0.2s',
-                  whiteSpace: sidebarOpen ? 'normal' : 'nowrap',
-                  overflow: 'hidden',
-                }}
-                onMouseEnter={(e) => {
-                  if (!isActive(item.path)) {
-                    e.target.style.backgroundColor = '#374151';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!isActive(item.path)) {
-                    e.target.style.backgroundColor = 'transparent';
-                  }
-                }}
-              >
-                {sidebarOpen ? item.name : item.name[0]}
-              </Link>
-            </PermissionGuard>
-          ))}
+          {navigation.map((item) => {
+            // For items with allowedRoles, use role-based guard
+            if (item.allowedRoles) {
+              return (
+                <PermissionGuard key={item.path} allowedRoles={item.allowedRoles} fallback={null}>
+                  <Link
+                    to={item.path}
+                    style={{
+                      display: 'block',
+                      padding: '12px 20px',
+                      color: isActive(item.path) ? '#60a5fa' : '#d1d5db',
+                      textDecoration: 'none',
+                      backgroundColor: isActive(item.path) ? '#374151' : 'transparent',
+                      transition: 'background-color 0.2s',
+                      whiteSpace: sidebarOpen ? 'normal' : 'nowrap',
+                      overflow: 'hidden',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!isActive(item.path)) {
+                        e.target.style.backgroundColor = '#374151';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!isActive(item.path)) {
+                        e.target.style.backgroundColor = 'transparent';
+                      }
+                    }}
+                  >
+                    {sidebarOpen ? item.name : item.name[0]}
+                  </Link>
+                </PermissionGuard>
+              );
+            }
+
+            // For items with permission, use permission-based guard
+            return (
+              <PermissionGuard key={item.path} permission={item.permission} fallback={null}>
+                <Link
+                  to={item.path}
+                  style={{
+                    display: 'block',
+                    padding: '12px 20px',
+                    color: isActive(item.path) ? '#60a5fa' : '#d1d5db',
+                    textDecoration: 'none',
+                    backgroundColor: isActive(item.path) ? '#374151' : 'transparent',
+                    transition: 'background-color 0.2s',
+                    whiteSpace: sidebarOpen ? 'normal' : 'nowrap',
+                    overflow: 'hidden',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isActive(item.path)) {
+                      e.target.style.backgroundColor = '#374151';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isActive(item.path)) {
+                      e.target.style.backgroundColor = 'transparent';
+                    }
+                  }}
+                >
+                  {sidebarOpen ? item.name : item.name[0]}
+                </Link>
+              </PermissionGuard>
+            );
+          })}
         </nav>
 
         <div style={{

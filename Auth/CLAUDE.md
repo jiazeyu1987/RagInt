@@ -4,23 +4,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Auth** is a standalone authentication and authorization system for managing knowledge base document uploads and reviews in the RagInt ecosystem. It provides a role-based access control (RBAC) system with JWT authentication, Casbin authorization, and a document approval workflow.
+**Auth** is a standalone authentication and authorization system for managing knowledge base document uploads and reviews in the RagInt ecosystem. It provides a role-based access control (RBAC) system with JWT authentication and a document approval workflow.
+
+**NOTE:** This codebase contains two backend implementations:
+- `backend/` - Legacy Flask implementation (deprecated, uses Casbin)
+- `new_backend/` - Current FastAPI + AuthX implementation (active)
+
+**Always work with `new_backend/` unless specifically maintaining the legacy Flask backend.**
 
 ## Architecture Overview
 
 ```
 Auth/
-├── backend/          # Flask backend (port: 8001)
-│   ├── api/         # API endpoints (auth, users, knowledge, review, ragflow)
-│   ├── services/    # Business logic stores (user, auth, kb, ragflow)
-│   ├── infra/       # Infrastructure (JWT manager, Casbin enforcer)
-│   ├── data/        # SQLite database + uploads + Casbin policies
-│   ├── config/      # Casbin model configuration
-│   └── scripts/     # Database initialization scripts
+├── new_backend/     # FastAPI backend (port: 8001) - ACTIVE
+│   ├── api/         # API endpoints (auth, users, knowledge, review, ragflow, user_kb_permissions)
+│   ├── services/    # Business logic stores (user, kb, ragflow, user_kb_permission, deletion_log, download_log)
+│   ├── core/        # Security (AuthX JWT), scopes configuration
+│   ├── models/      # Pydantic models (user, document, auth)
+│   ├── database/    # Database initialization
+│   ├── data/        # SQLite database + uploads
+│   ├── config.py    # Configuration (pydantic-settings)
+│   ├── main.py      # FastAPI app factory
+│   └── dependencies.py  # Dependency injection container
+│
+├── backend/         # Flask backend (DEPRECATED - uses Casbin)
 │
 └── fronted/         # React frontend (port: 3001)
     └── src/
-        ├── pages/      # Page components (login, dashboard, users, documents)
+        ├── pages/      # Page components (login, dashboard, users, documents, audit)
         ├── components/ # Reusable components (Layout, PermissionGuard)
         ├── hooks/      # React hooks (useAuth)
         └── api/        # API client (authClient)
@@ -32,7 +43,7 @@ Auth/
 
 **Install Backend Dependencies:**
 ```bash
-cd backend
+cd new_backend
 pip install -r requirements.txt
 ```
 
@@ -44,11 +55,8 @@ npm install
 
 **Initialize Database:**
 ```bash
-# From Auth/backend directory
-python -m scripts.init_db
-
-# Or from Auth root directory
-python init_auth_db.py
+cd new_backend
+python -m database.init_db
 ```
 
 **Default Admin Credentials:**
@@ -59,8 +67,10 @@ python init_auth_db.py
 
 **Start Backend (port 8001):**
 ```bash
-cd backend
-python -m app
+cd new_backend
+python -m main
+# Or directly:
+uvicorn main:app --reload --port 8001
 ```
 
 **Start Frontend (port 3001):**
@@ -72,6 +82,7 @@ npm start
 **Access the Application:**
 - Frontend URL: http://localhost:3001
 - Backend API: http://localhost:8001
+- API Documentation: http://localhost:8001/docs
 - Health Check: http://localhost:8001/health
 
 ### Building Frontend
@@ -81,103 +92,114 @@ cd fronted
 npm run build
 ```
 
-## Backend Architecture
+## Backend Architecture (FastAPI)
 
-### Application Factory Pattern
+### Application Structure
 
-The backend follows Flask's application factory pattern with dependency injection:
+The backend follows FastAPI best practices with lifespan-managed dependencies:
 
 **Entry Points:**
-- `backend/__main__.py` - Enables `python -m backend` execution
-- `backend/app.py` - `create_app()` function that configures Flask app
-- `backend/app_deps.py` - `create_dependencies()` creates dependency injection container
+- `new_backend/__main__.py` - Enables `python -m new_backend` execution
+- `new_backend/main.py` - `create_app()` function that configures FastAPI app
+- `new_backend/dependencies.py` - `create_dependencies()` creates dependency injection container
 
 **Dependency Injection:**
 ```python
 @dataclass
 class AppDependencies:
     user_store: UserStore
-    auth_store: AuthStore
     kb_store: KbStore
     ragflow_service: RagflowService
-    casbin_enforcer: CasbinEnforcer
-    jwt_manager: JwtManager
+    user_kb_permission_store: UserKbPermissionStore
+    deletion_log_store: DeletionLogStore
+    download_log_store: DownloadLogStore
 ```
 
-### Blueprint Organization
+Dependencies are stored in `app.state.deps` and accessed via `get_deps()` function in each router.
 
-API endpoints are organized into domain-specific blueprints:
+### Router Organization
 
-| Blueprint | Purpose | Key Endpoints |
+API endpoints are organized into domain-specific routers:
+
+| Router | Purpose | Key Endpoints |
 |-----------|---------|---------------|
-| `api/auth.py` | Authentication | `/api/auth/login`, `/api/auth/logout`, `/api/auth/me`, `/api/auth/verify` |
+| `api/auth.py` | Authentication | `/api/auth/login`, `/api/auth/refresh`, `/api/auth/logout`, `/api/auth/me` |
 | `api/users.py` | User management | `/api/users` (CRUD) |
 | `api/knowledge.py` | Document upload | `/api/knowledge/upload`, `/api/knowledge/documents`, `/api/knowledge/stats` |
 | `api/review.py` | Document review | `/api/knowledge/documents/{id}/approve`, `/api/knowledge/documents/{id}/reject` |
-| `api/ragflow.py` | RAGFlow integration | `/api/ragflow/datasets`, `/api/ragflow/documents` |
+| `api/ragflow.py` | RAGFlow integration | `/api/ragflow/datasets`, `/api/ragflow/documents`, `/api/ragflow/download` |
+| `api/user_kb_permissions.py` | KB permissions | `/api/user-kb-permissions` |
 
-All blueprints receive `deps` (AppDependencies) parameter via `create_blueprint(deps)` function.
+All routers access dependencies via `Depends(get_deps)`.
 
 ### Authentication Layer
 
-**JWT Manager** (`infra/jwt_manager.py`):
-- HMAC-SHA256 signing algorithm
-- 24-hour token expiration
-- Token payload: `user_id`, `username`, `role`, `exp`
-- Methods: `create_token()`, `verify_token()`, `decode_token()`
+**AuthX Integration** (`core/security.py`):
+- JWT-based authentication with access and refresh tokens
+- Token storage in httpOnly cookies + Authorization header
+- Access token expiration: 15 minutes
+- Refresh token expiration: 7 days
+- Token payload: `sub` (user_id), `scopes`, `exp`
 
-**Auth Store** (`services/auth_store.py`):
-- Stores SHA256 hashes of tokens (not raw tokens for security)
-- Session tracking with expiration and revocation
-- Methods: `create_session()`, `validate_session()`, `revoke_session()`, `cleanup_expired()`
+**Scopes-based Authorization** (`core/scopes.py`):
+- Scopes format: `resource:action` (e.g., `kb_documents:upload`)
+- Wildcard support: `kb_documents:*` for all actions on a resource
+- Scopes are assigned based on user role
+
+**Token Endpoints:**
+- `POST /api/auth/login` - Returns access_token and refresh_token, sets cookies
+- `POST /api/auth/refresh` - Refresh access token using refresh token
+- `POST /api/auth/logout` - Clears cookies
+- `GET /api/auth/me` - Returns current user info with scopes
 
 ### Authorization Layer
 
-**Casbin Enforcer** (`infra/casbin_enforcer.py`):
-- RBAC with fine-grained permissions
-- Model file: `config/casbin_model.conf`
-- Policy file: `data/casbin_policy.csv`
-- Permission format: `(subject, object, action)`
-- Supports wildcards: `("*", "*", "*")` for admin
+**Role to Scopes Mapping** (`core/scopes.py`):
 
-**User Roles:**
-| Role | Permissions |
+| Role | Scopes |
 |------|-------------|
-| `admin` | All permissions (wildcard) |
-| `reviewer` | `kb_documents:approve`, `kb_documents:reject`, `kb_documents:view`, `users:view` |
-| `operator` | `kb_documents:upload`, `kb_documents:view`, `kb_documents:delete` |
-| `viewer` | `kb_documents:view` |
-| `guest` | `kb_documents:view` |
+| `admin` | `users:*`, `kb_documents:*`, `ragflow_documents:*` |
+| `reviewer` | `kb_documents:view`, `kb_documents:upload`, `kb_documents:review`, `kb_documents:approve`, `kb_documents:reject`, `kb_documents:delete`, `ragflow_documents:view`, `ragflow_documents:delete` |
+| `operator` | `kb_documents:upload`, `ragflow_documents:view` |
+| `viewer` | `ragflow_documents:view` |
+| `guest` | `ragflow_documents:view` |
 
-**Authorization Decorators** (`api/decorators.py`):
-- `@require_auth` - Validates JWT token and injects `current_user`
-- `@require_role` - Role-based access control
-- `@require_permission` - Fine-grained permission checking
+**Permission Checking:**
+- Scopes are embedded in JWT tokens during login
+- Backend validates scopes using AuthX's `@auth.required()` decorator
+- Frontend receives scopes in login response and caches them
 
 ### Data Layer
 
-**SQLite Database:** `backend/data/auth.db`
+**SQLite Database:** `new_backend/data/auth.db`
 
 **Tables:**
-- `users` - User accounts (user_id, username, password_hash, email, role, status, timestamps)
-- `user_sessions` - Session management (session_id, user_id, token_hash, expiration, revocation)
-- `kb_documents` - Knowledge base documents (doc_id, filename, file_path, status, review info)
-- `auth_audit` - Security audit logs
+- `users` - User accounts (user_id, username, password_hash, email, role, status, created_at_ms, last_login_at_ms, created_by)
+- `kb_documents` - Knowledge base documents (doc_id, filename, file_path, file_size, mime_type, uploaded_by, status, uploaded_at_ms, reviewed_by, reviewed_at_ms, review_notes, ragflow_doc_id, kb_id)
+- `user_kb_permissions` - Knowledge base access permissions (user_id, kb_id, granted_by, granted_at_ms)
+- `deletion_logs` - Document deletion audit (doc_id, filename, kb_id, deleted_by, deleted_at_ms, original_uploader, original_reviewer, ragflow_doc_id)
+- `download_logs` - Document download audit (doc_id, filename, downloaded_by, downloaded_at_ms)
 
 **Data Stores** (Repository Pattern):
 - `services/user_store.py` - User CRUD, password hashing (SHA256), login tracking
-- `services/auth_store.py` - Session management
-- `services/kb_store.py` - Document metadata, status tracking
+- `services/kb_store.py` - Document metadata, status tracking, statistics
 - `services/ragflow_service.py` - RAGFlow API integration
+- `services/user_kb_permission_store.py` - KB permission management
+- `services/deletion_log_store.py` - Deletion audit logging
+- `services/download_log_store.py` - Download audit logging
+
+**Password Hashing:**
+- SHA256 without salt (for simplicity)
+- Function: `hashlib.sha256(password.encode()).hexdigest()`
 
 ### Security Features
 
-- **Password Hashing:** SHA256 with UUID4 salt
-- **Token Storage:** SHA256 hashes only (never raw tokens)
-- **Session Management:** Token revocation and expiration tracking
-- **Casbin Authorization:** Policy-based access control
+- **Password Hashing:** SHA256
+- **JWT Tokens:** Short-lived access tokens (15 min) + long-lived refresh tokens (7 days)
+- **httpOnly Cookies:** Prevents XSS attacks on tokens
+- **CORS:** Configurable origins (default: `*` for development)
 - **File Validation:** Type whitelist (.txt, .pdf, .doc, .docx, .md), size limit (16MB)
-- **Audit Logging:** All authentication events logged
+- **Audit Logging:** Deletion and download logs for compliance
 
 ## Frontend Architecture
 
@@ -255,17 +277,18 @@ The Auth system integrates with RAGFlow for knowledge base management:
 - Document synchronization between local review workflow and RAGFlow
 
 **Document Workflow:**
-1. User uploads document → Stored in `backend/data/uploads/`
+1. User uploads document → Stored in `new_backend/data/uploads/`
 2. Document marked as "pending" in local database
 3. Reviewer approves/rejects document via review interface
 4. Approved documents synced to RAGFlow knowledge base
 5. Documents can be browsed and downloaded from RAGFlow
+6. All deletions and downloads are logged for audit purposes
 
 ### Port Allocation
 
 | Service | Port | Purpose |
 |---------|------|---------|
-| Auth Backend | 8001 | Auth API |
+| Auth Backend (FastAPI) | 8001 | Auth API |
 | Auth Frontend | 3001 | Auth UI |
 | RagInt Backend | 8000 | Main system API |
 | RagInt Frontend | 3000 | Main system UI |
@@ -277,43 +300,53 @@ The Auth system integrates with RAGFlow for knowledge base management:
 REACT_APP_AUTH_URL=http://localhost:8001
 ```
 
-**Backend Configuration:**
-- Database path: `backend/data/auth.db`
-- Casbin model: `backend/config/casbin_model.conf`
-- Casbin policy: `backend/data/casbin_policy.csv`
-- Upload directory: `backend/data/uploads/`
+**Backend Configuration** (`new_backend/config.py`):
+- All settings use pydantic-settings BaseSettings
+- Database path: `data/auth.db` (relative to new_backend/)
+- Upload directory: `data/uploads/`
+- JWT secret, token expiration, CORS origins configurable via env vars
+- Create `.env` file in `new_backend/` for production settings
 
 ## Common Development Tasks
 
 ### Adding a New API Endpoint
 
-1. Create blueprint file in `backend/api/your_feature.py`:
+1. Create router file in `new_backend/api/your_feature.py`:
    ```python
-   from flask import Blueprint
+   from fastapi import APIRouter, Depends
+   from core.security import auth
 
-   def create_blueprint(deps):
-       bp = Blueprint("your_feature_api", __name__)
+   router = APIRouter()
 
-       @bp.route("/api/your_endpoint", methods=["POST"])
-       @require_auth
-       @require_permission("your_resource:action")
-       def your_endpoint(current_user):
-           return jsonify({"ok": True})
+   def get_deps(request: Request) -> AppDependencies:
+       return request.app.state.deps
 
-       return bp
+   @router.post("/api/your-endpoint")
+   async def your_endpoint(
+       request: Request,
+       deps: AppDependencies = Depends(get_deps)
+   ):
+       # Access deps.user_store, deps.kb_store, etc.
+       return {"ok": True}
    ```
 
-2. Register in `backend/app.py:create_app()`:
+2. Register in `new_backend/main.py:create_app()`:
    ```python
-   from api.your_feature import create_blueprint as create_your_feature_blueprint
-   app.register_blueprint(create_your_feature_blueprint(deps))
+   from api import your_feature
+   app.include_router(your_feature.router, prefix="/api", tags=["Your Feature"])
    ```
 
-### Adding a New Permission
+### Adding a New Scope
 
-1. Add permission to Casbin policy: `backend/data/casbin_policy.csv`
-2. Update `casbin_enforcer.py` to seed new permission on startup
-3. Use `@require_permission("your_resource:action")` decorator in API
+1. Update `core/scopes.py` ROLE_SCOPES dictionary:
+   ```python
+   ROLE_SCOPES: Dict[str, List[str]] = {
+       "admin": ["your_resource:*", ...],
+       "reviewer": ["your_resource:view", "your_resource:action"],
+   }
+   ```
+
+2. Use scope-based access control in endpoints with AuthX decorators.
 
 ### Creating a New Frontend Page
 
@@ -328,48 +361,52 @@ REACT_APP_AUTH_URL=http://localhost:8001
    ```
 3. Add navigation link in `components/Layout.js` if needed
 
-### Modifying Casbin Policy
+### Database Migration
 
-Edit `backend/data/casbin_policy.csv`:
-```csv
-p, admin, *, *
-p, reviewer, kb_documents, approve
-p, reviewer, kb_documents, reject
-g, alice, admin
+**Migrations are in `new_backend/migrations/` directory:**
+- Example: `migrations/migrate_user_kb_permissions.py`
+
+**To run a migration:**
+```bash
+cd new_backend
+python migrations/migrate_your_migration.py
 ```
 
-**Policy Format:**
-- `p, subject, object, action` - Permission definition
-- `g, user, role` - Role assignment
+**To create a new migration:**
+1. Create Python script in `migrations/`
+2. Connect to database using `sqlite3.connect(db_path)`
+3. Execute ALTER TABLE or other SQL commands
+4. Commit changes and close connection
 
 ## Database Initialization
 
-**Initialization Script:** `backend/scripts/init_db.py`
+**Initialization Script:** `new_backend/database/init_db.py`
 
 Creates:
 1. SQLite database with all tables
 2. Default admin user (username: `admin`, password: `admin123`)
-3. Casbin policies for all roles
-4. Required directories (data, uploads)
+3. Required directories (data, uploads)
 
 **Re-initialization:**
 ```bash
 # Backup existing data first
-cp backend/data/auth.db backend/data/auth.db.backup
+cp new_backend/data/auth.db new_backend/data/auth.db.backup
 
 # Re-run initialization
-python -m scripts.init_db
+cd new_backend
+python -m database.init_db
 ```
 
 ## Technology Stack
 
-**Backend:**
-- Flask 2.3.0 - Web framework
-- Flask-CORS 4.0.0 - Cross-origin support
-- casbin 1.34.0 - Authorization library
-- casbin-sqlalchemy-adapter 1.0.0 - Casbin SQLAlchemy adapter
-- PyJWT 2.8.0 - JWT token handling
+**Backend (FastAPI):**
+- FastAPI >= 0.109.0 - Modern web framework
+- Uvicorn >= 0.27.0 - ASGI server
+- AuthX >= 1.2.0 - JWT authentication
+- Pydantic >= 2.5.0 - Data validation
+- pydantic-settings >= 2.1.0 - Configuration management
 - ragflow-sdk >= 0.12.0 - RAGFlow integration
+- python-multipart >= 0.0.6 - File upload support
 
 **Frontend:**
 - React 18.2.0 - UI framework
@@ -383,20 +420,22 @@ python -m scripts.init_db
 
 ## Architecture Patterns
 
-1. **Factory Pattern:** `create_app()` for Flask application creation
-2. **Dependency Injection:** `AppDependencies` container for service management
-3. **Blueprint Pattern:** Modular API organization by domain
+1. **FastAPI App Factory:** `create_app()` for application creation with lifespan context manager
+2. **Dependency Injection:** `AppDependencies` container stored in `app.state.deps`
+3. **Router Pattern:** FastAPI routers for modular API organization by domain
 4. **Repository Pattern:** Data stores abstract database operations
-5. **Middleware Pattern:** Decorators for cross-cutting concerns (auth, permissions)
+5. **Pydantic Models:** Request/response validation with automatic OpenAPI docs
 6. **Context API:** Centralized authentication state in React
 7. **Custom Hooks:** Encapsulate business logic (useAuth)
+8. **Scopes-based Authorization:** JWT tokens embed user scopes for stateless API authorization
 
 ## Security Considerations
 
-- Tokens are stored as SHA256 hashes in the database (never raw tokens)
-- Passwords use SHA256 with UUID4 salt
-- JWT tokens expire after 24 hours
-- Session revocation supported via token blacklist
-- All API endpoints (except login) require authentication
-- File uploads validated for type and size
-- Audit logging for security compliance
+- **JWT Access Tokens:** 15-minute expiration for security
+- **JWT Refresh Tokens:** 7-day expiration for convenience
+- **httpOnly Cookies:** Tokens stored in httpOnly cookies prevent XSS access
+- **SHA256 Password Hashing:** No salt (simplicity trade-off)
+- **CORS:** Configurable origins (default `*` for development)
+- **File Validation:** Type whitelist and size limits
+- **Audit Logging:** Deletion and download logs for compliance
+- **Stateless Authorization:** Scopes embedded in JWT, no server-side session storage needed

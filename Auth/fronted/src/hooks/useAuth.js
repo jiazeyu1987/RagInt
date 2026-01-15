@@ -13,17 +13,19 @@ export const useAuth = () => {
 };
 
 // 应用版本号，每次更新权限相关代码时递增
-const APP_VERSION = '4';  // 更新版本以清除旧缓存
+const APP_VERSION = '6';  // 强制清除所有缓存
 
 export const AuthProvider = ({ children }) => {
   // 使用新的令牌名称
-  const [user, setUser] = useState(authClient.accessToken ? authClient.user : null);
+  const [user, setUser] = useState(null);  // 初始为null，等待checkAuth完成
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [accessibleKbs, setAccessibleKbs] = useState([]);  // 用户可访问的知识库列表
 
   const invalidateAuth = useCallback(() => {
     authClient.clearAuth();
     setUser(null);
+    setAccessibleKbs([]);
   }, []);
 
   useEffect(() => {
@@ -36,7 +38,16 @@ export const AuthProvider = ({ children }) => {
         // 检查应用版本
         const lastVersion = localStorage.getItem(STORAGE_KEYS.APP_VERSION);
         if (lastVersion !== APP_VERSION) {
+          console.log(`[App Version Update] ${lastVersion} -> ${APP_VERSION}, clearing all caches`);
           localStorage.setItem(STORAGE_KEYS.APP_VERSION, APP_VERSION);
+
+          // 清除所有认证相关的localStorage数据
+          localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
+          localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
+          localStorage.removeItem(STORAGE_KEYS.USER);
+          localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
+
+          // 清除Cache Storage
           if ('caches' in window) {
             try {
               const names = await caches.keys();
@@ -56,14 +67,12 @@ export const AuthProvider = ({ children }) => {
             setUser(currentUser);
           } catch (err) {
             // 令牌可能已过期，尝试刷新
-            console.warn('Auth check failed, trying to refresh...', err);
             if (authClient.refreshToken) {
               try {
                 await authClient.refreshAccessToken();
                 const currentUser = await authClient.getCurrentUser();
                 setUser(currentUser);
               } catch (refreshErr) {
-                console.error('Token refresh failed:', refreshErr);
                 invalidateAuth();
               }
             } else {
@@ -76,7 +85,6 @@ export const AuthProvider = ({ children }) => {
           }
         }
       } catch (err) {
-        console.error('Auth check failed:', err);
         invalidateAuth();
       } finally {
         setLoading(false);
@@ -86,11 +94,31 @@ export const AuthProvider = ({ children }) => {
     checkAuth();
   }, [invalidateAuth]);
 
+  // 加载用户的知识库权限
+  useEffect(() => {
+    const fetchAccessibleKbs = async () => {
+      if (user) {
+        try {
+          const data = await authClient.getMyKnowledgeBases();
+          setAccessibleKbs(data.kb_ids || []);
+        } catch (err) {
+          console.error('Failed to fetch accessible KBs:', err);
+          setAccessibleKbs([]);
+        }
+      } else {
+        setAccessibleKbs([]);
+      }
+    };
+
+    fetchAccessibleKbs();
+  }, [user]);
+
   const login = async (username, password) => {
     try {
       setError(null);
       const data = await authClient.login(username, password);
       // 新后端的 login 方法已经在内部调用了 /me 并设置 user
+      console.log('[Login] Logged in user:', data.user);
       setUser(data.user);
       return { success: true };
     } catch (err) {
@@ -123,7 +151,7 @@ export const AuthProvider = ({ children }) => {
 
   /**
    * 简化的权限检查方法（同步）
-   * 新后端自动检查 scopes，这里只用于前端 UI 控制
+   * 使用后端返回的实际scopes，而不是硬编码的角色权限
    *
    * @param {string} resource - 资源名称 (如 'kb_documents')
    * @param {string} action - 操作名称 (如 'upload')
@@ -132,34 +160,8 @@ export const AuthProvider = ({ children }) => {
   const can = useCallback((resource, action) => {
     if (!user) return false;
 
-    // 基于角色的简单权限映射（用于 UI 显示控制）
-    // 实际权限检查由后端自动完成
-    const rolePermissions = {
-      admin: ['*'],  // 所有权限
-      reviewer: [
-        'kb_documents:view',
-        'kb_documents:review',
-        'kb_documents:approve',
-        'kb_documents:reject',
-        'kb_documents:delete',
-        'ragflow_documents:view',
-        'ragflow_documents:delete',
-        'users:view',
-      ],
-      operator: [
-        'kb_documents:view',
-        'kb_documents:upload',
-        'ragflow_documents:view',
-      ],
-      viewer: [
-        'ragflow_documents:view',
-      ],
-      guest: [
-        'ragflow_documents:view',
-      ],
-    };
-
-    const permissions = rolePermissions[user.role] || [];
+    // 使用后端返回的实际scopes
+    const permissions = user.scopes || [];
 
     // 检查是否有通配符权限
     if (permissions.includes('*')) {
@@ -178,6 +180,17 @@ export const AuthProvider = ({ children }) => {
     });
   }, [user]);
 
+  /**
+   * 检查用户是否有某个知识库的访问权限
+   * @param {string} kbId - 知识库ID
+   * @returns {boolean} 是否有权限
+   */
+  const canAccessKb = useCallback((kbId) => {
+    if (!user) return false;
+    if (user.role === 'admin') return true;  // 管理员自动拥有所有权限
+    return accessibleKbs.includes(kbId);
+  }, [user, accessibleKbs]);
+
   const value = {
     user,
     loading,
@@ -189,6 +202,8 @@ export const AuthProvider = ({ children }) => {
     isReviewer,
     isOperator,
     can,
+    accessibleKbs,      // 用户可访问的知识库列表
+    canAccessKb,        // 知识库权限检查方法
     isAuthenticated: !!user,
   };
 

@@ -15,15 +15,30 @@ const KnowledgeUpload = () => {
   useEffect(() => {
     const fetchDatasets = async () => {
       try {
-        const data = await authClient.listRagflowDatasets();
-        setDatasets(data.datasets || []);
+        setLoadingDatasets(true);
 
-        if (data.datasets && data.datasets.length > 0) {
-          setKbId(data.datasets[0].name);
+        // 获取用户有权限的知识库列表
+        const userKbData = await authClient.getMyKnowledgeBases();
+        const userKbIds = userKbData.kb_ids || [];
+
+        // 获取所有知识库
+        const data = await authClient.listRagflowDatasets();
+        const allKbs = data.datasets || [];
+
+        // 过滤出用户有权限的知识库
+        const accessibleKbs = allKbs.filter(kb => userKbIds.includes(kb.name));
+
+        setDatasets(accessibleKbs);
+
+        if (accessibleKbs.length > 0) {
+          const defaultKb = accessibleKbs[0].name;
+          setKbId(defaultKb);
+        } else {
+          setError('您没有被分配任何知识库权限，请联系管理员');
         }
       } catch (err) {
-        console.error('Failed to load datasets:', err);
-        setDatasets([{ id: 'default', name: '展厅' }]);
+        setError('无法加载知识库列表，请检查网络连接');
+        setDatasets([]);
       } finally {
         setLoadingDatasets(false);
       }
@@ -34,6 +49,7 @@ const KnowledgeUpload = () => {
 
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
+    console.log('[Upload Flow] Step 1 - File selected:', file?.name, 'Size:', file?.size);
     if (file) {
       const maxSize = 16 * 1024 * 1024;
       if (file.size > maxSize) {
@@ -43,11 +59,32 @@ const KnowledgeUpload = () => {
       }
       setSelectedFile(file);
       setError(null);
+      console.log('[Upload Flow] Step 2 - File validated and stored in state');
     }
+  };
+
+  const handleKbIdChange = (e) => {
+    const newKbId = e.target.value;
+    console.log('[Upload Flow] Step 1.5 - KB selection changed:', {
+      oldKbId: kbId,
+      newKbId: newKbId,
+      newKbIdType: typeof newKbId
+    });
+    setKbId(newKbId);
   };
 
   const handleUpload = async (e) => {
     e.preventDefault();
+
+    console.log('[Upload Flow] ========== UPLOAD START ==========');
+    console.log('[Upload Flow] Step 3 - Upload button clicked');
+    console.log('[Upload Flow] Step 4 - State check:', {
+      selectedFile: selectedFile?.name,
+      kbId: kbId,
+      kbIdType: typeof kbId,
+      datasetsCount: datasets.length,
+      datasets: datasets.map(d => ({ id: d.id, name: d.name }))
+    });
 
     if (!selectedFile) {
       setError('请选择文件');
@@ -58,14 +95,23 @@ const KnowledgeUpload = () => {
     setError(null);
     setSuccess(null);
 
+    console.log('[Upload Flow] Step 5 - Calling authClient.uploadDocument with:', {
+      fileName: selectedFile.name,
+      kbId: kbId,
+      kbIdType: typeof kbId
+    });
+
     try {
       const result = await authClient.uploadDocument(selectedFile, kbId);
+      console.log('[Upload Flow] Step 10 - Upload success:', result);
       setSuccess(`文件 "${result.filename}" 上传成功，等待审核`);
       setSelectedFile(null);
       setTimeout(() => navigate('/documents'), 1500);
     } catch (err) {
+      console.log('[Upload Flow] Step 10 - Upload failed:', err);
       setError(err.message);
     } finally {
+      console.log('[Upload Flow] ========== UPLOAD END ==========');
       setUploading(false);
     }
   };
@@ -117,7 +163,7 @@ const KnowledgeUpload = () => {
             </label>
             <select
               value={kbId}
-              onChange={(e) => setKbId(e.target.value)}
+              onChange={handleKbIdChange}
               disabled={loadingDatasets}
               style={{
                 width: '100%',

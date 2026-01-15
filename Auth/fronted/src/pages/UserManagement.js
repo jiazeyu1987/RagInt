@@ -16,8 +16,16 @@ const UserManagement = () => {
     role: 'viewer',
   });
 
+  // 知识库权限相关 state
+  const [availableKbs, setAvailableKbs] = useState([]);
+  const [editingPermissionsUser, setEditingPermissionsUser] = useState(null);
+  const [userKbPermissions, setUserKbPermissions] = useState([]);
+  const [showPermissionsModal, setShowPermissionsModal] = useState(false);
+  const [userKbMap, setUserKbMap] = useState({}); // 存储每个用户的权限列表
+
   useEffect(() => {
     fetchUsers();
+    fetchKnowledgeBases();  // 加载知识库列表
   }, []);
 
   useEffect(() => {
@@ -29,6 +37,24 @@ const UserManagement = () => {
       setLoading(true);
       const data = await authClient.listUsers();
       setUsers(data);
+
+      // 加载每个用户的知识库权限
+      const kbMap = {};
+      for (const user of data) {
+        if (user.role === 'admin') {
+          // 管理员自动拥有所有权限
+          kbMap[user.user_id] = ['所有知识库'];
+        } else {
+          try {
+            const kbData = await authClient.getUserKnowledgeBases(user.user_id);
+            kbMap[user.user_id] = kbData.kb_ids || [];
+          } catch (err) {
+            console.error(`Failed to load KBs for user ${user.username}:`, err);
+            kbMap[user.user_id] = [];
+          }
+        }
+      }
+      setUserKbMap(kbMap);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -57,6 +83,51 @@ const UserManagement = () => {
     } catch (err) {
       setError(err.message);
     }
+  };
+
+  // 知识库权限相关函数
+  const fetchKnowledgeBases = async () => {
+    try {
+      const data = await authClient.listRagflowDatasets();
+      setAvailableKbs(data.datasets || []);
+    } catch (err) {
+      console.error('Failed to load KBs:', err);
+      setError('无法加载知识库列表');
+    }
+  };
+
+  const handleConfigurePermissions = async (user) => {
+    try {
+      setEditingPermissionsUser(user);
+      const data = await authClient.getUserKnowledgeBases(user.user_id);
+      setUserKbPermissions(data.kb_ids || []);
+      setShowPermissionsModal(true);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleSavePermissions = async () => {
+    try {
+      await authClient.batchGrantKnowledgeBases(
+        [editingPermissionsUser.user_id],
+        userKbPermissions
+      );
+      setShowPermissionsModal(false);
+      setEditingPermissionsUser(null);
+      alert('权限配置已保存');
+
+      // 刷新用户列表和权限映射
+      fetchUsers();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleClosePermissionsModal = () => {
+    setShowPermissionsModal(false);
+    setEditingPermissionsUser(null);
+    setUserKbPermissions([]);
   };
 
   const getRoleColor = (role) => {
@@ -118,6 +189,7 @@ const UserManagement = () => {
               <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>邮箱</th>
               <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>角色</th>
               <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>状态</th>
+              <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>知识库权限</th>
               <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>创建时间</th>
               <th style={{ padding: '12px 16px', textAlign: 'right', borderBottom: '1px solid #e5e7eb' }}>操作</th>
             </tr>
@@ -146,25 +218,66 @@ const UserManagement = () => {
                     {user.status === 'active' ? '激活' : '停用'}
                   </span>
                 </td>
+                <td style={{ padding: '12px 16px', color: '#6b7280', fontSize: '0.85rem', maxWidth: '300px' }}>
+                  {userKbMap[user.user_id] && userKbMap[user.user_id].length > 0 ? (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                      {userKbMap[user.user_id].map((kb, index) => (
+                        <span key={index} style={{
+                          display: 'inline-block',
+                          padding: '2px 6px',
+                          borderRadius: '3px',
+                          backgroundColor: '#dbeafe',
+                          color: '#1e40af',
+                          fontSize: '0.8rem',
+                        }}>
+                          {kb}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>未配置</span>
+                  )}
+                </td>
                 <td style={{ padding: '12px 16px', color: '#6b7280', fontSize: '0.9rem' }}>
                   {new Date(user.created_at_ms).toLocaleString('zh-CN')}
                 </td>
                 <td style={{ padding: '12px 16px', textAlign: 'right' }}>
-                  {canManageUsers && user.username !== 'admin' && (
-                    <button
-                      onClick={() => handleDeleteUser(user.user_id)}
-                      style={{
-                        padding: '6px 12px',
-                        backgroundColor: '#ef4444',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        fontSize: '0.9rem',
-                      }}
-                    >
-                      删除
-                    </button>
+                  {user.role === 'admin' ? (
+                    <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>管理员（所有权限）</span>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => handleConfigurePermissions(user)}
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: '#6366f1',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          fontSize: '0.9rem',
+                          marginRight: '8px',
+                        }}
+                      >
+                        权限
+                      </button>
+                      {canManageUsers && user.username !== 'admin' && (
+                        <button
+                          onClick={() => handleDeleteUser(user.user_id)}
+                          style={{
+                            padding: '6px 12px',
+                            backgroundColor: '#ef4444',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '0.9rem',
+                          }}
+                        >
+                          删除
+                        </button>
+                      )}
+                    </>
                   )}
                 </td>
               </tr>
@@ -314,6 +427,121 @@ const UserManagement = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 权限配置模态框 */}
+      {showPermissionsModal && editingPermissionsUser && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1000,
+        }}>
+          <div style={{
+            backgroundColor: 'white',
+            padding: '32px',
+            borderRadius: '8px',
+            width: '100%',
+            maxWidth: '500px',
+            maxHeight: '80vh',
+            overflowY: 'auto',
+          }}>
+            <h3 style={{ margin: '0 0 24px 0' }}>
+              配置知识库权限 - {editingPermissionsUser.username}
+            </h3>
+            <div style={{ marginBottom: '24px' }}>
+              <p style={{ margin: '0 0 16px 0', color: '#6b7280', fontSize: '0.9rem' }}>
+                选择该用户可以访问的知识库：
+              </p>
+              {availableKbs.length === 0 ? (
+                <div style={{ color: '#f59e0b', padding: '12px', backgroundColor: '#fef3c7', borderRadius: '4px' }}>
+                  暂无可用知识库，请先在RAGFlow中创建知识库
+                </div>
+              ) : (
+                <div style={{
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '4px',
+                  maxHeight: '300px',
+                  overflowY: 'auto',
+                }}>
+                  {availableKbs.map((kb) => (
+                    <label
+                      key={kb.name}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        padding: '12px 16px',
+                        borderBottom: '1px solid #e5e7eb',
+                        cursor: 'pointer',
+                        transition: 'background-color 0.2s',
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={userKbPermissions.includes(kb.name)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setUserKbPermissions([...userKbPermissions, kb.name]);
+                          } else {
+                            setUserKbPermissions(userKbPermissions.filter(k => k !== kb.name));
+                          }
+                        }}
+                        style={{
+                          marginRight: '12px',
+                          width: '18px',
+                          height: '18px',
+                          cursor: 'pointer',
+                        }}
+                      />
+                      <span style={{ flex: 1 }}>{kb.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button
+                type="button"
+                onClick={handleClosePermissionsModal}
+                style={{
+                  flex: 1,
+                  padding: '10px',
+                  backgroundColor: '#6b7280',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                }}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleSavePermissions}
+                disabled={availableKbs.length === 0}
+                style={{
+                  flex: 1,
+                  padding: '10px',
+                  backgroundColor: availableKbs.length === 0 ? '#9ca3af' : '#3b82f6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: availableKbs.length === 0 ? 'not-allowed' : 'pointer',
+                }}
+              >
+                保存
+              </button>
+            </div>
           </div>
         </div>
       )}

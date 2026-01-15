@@ -3,31 +3,43 @@ import { useAuth } from '../hooks/useAuth';
 import authClient from '../api/authClient';
 
 const DocumentReview = () => {
-  const { user, isReviewer } = useAuth();
+  const { user, isReviewer, isAdmin } = useAuth();
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [actionLoading, setActionLoading] = useState(null);
 
   const [datasets, setDatasets] = useState([]);
-  const [selectedDataset, setSelectedDataset] = useState('展厅');
+  const [selectedDataset, setSelectedDataset] = useState(null);  // 改为 null，等待数据加载
   const [loadingDatasets, setLoadingDatasets] = useState(true);
 
   useEffect(() => {
     const fetchDatasets = async () => {
       try {
-        console.log('Fetching RAGFlow datasets...');
-        const data = await authClient.listRagflowDatasets();
-        console.log('RAGFlow datasets response:', data);
-        setDatasets(data.datasets || []);
+        setLoadingDatasets(true);
 
-        if (data.datasets && data.datasets.length > 0) {
-          console.log('Setting default dataset:', data.datasets[0].name);
-          setSelectedDataset(data.datasets[0].name);
+        // 获取用户有权限的知识库列表
+        const userKbData = await authClient.getMyKnowledgeBases();
+        const userKbIds = userKbData.kb_ids || [];
+
+        // 获取所有知识库
+        const data = await authClient.listRagflowDatasets();
+        const allKbs = data.datasets || [];
+
+        // 过滤出用户有权限的知识库
+        const accessibleKbs = allKbs.filter(kb => userKbIds.includes(kb.name));
+
+        setDatasets(accessibleKbs);
+
+        if (accessibleKbs.length > 0) {
+          setSelectedDataset(accessibleKbs[0].name);
+        } else {
+          setError('您没有被分配任何知识库权限，请联系管理员');
         }
       } catch (err) {
         console.error('Failed to load datasets:', err);
-        setDatasets([{ id: 'default', name: '展厅' }]);
+        setError('无法加载知识库列表，请检查网络连接');
+        setDatasets([]);
       } finally {
         setLoadingDatasets(false);
       }
@@ -41,14 +53,20 @@ const DocumentReview = () => {
   }, [selectedDataset]);
 
   const fetchRagflowDocuments = async () => {
+    if (!selectedDataset) return;
+
     try {
       setLoading(true);
-      console.log('Fetching RAGFlow documents for dataset:', selectedDataset);
-      const data = await authClient.listRagflowDocuments(selectedDataset);
-      console.log('RAGFlow response:', data);
+      console.log('Fetching local pending documents for KB:', selectedDataset);
+      // 获取本地待审核文档
+      const data = await authClient.listDocuments({
+        status: 'pending',
+        kb_id: selectedDataset
+      });
+      console.log('Local pending documents response:', data);
       setDocuments(data.documents || []);
     } catch (err) {
-      console.error('Failed to fetch RAGFlow documents:', err);
+      console.error('Failed to fetch pending documents:', err);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -78,6 +96,27 @@ const DocumentReview = () => {
       await authClient.rejectDocument(docId, notes);
       fetchRagflowDocuments();
     } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDelete = async (docId) => {
+    console.log('[DocumentReview] handleDelete called with docId:', docId);
+    console.log('[DocumentReview] User role:', user?.role);
+    console.log('[DocumentReview] isAdmin():', isAdmin());
+
+    if (!window.confirm('确定要删除该文档吗？此操作不可恢复。')) return;
+
+    setActionLoading(docId);
+    try {
+      console.log('[DocumentReview] Calling authClient.deleteDocument...');
+      await authClient.deleteDocument(docId);
+      console.log('[DocumentReview] Delete successful, refreshing documents...');
+      fetchRagflowDocuments();
+    } catch (err) {
+      console.error('[DocumentReview] Delete failed:', err);
       setError(err.message);
     } finally {
       setActionLoading(null);
@@ -141,26 +180,104 @@ const DocumentReview = () => {
                 <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>文档名称</th>
                 <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>状态</th>
                 <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>知识库</th>
+                <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>上传者</th>
+                <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>上传时间</th>
+                <th style={{ padding: '12px 16px', textAlign: 'right', borderBottom: '1px solid #e5e7eb' }}>操作</th>
               </tr>
             </thead>
             <tbody>
               {documents.map((doc) => (
-                <tr key={doc.id} style={{ borderBottom: '1px solid #e5e7eb' }}>
-                  <td style={{ padding: '12px 16px' }}>{doc.name}</td>
+                <tr key={doc.doc_id} style={{ borderBottom: '1px solid #e5e7eb' }}>
+                  <td style={{ padding: '12px 16px' }}>{doc.filename}</td>
                   <td style={{ padding: '12px 16px' }}>
                     <span style={{
                       display: 'inline-block',
                       padding: '4px 8px',
                       borderRadius: '4px',
-                      backgroundColor: doc.status === 'ready' ? '#10b981' : '#f59e0b',
+                      backgroundColor: doc.status === 'pending' ? '#f59e0b' : '#10b981',
                       color: 'white',
                       fontSize: '0.85rem',
                     }}>
-                      {doc.status === 'ready' ? '就绪' : doc.status}
+                      {doc.status === 'pending' ? '待审核' : doc.status === 'approved' ? '已通过' : doc.status === 'rejected' ? '已驳回' : doc.status}
                     </span>
                   </td>
                   <td style={{ padding: '12px 16px', color: '#6b7280' }}>
-                    {selectedDataset}
+                    {doc.kb_id}
+                  </td>
+                  <td style={{ padding: '12px 16px', color: '#6b7280' }}>
+                    {doc.uploaded_by}
+                  </td>
+                  <td style={{ padding: '12px 16px', color: '#6b7280', fontSize: '0.9rem' }}>
+                    {new Date(doc.created_at_ms).toLocaleString('zh-CN')}
+                  </td>
+                  <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                    {(() => {
+                      console.log('[DocumentReview] Rendering buttons for doc:', doc.doc_id);
+                      console.log('[DocumentReview] doc.status:', doc.status);
+                      console.log('[DocumentReview] isReviewer():', isReviewer());
+                      console.log('[DocumentReview] isAdmin():', isAdmin());
+                      return null;
+                    })()}
+                    {doc.status === 'pending' && isReviewer() ? (
+                      <>
+                        <button
+                          onClick={() => handleApprove(doc.doc_id)}
+                          disabled={actionLoading === doc.doc_id}
+                          style={{
+                            padding: '6px 12px',
+                            backgroundColor: actionLoading === doc.doc_id ? '#9ca3af' : '#10b981',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: actionLoading === doc.doc_id ? 'not-allowed' : 'pointer',
+                            fontSize: '0.9rem',
+                            marginRight: '8px',
+                          }}
+                        >
+                          {actionLoading === doc.doc_id ? '处理中...' : '通过'}
+                        </button>
+                        <button
+                          onClick={() => handleReject(doc.doc_id)}
+                          disabled={actionLoading === doc.doc_id}
+                          style={{
+                            padding: '6px 12px',
+                            backgroundColor: actionLoading === doc.doc_id ? '#9ca3af' : '#ef4444',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: actionLoading === doc.doc_id ? 'not-allowed' : 'pointer',
+                            fontSize: '0.9rem',
+                            marginRight: '8px',
+                          }}
+                        >
+                          驳回
+                        </button>
+                      </>
+                    ) : doc.status !== 'pending' ? (
+                      <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>
+                        {doc.status === 'approved' ? '已通过' : '已驳回'}
+                      </span>
+                    ) : (
+                      <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>无权限</span>
+                    )}
+                    {isAdmin() && (
+                      <button
+                        onClick={() => handleDelete(doc.doc_id)}
+                        disabled={actionLoading === doc.doc_id}
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: actionLoading === doc.doc_id ? '#9ca3af' : '#dc2626',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '4px',
+                          cursor: actionLoading === doc.doc_id ? 'not-allowed' : 'pointer',
+                          fontSize: '0.9rem',
+                          marginLeft: doc.status === 'pending' && isReviewer() ? '0' : '0',
+                        }}
+                      >
+                        删除
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -169,7 +286,7 @@ const DocumentReview = () => {
 
           {documents.length === 0 && (
             <div style={{ padding: '48px', textAlign: 'center', color: '#6b7280' }}>
-              该知识库暂无文档
+              {selectedDataset ? `该知识库暂无待审核文档` : '请选择知识库'}
             </div>
           )}
         </div>

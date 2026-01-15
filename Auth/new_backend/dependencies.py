@@ -6,6 +6,7 @@ from services.kb_store import KbStore
 from services.ragflow_service import RagflowService
 from services.user_kb_permission_store import UserKbPermissionStore
 from services.deletion_log_store import DeletionLogStore
+from services.download_log_store import DownloadLogStore
 
 
 @dataclass
@@ -15,6 +16,7 @@ class AppDependencies:
     ragflow_service: RagflowService
     user_kb_permission_store: UserKbPermissionStore
     deletion_log_store: DeletionLogStore
+    download_log_store: DownloadLogStore
 
 
 def create_dependencies(db_path: str = None) -> AppDependencies:
@@ -28,4 +30,5 @@ def create_dependencies(db_path: str = None) -> AppDependencies:
         ragflow_service=RagflowService(),
         user_kb_permission_store=UserKbPermissionStore(db_path=str(db_path)),
         deletion_log_store=DeletionLogStore(db_path=str(db_path)),
+        download_log_store=DownloadLogStore(db_path=str(db_path)),
     )

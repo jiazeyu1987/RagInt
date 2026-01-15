@@ -16,6 +16,7 @@ const PermissionGuard = ({ children, allowedRoles, permission, permissions, fall
     if (!user || requiredPermissions.length === 0) {
       return true; // 没有权限要求时允许访问
     }
+
     return requiredPermissions.every((p) => can(p.resource, p.action));
   }, [user, requiredPermissions, can]);
 

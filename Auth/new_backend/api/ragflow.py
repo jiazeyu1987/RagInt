@@ -77,16 +77,31 @@ async def download_document(
     import urllib.parse
 
     logger = logging.getLogger(__name__)
-    logger.info(f"Download request for doc_id={doc_id}, dataset={dataset}")
+    logger.info("=" * 80)
+    logger.info("[DOWNLOAD] download_document() called")
+    logger.info(f"[DOWNLOAD]   doc_id: {doc_id}")
+    logger.info(f"[DOWNLOAD]   dataset: {dataset}")
+    logger.info(f"[DOWNLOAD]   downloaded_by: {payload.sub}")
 
     try:
         file_content, ragflow_filename = deps.ragflow_service.download_document(doc_id, dataset)
 
         if file_content is None:
-            logger.error(f"Failed to download document {doc_id} from RAGFlow")
+            logger.error(f"[DOWNLOAD] Failed to download document {doc_id} from RAGFlow")
             raise HTTPException(status_code=404, detail="文档不存在或下载失败")
 
-        logger.info(f"Successfully downloaded {len(file_content)} bytes, filename={ragflow_filename}")
+        logger.info(f"[DOWNLOAD] Successfully downloaded {len(file_content)} bytes, filename={ragflow_filename}")
+
+        # 记录下载日志
+        deps.download_log_store.log_download(
+            doc_id=doc_id,
+            filename=ragflow_filename or f"document_{doc_id}",
+            kb_id=dataset,
+            downloaded_by=payload.sub,
+            ragflow_doc_id=doc_id,
+            is_batch=False
+        )
+        logger.info("[DOWNLOAD] Download logged to database")
 
         # Use client-provided filename or ragflow filename
         final_filename = filename or ragflow_filename or f"document_{doc_id}"
@@ -103,6 +118,9 @@ async def download_document(
                 f"filename*=UTF-8''{encoded_filename}"
             )
 
+        logger.info("[DOWNLOAD] Download operation completed successfully")
+        logger.info("=" * 80)
+
         return Response(
             content=file_content,
             media_type="application/octet-stream",
@@ -113,7 +131,7 @@ async def download_document(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Exception during download: {e}")
+        logger.error(f"[DOWNLOAD] Exception during download: {e}")
         import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"下载失败: {str(e)}")
@@ -206,22 +224,87 @@ async def batch_download_documents(
     data = await request.json()
     documents_info = data.get("documents", [])
 
-    logger.info(f"Received batch download request with {len(documents_info)} documents")
-    logger.info(f"Request data: {documents_info}")
+    logger.info("=" * 80)
+    logger.info("[BATCH DOWNLOAD] batch_download_documents() called")
+    logger.info(f"[BATCH DOWNLOAD]   Number of documents: {len(documents_info)}")
+    logger.info(f"[BATCH DOWNLOAD]   downloaded_by: {payload.sub}")
 
     if not documents_info:
-        logger.warning("No documents in request")
+        logger.warning("[BATCH DOWNLOAD] No documents in request")
         raise HTTPException(status_code=400, detail="no_documents_selected")
 
     zip_content, filename = deps.ragflow_service.batch_download_documents(documents_info)
     if zip_content is None:
-        logger.error("Failed to create zip - service returned None")
+        logger.error("[BATCH DOWNLOAD] Failed to create zip - service returned None")
         raise HTTPException(status_code=500, detail="批量下载失败")
 
-    logger.info(f"Sending zip file: {filename}, size: {len(zip_content)} bytes")
+    # 记录批量下载日志（为每个文档记录一条）
+    for doc_info in documents_info:
+        doc_id = doc_info.get("doc_id") or doc_info.get("id")
+        doc_name = doc_info.get("name", "unknown")
+        dataset = doc_info.get("dataset", "展厅")
+
+        deps.download_log_store.log_download(
+            doc_id=doc_id,
+            filename=doc_name,
+            kb_id=dataset,
+            downloaded_by=payload.sub,
+            ragflow_doc_id=doc_id,
+            is_batch=True
+        )
+
+    logger.info(f"[BATCH DOWNLOAD] Recorded {len(documents_info)} download logs")
+    logger.info(f"[BATCH DOWNLOAD] Sending zip file: {filename}, size: {len(zip_content)} bytes")
+    logger.info("[BATCH DOWNLOAD] Batch download operation completed successfully")
+    logger.info("=" * 80)
 
     return Response(
         content=zip_content,
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/downloads")
+async def list_downloads(
+    payload: RagflowViewRequired,
+    deps: AppDependencies = Depends(get_deps),
+    kb_id: Optional[str] = None,
+    downloaded_by: Optional[str] = None,
+    limit: int = 100,
+):
+    """
+    获取下载记录列表
+
+    权限规则：
+    - 管理员：可以看到所有下载记录
+    - 其他角色：只能看到自己的下载记录
+    """
+    user = deps.user_store.get_by_user_id(payload.sub)
+
+    # 非管理员用户只能看到自己的下载记录
+    if user.role != "admin":
+        downloaded_by = payload.sub
+
+    downloads = deps.download_log_store.list_downloads(
+        kb_id=kb_id,
+        downloaded_by=downloaded_by,
+        limit=limit
+    )
+
+    return {
+        "downloads": [
+            {
+                "id": d.id,
+                "doc_id": d.doc_id,
+                "filename": d.filename,
+                "kb_id": d.kb_id,
+                "downloaded_by": d.downloaded_by,
+                "downloaded_at_ms": d.downloaded_at_ms,
+                "ragflow_doc_id": d.ragflow_doc_id,
+                "is_batch": d.is_batch,
+            }
+            for d in downloads
+        ],
+        "count": len(downloads)
+    }

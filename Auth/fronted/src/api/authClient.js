@@ -323,11 +323,23 @@ class AuthClient {
   }
 
   async uploadDocument(file, kbId = '展厅') {
+    console.log('[authClient] Step 6 - uploadDocument called');
+    console.log('[authClient] Step 7 - Parameters:', {
+      fileName: file.name,
+      fileSize: file.size,
+      kbId: kbId,
+      kbIdType: typeof kbId,
+      kbIdLength: kbId?.length
+    });
+
     const formData = new FormData();
     formData.append('file', file);
 
+    const url = authBackendUrl(`/api/knowledge/upload?kb_id=${encodeURIComponent(kbId)}`);
+    console.log('[authClient] Step 8 - Sending request to:', url);
+
     const response = await this.fetchWithAuth(
-      authBackendUrl(`/api/knowledge/upload?kb_id=${encodeURIComponent(kbId)}`),
+      url,
       {
         method: 'POST',
         body: formData,
@@ -335,12 +347,21 @@ class AuthClient {
       }
     );
 
+    console.log('[authClient] Step 9 - Response received:', {
+      status: response.status,
+      statusText: response.statusText,
+      ok: response.ok
+    });
+
     if (!response.ok) {
       const error = await response.json();
+      console.log('[authClient] Step 9a - Error response:', error);
       throw new Error(error.detail || 'Failed to upload document');
     }
 
-    return response.json();
+    const result = await response.json();
+    console.log('[authClient] Step 9b - Success response:', result);
+    return result;
   }
 
   async getStats() {
@@ -398,6 +419,34 @@ class AuthClient {
 
     if (!response.ok) {
       throw new Error('Failed to delete document');
+    }
+
+    return response.json();
+  }
+
+  async listDeletions(params = {}) {
+    const queryParams = new URLSearchParams(params).toString();
+    const response = await this.fetchWithAuth(
+      authBackendUrl(`/api/knowledge/deletions?${queryParams}`),
+      { method: 'GET' }
+    );
+
+    if (!response.ok) {
+      throw new Error('Failed to list deletions');
+    }
+
+    return response.json();
+  }
+
+  async listDownloads(params = {}) {
+    const queryParams = new URLSearchParams(params).toString();
+    const response = await this.fetchWithAuth(
+      authBackendUrl(`/api/ragflow/downloads?${queryParams}`),
+      { method: 'GET' }
+    );
+
+    if (!response.ok) {
+      throw new Error('Failed to list downloads');
     }
 
     return response.json();
@@ -563,6 +612,96 @@ class AuthClient {
   // Alias for backwards compatibility
   async listRagflowDatasets() {
     return this.listDatasets();
+  }
+
+  // ==================== 知识库权限相关 API ====================
+
+  /**
+   * 获取用户的知识库权限列表（管理员）
+   */
+  async getUserKnowledgeBases(userId) {
+    const response = await this.fetchWithAuth(
+      authBackendUrl(`/api/users/${userId}/kbs`),
+      { method: 'GET' }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to get user KBs');
+    }
+
+    return response.json();  // { kb_ids: [...] }
+  }
+
+  /**
+   * 授予用户知识库权限
+   */
+  async grantKnowledgeBaseAccess(userId, kbId) {
+    const response = await this.fetchWithAuth(
+      authBackendUrl(`/api/users/${userId}/kbs/${encodeURIComponent(kbId)}`),
+      { method: 'POST' }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to grant KB access');
+    }
+
+    return response.json();
+  }
+
+  /**
+   * 撤销用户知识库权限
+   */
+  async revokeKnowledgeBaseAccess(userId, kbId) {
+    const response = await this.fetchWithAuth(
+      authBackendUrl(`/api/users/${userId}/kbs/${encodeURIComponent(kbId)}`),
+      { method: 'DELETE' }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to revoke KB access');
+    }
+
+    return response.json();
+  }
+
+  /**
+   * 批量授权多个用户多个知识库
+   */
+  async batchGrantKnowledgeBases(userIds, kbIds) {
+    const response = await this.fetchWithAuth(
+      authBackendUrl('/api/users/batch-grant'),
+      {
+        method: 'POST',
+        body: JSON.stringify({ user_ids: userIds, kb_ids: kbIds })
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to batch grant');
+    }
+
+    return response.json();
+  }
+
+  /**
+   * 获取当前用户可访问的知识库列表
+   */
+  async getMyKnowledgeBases() {
+    const response = await this.fetchWithAuth(
+      authBackendUrl('/api/me/kbs'),
+      { method: 'GET' }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to get my KBs');
+    }
+
+    return response.json();  // { kb_ids: [...] }
   }
 }
 

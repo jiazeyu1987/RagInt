@@ -8,6 +8,7 @@ import UserManagement from './pages/UserManagement';
 import KnowledgeUpload from './pages/KnowledgeUpload';
 import DocumentReview from './pages/DocumentReview';
 import DocumentBrowser from './pages/DocumentBrowser';
+import DocumentAudit from './pages/DocumentAudit';
 import Unauthorized from './pages/Unauthorized';
 import PermissionGuard from './components/PermissionGuard';
 
@@ -63,6 +64,16 @@ function App() {
               <PermissionGuard permission={{ resource: 'ragflow_documents', action: 'view' }}>
                 <Layout>
                   <DocumentBrowser />
+                </Layout>
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/audit"
+            element={
+              <PermissionGuard allowedRoles={['admin']}>
+                <Layout>
+                  <DocumentAudit />
                 </Layout>
               </PermissionGuard>
             }

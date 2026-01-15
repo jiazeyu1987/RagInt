@@ -52,7 +52,7 @@ if (typeof window !== 'undefined') {
 }
 
 const DocumentBrowser = () => {
-  const { user, can } = useAuth();
+  const { user, can, accessibleKbs } = useAuth();
   const [datasets, setDatasets] = useState([]);
   const [documents, setDocuments] = useState({});
   const [loading, setLoading] = useState(true);
@@ -67,7 +67,15 @@ const DocumentBrowser = () => {
 
   useEffect(() => {
     fetchAllDatasets();
-  }, []);
+  }, [accessibleKbs, user]); // 当用户权限变化时重新加载
+
+  // 当用户切换时，清空之前的文档数据
+  useEffect(() => {
+    setDocuments({});
+    setExpandedDatasets(new Set());
+    setSelectedDocs({});
+    setPreviewUrl(null);
+  }, [user?.user_id]);
 
   useEffect(() => {
     setCanDeleteDocs(can('ragflow_documents', 'delete'));
@@ -86,8 +94,24 @@ const DocumentBrowser = () => {
   const fetchAllDatasets = async () => {
     try {
       setLoading(true);
+
+      // 获取所有知识库
       const data = await authClient.listRagflowDatasets();
-      setDatasets(data.datasets || []);
+      const allKbs = data.datasets || [];
+
+      // 根据用户权限过滤知识库
+      // 管理员可以看到所有知识库
+      // 其他用户只能看到被分配的知识库
+      let filteredKbs = allKbs;
+      if (user?.role !== 'admin') {
+        filteredKbs = allKbs.filter(kb => accessibleKbs.includes(kb.name));
+      }
+
+      setDatasets(filteredKbs);
+
+      if (filteredKbs.length === 0 && user?.role !== 'admin') {
+        setError('您没有被分配任何知识库权限，请联系管理员');
+      }
     } catch (err) {
       setError(err.message);
     } finally {
