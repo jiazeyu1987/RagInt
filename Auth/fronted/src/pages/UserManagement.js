@@ -13,14 +13,14 @@ const UserManagement = () => {
     username: '',
     password: '',
     email: '',
-    group_id: null,
+    group_ids: [],
   });
 
   // 权限组相关 state
   const [availableGroups, setAvailableGroups] = useState([]);
   const [editingGroupUser, setEditingGroupUser] = useState(null);
   const [showGroupModal, setShowGroupModal] = useState(false);
-  const [selectedGroupId, setSelectedGroupId] = useState(null);
+  const [selectedGroupIds, setSelectedGroupIds] = useState([]);
 
   useEffect(() => {
     fetchUsers();
@@ -62,7 +62,7 @@ const UserManagement = () => {
     try {
       await authClient.createUser(newUser);
       setShowCreateModal(false);
-      setNewUser({ username: '', password: '', email: '', group_id: null });
+      setNewUser({ username: '', password: '', email: '', group_ids: [] });
       fetchUsers();
     } catch (err) {
       setError(err.message);
@@ -84,8 +84,11 @@ const UserManagement = () => {
   const handleAssignGroup = async (user) => {
     try {
       setEditingGroupUser(user);
-      setSelectedGroupId(user.group_id || null);
+      // 从 permission_groups 中提取 group_ids，确保正确预选
+      const groupIds = user.group_ids || (user.permission_groups || []).map(pg => pg.group_id);
+      setSelectedGroupIds(groupIds);
       setShowGroupModal(true);
+      console.log('编辑用户权限组:', user.username, '已有权限组:', groupIds);
     } catch (err) {
       setError(err.message);
     }
@@ -94,11 +97,11 @@ const UserManagement = () => {
   const handleSaveGroup = async () => {
     try {
       await authClient.updateUser(editingGroupUser.user_id, {
-        group_id: selectedGroupId
+        group_ids: selectedGroupIds
       });
       setShowGroupModal(false);
       setEditingGroupUser(null);
-      setSelectedGroupId(null);
+      setSelectedGroupIds([]);
       fetchUsers();
     } catch (err) {
       setError(err.message);
@@ -108,29 +111,7 @@ const UserManagement = () => {
   const handleCloseGroupModal = () => {
     setShowGroupModal(false);
     setEditingGroupUser(null);
-    setSelectedGroupId(null);
-  };
-
-  const getRoleColor = (role) => {
-    const colors = {
-      admin: '#ef4444',
-      reviewer: '#f59e0b',
-      operator: '#3b82f6',
-      viewer: '#6b7280',
-      guest: '#9ca3af',
-    };
-    return colors[role] || '#6b7280';
-  };
-
-  const getRoleName = (role) => {
-    const names = {
-      admin: '管理员',
-      reviewer: '审核员',
-      operator: '操作员',
-      viewer: '查看者',
-      guest: '访客',
-    };
-    return names[role] || role;
+    setSelectedGroupIds([]);
   };
 
   if (loading) return <div>Loading...</div>;
@@ -168,7 +149,6 @@ const UserManagement = () => {
             <tr>
               <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>用户名</th>
               <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>邮箱</th>
-              <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>角色</th>
               <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>状态</th>
               <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>权限组</th>
               <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>创建时间</th>
@@ -182,35 +162,30 @@ const UserManagement = () => {
                 <td style={{ padding: '12px 16px', color: '#6b7280' }}>{user.email || '-'}</td>
                 <td style={{ padding: '12px 16px' }}>
                   <span style={{
-                    display: 'inline-block',
-                    padding: '4px 8px',
-                    borderRadius: '4px',
-                    backgroundColor: getRoleColor(user.role),
-                    color: 'white',
-                    fontSize: '0.85rem',
-                  }}>
-                    {getRoleName(user.role)}
-                  </span>
-                </td>
-                <td style={{ padding: '12px 16px' }}>
-                  <span style={{
                     color: user.status === 'active' ? '#10b981' : '#ef4444',
                   }}>
                     {user.status === 'active' ? '激活' : '停用'}
                   </span>
                 </td>
                 <td style={{ padding: '12px 16px' }}>
-                  {user.group_name ? (
-                    <span style={{
-                      display: 'inline-block',
-                      padding: '4px 8px',
-                      borderRadius: '4px',
-                      backgroundColor: '#e0e7ff',
-                      color: '#4338ca',
-                      fontSize: '0.85rem',
-                    }}>
-                      {user.group_name}
-                    </span>
+                  {user.permission_groups && user.permission_groups.length > 0 ? (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                      {user.permission_groups.map((pg) => (
+                        <span
+                          key={pg.group_id}
+                          style={{
+                            display: 'inline-block',
+                            padding: '4px 8px',
+                            borderRadius: '4px',
+                            backgroundColor: '#e0e7ff',
+                            color: '#4338ca',
+                            fontSize: '0.85rem',
+                          }}
+                        >
+                          {pg.group_name}
+                        </span>
+                      ))}
+                    </div>
                   ) : (
                     <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>未分配</span>
                   )}
@@ -343,26 +318,61 @@ const UserManagement = () => {
 
               <div style={{ marginBottom: '24px' }}>
                 <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
-                  权限组
+                  权限组 (可多选)
                 </label>
-                <select
-                  value={newUser.group_id || ''}
-                  onChange={(e) => setNewUser({ ...newUser, group_id: e.target.value ? parseInt(e.target.value) : null })}
-                  style={{
-                    width: '100%',
-                    padding: '8px',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '4px',
-                    boxSizing: 'border-box',
-                  }}
-                >
-                  <option value="">选择权限组...</option>
-                  {availableGroups.map((group) => (
-                    <option key={group.group_id} value={group.group_id}>
-                      {group.group_name} {group.description ? `- ${group.description}` : ''}
-                    </option>
-                  ))}
-                </select>
+                <div style={{
+                  border: '1px solid #d1d5db',
+                  borderRadius: '4px',
+                  padding: '12px',
+                  maxHeight: '200px',
+                  overflowY: 'auto',
+                  backgroundColor: '#f9fafb',
+                }}>
+                  {availableGroups.length === 0 ? (
+                    <div style={{ color: '#6b7280', textAlign: 'center', padding: '8px' }}>
+                      暂无可用权限组
+                    </div>
+                  ) : (
+                    availableGroups.map((group) => (
+                      <label
+                        key={group.group_id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          padding: '8px 0',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={newUser.group_ids?.includes(group.group_id) || false}
+                          onChange={(e) => {
+                            const groupIds = newUser.group_ids || [];
+                            if (e.target.checked) {
+                              setNewUser({ ...newUser, group_ids: [...groupIds, group.group_id] });
+                            } else {
+                              setNewUser({ ...newUser, group_ids: groupIds.filter(id => id !== group.group_id) });
+                            }
+                          }}
+                          style={{ marginRight: '8px' }}
+                        />
+                        <div>
+                          <div style={{ fontWeight: '500' }}>{group.group_name}</div>
+                          {group.description && (
+                            <div style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                              {group.description}
+                            </div>
+                          )}
+                        </div>
+                      </label>
+                    ))
+                  )}
+                </div>
+                {newUser.group_ids && newUser.group_ids.length > 0 && (
+                  <div style={{ marginTop: '8px', fontSize: '0.85rem', color: '#6b7280' }}>
+                    已选择 {newUser.group_ids.length} 个权限组
+                  </div>
+                )}
               </div>
 
               <div style={{ display: 'flex', gap: '12px' }}>
@@ -384,7 +394,7 @@ const UserManagement = () => {
                   type="button"
                   onClick={() => {
                     setShowCreateModal(false);
-                    setNewUser({ username: '', password: '', email: '', group_id: null });
+                    setNewUser({ username: '', password: '', email: '', group_ids: [] });
                   }}
                   style={{
                     flex: 1,
@@ -423,33 +433,68 @@ const UserManagement = () => {
             padding: '32px',
             borderRadius: '8px',
             width: '100%',
-            maxWidth: '400px',
+            maxWidth: '500px',
           }}>
             <h3 style={{ margin: '0 0 24px 0' }}>
               分配权限组 - {editingGroupUser.username}
             </h3>
             <div style={{ marginBottom: '24px' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
-                选择权限组
+                选择权限组 (可多选)
               </label>
-              <select
-                value={selectedGroupId || ''}
-                onChange={(e) => setSelectedGroupId(e.target.value ? parseInt(e.target.value) : null)}
-                style={{
-                  width: '100%',
-                  padding: '10px',
-                  border: '1px solid #d1d5db',
-                  borderRadius: '4px',
-                  fontSize: '1rem',
-                }}
-              >
-                <option value="">未分配</option>
-                {availableGroups.map((group) => (
-                  <option key={group.group_id} value={group.group_id}>
-                    {group.group_name} {group.description ? `- ${group.description}` : ''}
-                  </option>
-                ))}
-              </select>
+              <div style={{
+                border: '1px solid #d1d5db',
+                borderRadius: '4px',
+                padding: '12px',
+                maxHeight: '300px',
+                overflowY: 'auto',
+                backgroundColor: '#f9fafb',
+              }}>
+                {availableGroups.length === 0 ? (
+                  <div style={{ color: '#6b7280', textAlign: 'center', padding: '8px' }}>
+                    暂无可用权限组
+                  </div>
+                ) : (
+                  availableGroups.map((group) => (
+                    <label
+                      key={group.group_id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        padding: '8px 0',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedGroupIds?.includes(group.group_id) || false}
+                        onChange={(e) => {
+                          const groupIds = selectedGroupIds || [];
+                          if (e.target.checked) {
+                            setSelectedGroupIds([...groupIds, group.group_id]);
+                          } else {
+                            setSelectedGroupIds(groupIds.filter(id => id !== group.group_id));
+                          }
+                        }}
+                        style={{ marginRight: '8px' }}
+                      />
+                      <div>
+                        <div style={{ fontWeight: '500' }}>{group.group_name}</div>
+                        {group.description && (
+                          <div style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                            {group.description}
+                          </div>
+                        )}
+                      </div>
+                    </label>
+                  ))
+                )}
+              </div>
+              {selectedGroupIds && selectedGroupIds.length > 0 && (
+                <div style={{ marginTop: '8px', fontSize: '0.85rem', color: '#6b7280' }}>
+                  已选择 {selectedGroupIds.length} 个权限组
+                </div>
+              )}
             </div>
             <div style={{ display: 'flex', gap: '12px' }}>
               <button

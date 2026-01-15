@@ -31,15 +31,22 @@ async def login(
     Returns access_token and refresh_token.
     Tokens are set in cookies and response body.
     """
+    print(f"[DEBUG] Login attempt for username: {credentials.username}")
+
     # Verify user credentials
     user = deps.user_store.get_by_username(credentials.username)
     if not user:
+        print(f"[DEBUG] User not found: {credentials.username}")
         raise HTTPException(status_code=401, detail="用户名或密码错误")
 
+    print(f"[DEBUG] User found: {user.username}, status: {user.status}")
+
     if hash_password(credentials.password) != user.password_hash:
+        print(f"[DEBUG] Password mismatch for: {credentials.username}")
         raise HTTPException(status_code=401, detail="用户名或密码错误")
 
     if user.status != "active":
+        print(f"[DEBUG] User not active: {user.username}, status: {user.status}")
         raise HTTPException(status_code=403, detail="账户已被禁用")
 
     # Get scopes based on user's role
@@ -139,7 +146,7 @@ async def get_current_user(
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
 
-    # 获取权限组操作权限（如果有权限组）
+    # 获取所有权限组的操作权限（取并集）
     permissions = {
         'can_upload': False,
         'can_review': False,
@@ -147,15 +154,38 @@ async def get_current_user(
         'can_delete': False
     }
 
-    if user.group_id:
-        group = deps.permission_group_store.get_group(user.group_id)
-        if group:
-            permissions = {
-                'can_upload': group.get('can_upload', False),
-                'can_review': group.get('can_review', False),
-                'can_download': group.get('can_download', False),
-                'can_delete': group.get('can_delete', False)
-            }
+    # 收集所有权限组的资源权限（知识库和聊天体）
+    accessible_kbs_set = set()
+    accessible_chats_set = set()
+    permission_groups_list = []
+
+    if user.group_ids and len(user.group_ids) > 0:
+        for group_id in user.group_ids:
+            group = deps.permission_group_store.get_group(group_id)
+            if group:
+                permission_groups_list.append({
+                    'group_id': group_id,
+                    'group_name': group.get('group_name', ''),
+                })
+
+                # 合并操作权限（取并集：任一为true则为true）
+                permissions['can_upload'] = permissions['can_upload'] or group.get('can_upload', False)
+                permissions['can_review'] = permissions['can_review'] or group.get('can_review', False)
+                permissions['can_download'] = permissions['can_download'] or group.get('can_download', False)
+                permissions['can_delete'] = permissions['can_delete'] or group.get('can_delete', False)
+
+                # 合并资源权限（取并集）
+                group_kbs = group.get('accessible_kbs', [])
+                if group_kbs:
+                    accessible_kbs_set.update(group_kbs)
+
+                group_chats = group.get('accessible_chats', [])
+                if group_chats:
+                    accessible_chats_set.update(group_chats)
+
+    # 转换为列表
+    accessible_kbs = list(accessible_kbs_set)
+    accessible_chats = list(accessible_chats_set)
 
     return {
         "user_id": user.user_id,
@@ -163,7 +193,11 @@ async def get_current_user(
         "email": user.email,
         "role": user.role,
         "status": user.status,
-        "group_id": user.group_id,
+        "group_id": user.group_id,  # 保留用于向后兼容
+        "group_ids": user.group_ids,  # 新字段
+        "permission_groups": permission_groups_list,  # 权限组详情
         "scopes": get_scopes_for_role(user.role),
-        "permissions": permissions
+        "permissions": permissions,
+        "accessible_kbs": accessible_kbs,
+        "accessible_chats": accessible_chats
     }
