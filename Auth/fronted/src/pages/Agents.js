@@ -17,6 +17,30 @@ const Agents = () => {
   const [keyword, setKeyword] = useState(false);
   const [highlight, setHighlight] = useState(false);
 
+  // Inject highlight styles
+  useEffect(() => {
+    if (typeof document !== 'undefined' && !document.getElementById('highlight-styles')) {
+      const style = document.createElement('style');
+      style.id = 'highlight-styles';
+      style.textContent = `
+        .ragflow-highlight {
+          background-color: #fef08a;
+          font-weight: bold;
+          padding: 2px 4px;
+          border-radius: 2px;
+        }
+        em {
+          background-color: #fef08a;
+          font-weight: bold;
+          font-style: normal;
+          padding: 2px 4px;
+          border-radius: 2px;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+  }, []);
+
   // Load available datasets on mount
   useEffect(() => {
     fetchDatasets();
@@ -69,13 +93,11 @@ const Agents = () => {
       if (result.chunks && result.chunks.length > 0) {
         console.log('=== SEARCH RESULT DEBUG ===');
         console.log('[DEBUG] Total chunks:', result.chunks.length);
-        console.log('[DEBUG] First chunk structure:', result.chunks[0]);
-        console.log('[DEBUG] All chunk keys:', Object.keys(result.chunks[0]));
-        console.log('[DEBUG] document_id:', result.chunks[0].document_id);
-        console.log('[DEBUG] document_name:', result.chunks[0].document_name);
-        console.log('[DEBUG] dataset_id:', result.chunks[0].dataset_id);
-        console.log('[DEBUG] similarity:', result.chunks[0].similarity);
-        console.log('[DEBUG] Full chunk data:', JSON.stringify(result.chunks[0], null, 2));
+        console.log('[DEBUG] All available fields:', Object.keys(result.chunks[0]).join(', '));
+        console.log('[DEBUG] content_with_weight:', result.chunks[0].content_with_weight?.substring(0, 200));
+        console.log('[DEBUG] content:', result.chunks[0].content?.substring(0, 200));
+        console.log('[DEBUG] document_keyword:', result.chunks[0].document_keyword);
+        console.log('[DEBUG] Highlight parameter sent:', highlight);
         console.log('=========================');
       }
 
@@ -128,6 +150,42 @@ const Agents = () => {
     } catch (err) {
       setError(`下载文档失败: ${err.message}`);
     }
+  };
+
+  // Manual highlight function as fallback
+  const highlightText = (text, query) => {
+    if (!query || !text) {
+      console.log('[HIGHLIGHT] Skipping - query:', query, 'text:', text ? 'exists' : 'empty');
+      return text;
+    }
+
+    console.log('[HIGHLIGHT] ========== START ==========');
+    console.log('[HIGHLIGHT] Query:', query);
+    console.log('[HIGHLIGHT] Text preview (first 150 chars):', text.substring(0, 150));
+    console.log('[HIGHLIGHT] Query length:', query.length);
+    console.log('[HIGHLIGHT] Text length:', text.length);
+
+    // Check if query exists in text at all
+    const queryExists = text.toLowerCase().includes(query.toLowerCase());
+    console.log('[HIGHLIGHT] Query exists in text (case-insensitive):', queryExists);
+
+    // Try exact match first
+    const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    console.log('[HIGHLIGHT] Escaped query:', escapedQuery);
+
+    const regex = new RegExp(`(${escapedQuery})`, 'gi');
+
+    // Test the regex
+    const match = text.match(regex);
+    console.log('[HIGHLIGHT] Regex match result:', match);
+    console.log('[HIGHLIGHT] Number of matches:', match ? match.length : 0);
+
+    const result = text.replace(regex, '<em>$1</em>');
+    console.log('[HIGHLIGHT] Result has <em> tags:', result.includes('<em>'));
+    console.log('[HIGHLIGHT] Result preview (first 200 chars):', result.substring(0, 200));
+    console.log('[HIGHLIGHT] ========== END ==========');
+
+    return result;
   };
 
   return (
@@ -367,6 +425,30 @@ const Agents = () => {
                 const docName = chunk.document_name || chunk.doc_name || chunk.docname || chunk.filename || chunk.document_keyword;
                 const datasetId = chunk.dataset_id || chunk.dataset || chunk.kb_id;
 
+                // Choose content based on highlight setting
+                let displayContent = chunk.content || '';
+
+                // Debug: Log content info
+                if (index === 0) {
+                  console.log('=== CHUNK DEBUG ===');
+                  console.log('[DEBUG] Chunk index:', index);
+                  console.log('[DEBUG] highlight checkbox state:', highlight);
+                  console.log('[DEBUG] searchQuery value:', searchQuery);
+                  console.log('[DEBUG] searchQuery type:', typeof searchQuery);
+                  console.log('[DEBUG] content_with_weight exists:', !!chunk.content_with_weight);
+                  console.log('[DEBUG] content exists:', !!chunk.content);
+                  console.log('[DEBUG] content length:', displayContent.length);
+                  console.log('[DEBUG] Should use manual highlight:', highlight && !chunk.content_with_weight);
+                  console.log('==================');
+                }
+
+                // If highlight is enabled and backend didn't return highlighted content, do it manually
+                if (highlight && !chunk.content_with_weight) {
+                  displayContent = highlightText(displayContent, searchQuery);
+                } else if (chunk.content_with_weight) {
+                  displayContent = chunk.content_with_weight;
+                }
+
                 return (
                 <div
                   key={index}
@@ -450,7 +532,7 @@ const Agents = () => {
                       whiteSpace: 'pre-wrap'
                     }}
                     dangerouslySetInnerHTML={{
-                      __html: chunk.content_with_weight || chunk.content || ''
+                      __html: displayContent
                     }}
                   />
                 </div>

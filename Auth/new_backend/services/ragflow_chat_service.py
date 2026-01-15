@@ -565,10 +565,19 @@ class RagflowChatService:
                     # Debug: Log the structure of the first chunk
                     chunks = result.get("chunks", [])
                     if chunks:
+                        self.logger.info(f"[RETRIEVAL] highlight parameter: {highlight}")
                         self.logger.info(f"[RETRIEVAL] First chunk keys: {list(chunks[0].keys())}")
-                        self.logger.info(f"[RETRIEVAL] First chunk sample: {str(chunks[0])[:500]}...")
+                        self.logger.info(f"[RETRIEVAL] All available fields: {', '.join(list(chunks[0].keys()))}")
 
-                    self.logger.info(f"Successfully retrieved chunks: {result.get('total', 0)} total")
+                        # Check if content_with_weight exists
+                        if 'content_with_weight' in chunks[0]:
+                            self.logger.info(f"[RETRIEVAL] content_with_weight exists: YES")
+                            self.logger.info(f"[RETRIEVAL] content_with_weight preview: {str(chunks[0].get('content_with_weight'))[:200]}...")
+                        else:
+                            self.logger.warning(f"[RETRIEVAL] content_with_weight field NOT FOUND in response!")
+                            self.logger.info(f"[RETRIEVAL] Content fields that exist: {[k for k in chunks[0].keys() if 'content' in k.lower()]}")
+
+                        self.logger.info(f"Successfully retrieved chunks: {result.get('total', 0)} total")
                     return result
                 else:
                     self.logger.error(f"Failed to retrieve chunks: {data.get('message')}")
