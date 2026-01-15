@@ -85,19 +85,49 @@ const Agents = () => {
         page_size: pageSize,
         similarity_threshold: similarityThreshold,
         top_k: topK,
-        keyword,
+        keyword: false, // Always use semantic search for better results
         highlight
       });
 
-      // Debug: Log the first chunk to see its structure
+      // Debug: Check if chunks contain the search query
       if (result.chunks && result.chunks.length > 0) {
         console.log('=== SEARCH RESULT DEBUG ===');
-        console.log('[DEBUG] Total chunks:', result.chunks.length);
-        console.log('[DEBUG] All available fields:', Object.keys(result.chunks[0]).join(', '));
-        console.log('[DEBUG] content_with_weight:', result.chunks[0].content_with_weight?.substring(0, 200));
-        console.log('[DEBUG] content:', result.chunks[0].content?.substring(0, 200));
-        console.log('[DEBUG] document_keyword:', result.chunks[0].document_keyword);
-        console.log('[DEBUG] Highlight parameter sent:', highlight);
+        console.log('[DEBUG] Semantic search returned chunks:', result.chunks.length);
+        console.log('[DEBUG] User checked "keyword matching":', keyword);
+        console.log('[DEBUG] Search query:', searchQuery);
+        console.log('[DEBUG] Checking which chunks contain the search query...');
+
+        let chunksWithKeyword = 0;
+        result.chunks.forEach((chunk, index) => {
+          const content = chunk.content || '';
+          const containsQuery = content.toLowerCase().includes(searchQuery.toLowerCase());
+          if (containsQuery) chunksWithKeyword++;
+          console.log(`[DEBUG] Chunk ${index}: contains "${searchQuery}" = ${containsQuery}`);
+
+          if (index < 3) { // Show preview for first 3 chunks
+            console.log(`[DEBUG] Chunk ${index} preview:`, content.substring(0, 80));
+          }
+        });
+
+        console.log(`[DEBUG] Total chunks containing keyword: ${chunksWithKeyword}`);
+
+        // If keyword matching checkbox is checked, filter to show only chunks with the keyword
+        if (keyword) {
+          const filteredChunks = result.chunks.filter(chunk => {
+            const content = chunk.content || '';
+            return content.toLowerCase().includes(searchQuery.toLowerCase());
+          });
+
+          console.log(`[DEBUG] Frontend filter: removed ${result.chunks.length - filteredChunks.length} chunks without keyword`);
+          console.log(`[DEBUG] Displaying: ${filteredChunks.length} chunks`);
+
+          // Update the result with filtered chunks
+          result.chunks = filteredChunks;
+          result.total = filteredChunks.length;
+        } else {
+          console.log(`[DEBUG] Displaying all ${result.chunks.length} chunks (semantic matching)`);
+        }
+
         console.log('=========================');
       }
 
