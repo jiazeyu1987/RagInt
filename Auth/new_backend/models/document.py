@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 
 
 class DocumentResponse(BaseModel):
@@ -29,3 +29,8 @@ class StatsResponse(BaseModel):
     pending_documents: int
     approved_documents: int
     rejected_documents: int
+
+
+class BatchDownloadRequest(BaseModel):
+    """Batch download request model"""
+    doc_ids: List[str]

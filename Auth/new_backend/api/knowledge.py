@@ -1,14 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from typing import Annotated, Optional
 import os
 import uuid
+import zipfile
+import io
 from pathlib import Path
 
 from authx import TokenPayload
 from core.security import auth
 from core.permissions import KbViewRequired, KbUploadRequired, KbDeleteRequired
-from models.document import DocumentResponse, StatsResponse
+from models.document import DocumentResponse, StatsResponse, BatchDownloadRequest
 from dependencies import AppDependencies
 from config import settings
 
@@ -237,12 +239,24 @@ async def download_document(
     deps: AppDependencies = Depends(get_deps),
 ):
     """Download document file"""
+    import logging
+    logger = logging.getLogger(__name__)
+
     doc = deps.kb_store.get_document(doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
 
     if not os.path.exists(doc.file_path):
         raise HTTPException(status_code=404, detail="文件不存在")
+
+    # 记录下载日志
+    deps.download_log_store.log_download(
+        doc_id=doc.doc_id,
+        filename=doc.filename,
+        kb_id=doc.kb_id,
+        downloaded_by=payload.sub
+    )
+    logger.info(f"[DOWNLOAD] Document {doc_id} ({doc.filename}) downloaded by {payload.sub}")
 
     return FileResponse(
         path=doc.file_path,
@@ -386,3 +400,102 @@ async def list_deletions(
         ],
         "count": len(deletions)
     }
+
+
+@router.post("/documents/batch/download")
+async def batch_download_documents(
+    request: Request,
+    payload: KbViewRequired,
+    body: BatchDownloadRequest,
+    deps: AppDependencies = Depends(get_deps),
+):
+    """
+    批量下载文档（打包成ZIP）
+
+    权限规则：
+    - 用户只能下载有权限的知识库中的文档
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    doc_ids = body.doc_ids
+    logger.info(f"[BATCH DOWNLOAD] Request to download {len(doc_ids)} documents")
+    logger.info(f"[BATCH DOWNLOAD] User: {payload.sub}")
+
+    # 获取当前用户
+    user = deps.user_store.get_by_user_id(payload.sub)
+
+    # 获取文档并检查权限
+    valid_docs = []
+    for doc_id in doc_ids:
+        doc = deps.kb_store.get_document(doc_id)
+        if not doc:
+            logger.warning(f"[BATCH DOWNLOAD] Document not found: {doc_id}")
+            continue
+
+        # 检查知识库权限
+        if user.role != "admin":
+            has_permission = deps.user_kb_permission_store.check_permission(payload.sub, doc.kb_id)
+            if not has_permission:
+                logger.warning(f"[BATCH DOWNLOAD] User {user.username} has no permission for doc {doc_id} in KB {doc.kb_id}")
+                continue
+
+        # 检查文件是否存在
+        if not os.path.exists(doc.file_path):
+            logger.warning(f"[BATCH DOWNLOAD] File not found: {doc.file_path}")
+            continue
+
+        valid_docs.append(doc)
+
+    if len(valid_docs) == 0:
+        raise HTTPException(status_code=404, detail="没有找到可下载的文档")
+
+    logger.info(f"[BATCH DOWNLOAD] Found {len(valid_docs)} valid documents for download")
+
+    # 创建ZIP文件（在内存中）
+    import time
+    zip_buffer = io.BytesIO()
+    created_at_ms = int(time.time() * 1000)
+
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for doc in valid_docs:
+            # 添加文件到ZIP，使用原始文件名
+            # 如果文件名重复，添加序号
+            zip_name = doc.filename
+            counter = 1
+            while zip_name in [f.filename for f in valid_docs if f.filename != doc.filename]:
+                name, ext = os.path.splitext(doc.filename)
+                zip_name = f"{name}_{counter}{ext}"
+                counter += 1
+
+            try:
+                zip_file.write(doc.file_path, zip_name)
+                logger.info(f"[BATCH DOWNLOAD] Added to ZIP: {zip_name}")
+            except Exception as e:
+                logger.error(f"[BATCH DOWNLOAD] Failed to add {doc.filename} to ZIP: {e}")
+                continue
+
+    zip_buffer.seek(0)
+
+    # 生成ZIP文件名
+    zip_filename = f"documents_{created_at_ms}.zip"
+
+    # 记录下载日志
+    for doc in valid_docs:
+        deps.download_log_store.log_download(
+            doc_id=doc.doc_id,
+            filename=doc.filename,
+            kb_id=doc.kb_id,
+            downloaded_by=payload.sub,
+            is_batch=True
+        )
+
+    logger.info(f"[BATCH DOWNLOAD] ZIP file created: {zip_filename} with {len(valid_docs)} files")
+
+    return Response(
+        content=zip_buffer.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{zip_filename}"'
+        }
+    )

@@ -8,6 +8,9 @@ const DocumentReview = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [actionLoading, setActionLoading] = useState(null);
+  const [selectedDocIds, setSelectedDocIds] = useState(new Set());
+  const [downloadLoading, setDownloadLoading] = useState(null);
+  const [batchDownloadLoading, setBatchDownloadLoading] = useState(false);
 
   const [datasets, setDatasets] = useState([]);
   const [selectedDataset, setSelectedDataset] = useState(null);  // 改为 null，等待数据加载
@@ -123,10 +126,90 @@ const DocumentReview = () => {
     }
   };
 
+  const handleDownload = async (docId) => {
+    setDownloadLoading(docId);
+    try {
+      await authClient.downloadLocalDocument(docId);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDownloadLoading(null);
+    }
+  };
+
+  const handleSelectDoc = (docId) => {
+    const newSelected = new Set(selectedDocIds);
+    if (newSelected.has(docId)) {
+      newSelected.delete(docId);
+    } else {
+      newSelected.add(docId);
+    }
+    setSelectedDocIds(newSelected);
+  };
+
+  const handleSelectAll = () => {
+    if (selectedDocIds.size === documents.length) {
+      setSelectedDocIds(new Set());
+    } else {
+      setSelectedDocIds(new Set(documents.map(d => d.doc_id)));
+    }
+  };
+
+  const handleBatchDownload = async () => {
+    if (selectedDocIds.size === 0) {
+      setError('请先选择要下载的文档');
+      return;
+    }
+
+    setBatchDownloadLoading(true);
+    try {
+      await authClient.batchDownloadLocalDocuments(Array.from(selectedDocIds));
+      setSelectedDocIds(new Set());
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBatchDownloadLoading(false);
+    }
+  };
+
   return (
     <div>
       <div style={{ marginBottom: '24px' }}>
-        <h2 style={{ margin: '0 0 16px 0' }}>文档管理</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <h2 style={{ margin: 0 }}>文档管理</h2>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={handleSelectAll}
+              disabled={documents.length === 0}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: selectedDocIds.size === documents.length ? '#6b7280' : '#3b82f6',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: documents.length === 0 ? 'not-allowed' : 'pointer',
+                fontSize: '0.9rem',
+              }}
+            >
+              {selectedDocIds.size === documents.length ? '取消全选' : '全选'}
+            </button>
+            <button
+              onClick={handleBatchDownload}
+              disabled={selectedDocIds.size === 0 || batchDownloadLoading}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: selectedDocIds.size > 0 && !batchDownloadLoading ? '#10b981' : '#9ca3af',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: selectedDocIds.size > 0 && !batchDownloadLoading ? 'pointer' : 'not-allowed',
+                fontSize: '0.9rem',
+              }}
+            >
+              {batchDownloadLoading ? '下载中...' : `下载选中 (${selectedDocIds.size})`}
+            </button>
+          </div>
+        </div>
 
         <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
           <select
@@ -177,6 +260,15 @@ const DocumentReview = () => {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead style={{ backgroundColor: '#f9fafb' }}>
               <tr>
+                <th style={{ padding: '12px 16px', textAlign: 'center', borderBottom: '1px solid #e5e7eb', width: '50px' }}>
+                  <input
+                    type="checkbox"
+                    checked={documents.length > 0 && selectedDocIds.size === documents.length}
+                    onChange={handleSelectAll}
+                    disabled={documents.length === 0}
+                    style={{ cursor: documents.length === 0 ? 'not-allowed' : 'pointer' }}
+                  />
+                </th>
                 <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>文档名称</th>
                 <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>状态</th>
                 <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>知识库</th>
@@ -188,6 +280,14 @@ const DocumentReview = () => {
             <tbody>
               {documents.map((doc) => (
                 <tr key={doc.doc_id} style={{ borderBottom: '1px solid #e5e7eb' }}>
+                  <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedDocIds.has(doc.doc_id)}
+                      onChange={() => handleSelectDoc(doc.doc_id)}
+                      style={{ cursor: 'pointer' }}
+                    />
+                  </td>
                   <td style={{ padding: '12px 16px' }}>{doc.filename}</td>
                   <td style={{ padding: '12px 16px' }}>
                     <span style={{
@@ -208,16 +308,25 @@ const DocumentReview = () => {
                     {doc.uploaded_by}
                   </td>
                   <td style={{ padding: '12px 16px', color: '#6b7280', fontSize: '0.9rem' }}>
-                    {new Date(doc.created_at_ms).toLocaleString('zh-CN')}
+                    {new Date(doc.uploaded_at_ms).toLocaleString('zh-CN')}
                   </td>
                   <td style={{ padding: '12px 16px', textAlign: 'right' }}>
-                    {(() => {
-                      console.log('[DocumentReview] Rendering buttons for doc:', doc.doc_id);
-                      console.log('[DocumentReview] doc.status:', doc.status);
-                      console.log('[DocumentReview] isReviewer():', isReviewer());
-                      console.log('[DocumentReview] isAdmin():', isAdmin());
-                      return null;
-                    })()}
+                    <button
+                      onClick={() => handleDownload(doc.doc_id)}
+                      disabled={downloadLoading === doc.doc_id}
+                      style={{
+                        padding: '6px 12px',
+                        backgroundColor: downloadLoading === doc.doc_id ? '#9ca3af' : '#3b82f6',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: downloadLoading === doc.doc_id ? 'not-allowed' : 'pointer',
+                        fontSize: '0.9rem',
+                        marginRight: '8px',
+                      }}
+                    >
+                      {downloadLoading === doc.doc_id ? '下载中...' : '下载'}
+                    </button>
                     {doc.status === 'pending' && isReviewer() ? (
                       <>
                         <button
@@ -254,12 +363,10 @@ const DocumentReview = () => {
                         </button>
                       </>
                     ) : doc.status !== 'pending' ? (
-                      <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>
+                      <span style={{ color: '#9ca3af', fontSize: '0.85rem', marginRight: '8px' }}>
                         {doc.status === 'approved' ? '已通过' : '已驳回'}
                       </span>
-                    ) : (
-                      <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>无权限</span>
-                    )}
+                    ) : null}
                     {isAdmin() && (
                       <button
                         onClick={() => handleDelete(doc.doc_id)}
@@ -272,7 +379,6 @@ const DocumentReview = () => {
                           borderRadius: '4px',
                           cursor: actionLoading === doc.doc_id ? 'not-allowed' : 'pointer',
                           fontSize: '0.9rem',
-                          marginLeft: doc.status === 'pending' && isReviewer() ? '0' : '0',
                         }}
                       >
                         删除
