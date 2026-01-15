@@ -2,6 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import authClient from '../api/authClient';
+import ReactMarkdown from 'react-markdown';
+import mammoth from 'mammoth';
+import * as XLSX from 'xlsx';
 
 const Spinner = ({ size = 16 }) => (
   <svg
@@ -65,11 +68,47 @@ const DocumentBrowser = () => {
   const [previewUrl, setPreviewUrl] = useState(null);
   const [previewDocName, setPreviewDocName] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [markdownContent, setMarkdownContent] = useState(null);
+  const [docxContent, setDocxContent] = useState(null);
+  const [excelData, setExcelData] = useState(null);
   const [canDeleteDocs, setCanDeleteDocs] = useState(false);
 
   useEffect(() => {
     fetchAllDatasets();
   }, [accessibleKbs, user]); // 当用户权限变化时重新加载
+
+  // Inject table styles for Excel/DOCX preview
+  useEffect(() => {
+    if (typeof document !== 'undefined' && !document.getElementById('table-preview-styles')) {
+      const style = document.createElement('style');
+      style.id = 'table-preview-styles';
+      style.textContent = `
+        .table-preview table {
+          border-collapse: collapse;
+          width: 100%;
+          font-size: 0.875rem;
+        }
+        .table-preview th,
+        .table-preview td {
+          border: 1px solid #d1d5db;
+          padding: 8px 12px;
+          text-align: left;
+        }
+        .table-preview th {
+          background-color: #f3f4f6;
+          font-weight: 600;
+          color: #1f2937;
+        }
+        .table-preview tr:nth-child(even) {
+          background-color: #f9fafb;
+        }
+        .table-preview tr:hover {
+          background-color: #f3f4f6;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+  }, []);
 
   // Handle navigation from search page - locate and preview specific document
   useEffect(() => {
@@ -220,12 +259,49 @@ const DocumentBrowser = () => {
       setPreviewLoading(true);
       setActionLoading(prev => ({ ...prev, [`${docId}-view`]: true }));
       setPreviewDocName(docName);
+      setMarkdownContent(null);
+      setDocxContent(null);
+      setExcelData(null);
 
-      const url = await authClient.previewRagflowDocument(docId, datasetName, docName);
-      setPreviewUrl(url);
+      if (isMarkdownFile(docName)) {
+        const url = await authClient.previewRagflowDocument(docId, datasetName, docName);
+        const response = await fetch(url);
+        const text = await response.text();
+        setMarkdownContent(text);
+        setPreviewUrl(url);
+      } else if (isDocxFile(docName)) {
+        const url = await authClient.previewRagflowDocument(docId, datasetName, docName);
+        const response = await fetch(url);
+        const arrayBuffer = await response.arrayBuffer();
+        const result = await mammoth.convertToHtml({ arrayBuffer });
+        setDocxContent(result.value);
+        setPreviewUrl(url);
+      } else if (isExcelFile(docName)) {
+        const url = await authClient.previewRagflowDocument(docId, datasetName, docName);
+        const response = await fetch(url);
+        const arrayBuffer = await response.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+        const sheetNames = workbook.SheetNames;
+        const sheetsData = {};
+
+        sheetNames.forEach(sheetName => {
+          const worksheet = workbook.Sheets[sheetName];
+          const html = XLSX.utils.sheet_to_html(worksheet);
+          sheetsData[sheetName] = html;
+        });
+
+        setExcelData(sheetsData);
+        setPreviewUrl(url);
+      } else {
+        const url = await authClient.previewRagflowDocument(docId, datasetName, docName);
+        setPreviewUrl(url);
+      }
     } catch (err) {
       setError(err.message || '预览失败');
       setPreviewUrl(null);
+      setMarkdownContent(null);
+      setDocxContent(null);
+      setExcelData(null);
     } finally {
       setPreviewLoading(false);
       setActionLoading(prev => ({ ...prev, [`${docId}-view`]: false }));
@@ -238,13 +314,34 @@ const DocumentBrowser = () => {
     }
     setPreviewUrl(null);
     setPreviewDocName(null);
+    setMarkdownContent(null);
+    setDocxContent(null);
+    setExcelData(null);
   };
 
   const isPreviewable = (filename) => {
     if (!filename) return false;
     const ext = filename.toLowerCase().split('.').pop();
-    const previewableExts = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'svg', 'webp', 'txt'];
+    const previewableExts = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'svg', 'webp', 'txt', 'md', 'mdocx', 'docx', 'xlsx', 'xls'];
     return previewableExts.includes(ext);
+  };
+
+  const isMarkdownFile = (filename) => {
+    if (!filename) return false;
+    const ext = filename.toLowerCase().split('.').pop();
+    return ext === 'md' || ext === 'markdown';
+  };
+
+  const isDocxFile = (filename) => {
+    if (!filename) return false;
+    const ext = filename.toLowerCase().split('.').pop();
+    return ext === 'docx';
+  };
+
+  const isExcelFile = (filename) => {
+    if (!filename) return false;
+    const ext = filename.toLowerCase().split('.').pop();
+    return ext === 'xlsx' || ext === 'xls';
   };
 
   const handleDownload = async (docId, datasetName) => {
@@ -826,6 +923,72 @@ const DocumentBrowser = () => {
                 }}>
                   <Spinner size={32} />
                   <div style={{ color: '#6b7280' }}>加载中...</div>
+                </div>
+              ) : isMarkdownFile(previewDocName) ? (
+                <div style={{
+                  padding: '24px',
+                  backgroundColor: 'white',
+                  borderRadius: '8px',
+                  height: '70vh',
+                  overflow: 'auto',
+                  border: '1px solid #e5e7eb'
+                }}>
+                  <div style={{
+                    fontSize: '0.875rem',
+                    lineHeight: '1.6',
+                    color: '#1f2937'
+                  }}>
+                    <ReactMarkdown>{markdownContent}</ReactMarkdown>
+                  </div>
+                </div>
+              ) : isDocxFile(previewDocName) ? (
+                <div className="table-preview" style={{
+                  padding: '24px',
+                  backgroundColor: 'white',
+                  borderRadius: '8px',
+                  height: '70vh',
+                  overflow: 'auto',
+                  border: '1px solid #e5e7eb'
+                }}>
+                  <div
+                    style={{
+                      fontSize: '0.875rem',
+                      lineHeight: '1.6',
+                      color: '#1f2937'
+                    }}
+                    dangerouslySetInnerHTML={{ __html: docxContent }}
+                  />
+                </div>
+              ) : isExcelFile(previewDocName) ? (
+                <div className="table-preview" style={{
+                  padding: '24px',
+                  backgroundColor: 'white',
+                  borderRadius: '8px',
+                  height: '70vh',
+                  overflow: 'auto',
+                  border: '1px solid #e5e7eb'
+                }}>
+                  {Object.keys(excelData).map((sheetName, index) => (
+                    <div key={sheetName} style={{ marginBottom: index < Object.keys(excelData).length - 1 ? '32px' : 0 }}>
+                      <h3 style={{
+                        fontSize: '1.1rem',
+                        fontWeight: 'bold',
+                        marginBottom: '12px',
+                        color: '#1f2937',
+                        borderBottom: '2px solid #e5e7eb',
+                        paddingBottom: '8px'
+                      }}>
+                        {sheetName}
+                      </h3>
+                      <div
+                        style={{
+                          fontSize: '0.875rem',
+                          overflow: 'auto'
+                        }}
+                        dangerouslySetInnerHTML={{ __html: excelData[sheetName] }}
+                      />
+                    </div>
+                  ))}
                 </div>
               ) : isPreviewable(previewDocName) ? (
                 <iframe
