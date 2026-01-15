@@ -1,10 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import authClient from '../api/authClient';
 import ReactMarkdown from 'react-markdown';
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
+import * as pdfjsLib from 'pdfjs-dist';
+
+// Configure PDF.js worker to use local file
+pdfjsLib.GlobalWorkerOptions.workerSrc = process.env.PUBLIC_URL + '/js/pdf.worker.min.mjs';
 
 const Spinner = ({ size = 16 }) => (
   <svg
@@ -71,6 +75,13 @@ const DocumentBrowser = () => {
   const [markdownContent, setMarkdownContent] = useState(null);
   const [docxContent, setDocxContent] = useState(null);
   const [excelData, setExcelData] = useState(null);
+  const [pdfDocument, setPdfDocument] = useState(null);
+  const [pdfNumPages, setPdfNumPages] = useState(0);
+  const [pdfCurrentPage, setPdfCurrentPage] = useState(1);
+  const [pdfScale, setPdfScale] = useState(1.5);
+  const canvasRef = useRef(null);
+  const [imageScale, setImageScale] = useState(1);
+  const [imageRotation, setImageRotation] = useState(0);
   const [canDeleteDocs, setCanDeleteDocs] = useState(false);
 
   useEffect(() => {
@@ -109,6 +120,28 @@ const DocumentBrowser = () => {
       document.head.appendChild(style);
     }
   }, []);
+
+  // Render PDF page when document or page number changes
+  useEffect(() => {
+    if (pdfDocument && canvasRef.current) {
+      const renderPage = async () => {
+        const page = await pdfDocument.getPage(pdfCurrentPage);
+        const canvas = canvasRef.current;
+        const context = canvas.getContext('2d');
+
+        const viewport = page.getViewport({ scale: pdfScale });
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+
+        await page.render({
+          canvasContext: context,
+          viewport: viewport
+        }).promise;
+      };
+
+      renderPage();
+    }
+  }, [pdfDocument, pdfCurrentPage, pdfScale]);
 
   // Handle navigation from search page - locate and preview specific document
   useEffect(() => {
@@ -262,6 +295,15 @@ const DocumentBrowser = () => {
       setMarkdownContent(null);
       setDocxContent(null);
       setExcelData(null);
+      setPdfDocument(null);
+      setPdfNumPages(0);
+      setPdfCurrentPage(1);
+
+      // Reset image state
+      if (isImageFile(docName)) {
+        setImageScale(1);
+        setImageRotation(0);
+      }
 
       if (isMarkdownFile(docName)) {
         const url = await authClient.previewRagflowDocument(docId, datasetName, docName);
@@ -292,6 +334,18 @@ const DocumentBrowser = () => {
 
         setExcelData(sheetsData);
         setPreviewUrl(url);
+      } else if (isPdfFile(docName)) {
+        const url = await authClient.previewRagflowDocument(docId, datasetName, docName);
+        const response = await fetch(url);
+        const arrayBuffer = await response.arrayBuffer();
+
+        const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+        const pdf = await loadingTask.promise;
+
+        setPdfDocument(pdf);
+        setPdfNumPages(pdf.numPages);
+        setPdfCurrentPage(1);
+        setPreviewUrl(url);
       } else {
         const url = await authClient.previewRagflowDocument(docId, datasetName, docName);
         setPreviewUrl(url);
@@ -302,6 +356,7 @@ const DocumentBrowser = () => {
       setMarkdownContent(null);
       setDocxContent(null);
       setExcelData(null);
+      setPdfDocument(null);
     } finally {
       setPreviewLoading(false);
       setActionLoading(prev => ({ ...prev, [`${docId}-view`]: false }));
@@ -317,6 +372,9 @@ const DocumentBrowser = () => {
     setMarkdownContent(null);
     setDocxContent(null);
     setExcelData(null);
+    setPdfDocument(null);
+    setPdfNumPages(0);
+    setPdfCurrentPage(1);
   };
 
   const isPreviewable = (filename) => {
@@ -324,6 +382,13 @@ const DocumentBrowser = () => {
     const ext = filename.toLowerCase().split('.').pop();
     const previewableExts = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'svg', 'webp', 'txt', 'md', 'mdocx', 'docx', 'xlsx', 'xls'];
     return previewableExts.includes(ext);
+  };
+
+  const isGenericPreviewable = (filename) => {
+    // Only return true for txt files that use iframe preview
+    if (!filename) return false;
+    const ext = filename.toLowerCase().split('.').pop();
+    return ext === 'txt';
   };
 
   const isMarkdownFile = (filename) => {
@@ -342,6 +407,18 @@ const DocumentBrowser = () => {
     if (!filename) return false;
     const ext = filename.toLowerCase().split('.').pop();
     return ext === 'xlsx' || ext === 'xls';
+  };
+
+  const isPdfFile = (filename) => {
+    if (!filename) return false;
+    const ext = filename.toLowerCase().split('.').pop();
+    return ext === 'pdf';
+  };
+
+  const isImageFile = (filename) => {
+    if (!filename) return false;
+    const ext = filename.toLowerCase().split('.').pop();
+    return ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'svg', 'webp'].includes(ext);
   };
 
   const handleDownload = async (docId, datasetName) => {
@@ -990,7 +1067,236 @@ const DocumentBrowser = () => {
                     </div>
                   ))}
                 </div>
-              ) : isPreviewable(previewDocName) ? (
+              ) : isPdfFile(previewDocName) ? (
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  height: '70vh',
+                  backgroundColor: '#525659',
+                  borderRadius: '8px',
+                  overflow: 'hidden'
+                }}>
+                  {/* PDF Controls */}
+                  <div style={{
+                    padding: '12px 16px',
+                    backgroundColor: '#323639',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    borderBottom: '1px solid #4a4e51'
+                  }}>
+                    <button
+                      onClick={() => setPdfCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={pdfCurrentPage <= 1}
+                      style={{
+                        padding: '6px 12px',
+                        fontSize: '0.875rem',
+                        backgroundColor: pdfCurrentPage <= 1 ? '#4a4e51' : '#4a90e2',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: pdfCurrentPage <= 1 ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      上一页
+                    </button>
+
+                    <span style={{
+                      color: '#fff',
+                      fontSize: '0.875rem',
+                      minWidth: '120px',
+                      textAlign: 'center'
+                    }}>
+                      {pdfCurrentPage} / {pdfNumPages}
+                    </span>
+
+                    <button
+                      onClick={() => setPdfCurrentPage(p => Math.min(pdfNumPages, p + 1))}
+                      disabled={pdfCurrentPage >= pdfNumPages}
+                      style={{
+                        padding: '6px 12px',
+                        fontSize: '0.875rem',
+                        backgroundColor: pdfCurrentPage >= pdfNumPages ? '#4a4e51' : '#4a90e2',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: pdfCurrentPage >= pdfNumPages ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      下一页
+                    </button>
+
+                    <div style={{ flex: 1 }} />
+
+                    <select
+                      value={pdfScale}
+                      onChange={(e) => setPdfScale(parseFloat(e.target.value))}
+                      style={{
+                        padding: '6px 12px',
+                        fontSize: '0.875rem',
+                        backgroundColor: '#4a4e51',
+                        color: 'white',
+                        border: '1px solid #5a5e61',
+                        borderRadius: '4px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <option value={0.75}>75%</option>
+                      <option value={1}>100%</option>
+                      <option value={1.25}>125%</option>
+                      <option value={1.5}>150%</option>
+                      <option value={2}>200%</option>
+                    </select>
+                  </div>
+
+                  {/* PDF Canvas */}
+                  <div style={{
+                    flex: 1,
+                    overflow: 'auto',
+                    display: 'flex',
+                    justifyContent: 'center',
+                    padding: '16px'
+                  }}>
+                    <canvas
+                      ref={canvasRef}
+                      style={{
+                        boxShadow: '0 2px 8px rgba(0, 0, 0, 0.3)',
+                        maxWidth: '100%'
+                      }}
+                    />
+                  </div>
+                </div>
+              ) : isImageFile(previewDocName) ? (
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  height: '70vh',
+                  backgroundColor: '#1a1a1a',
+                  borderRadius: '8px',
+                  overflow: 'hidden'
+                }}>
+                  {/* Image Controls */}
+                  <div style={{
+                    padding: '12px 16px',
+                    backgroundColor: '#2d2d2d',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    borderBottom: '1px solid #3d3d3d'
+                  }}>
+                    <button
+                      onClick={() => setImageScale(s => Math.max(0.25, s - 0.25))}
+                      disabled={imageScale <= 0.25}
+                      style={{
+                        padding: '6px 12px',
+                        fontSize: '0.875rem',
+                        backgroundColor: imageScale <= 0.25 ? '#3d3d3d' : '#4a90e2',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: imageScale <= 0.25 ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      缩小
+                    </button>
+
+                    <span style={{
+                      color: '#fff',
+                      fontSize: '0.875rem',
+                      minWidth: '80px',
+                      textAlign: 'center'
+                    }}>
+                      {Math.round(imageScale * 100)}%
+                    </span>
+
+                    <button
+                      onClick={() => setImageScale(s => Math.min(5, s + 0.25))}
+                      disabled={imageScale >= 5}
+                      style={{
+                        padding: '6px 12px',
+                        fontSize: '0.875rem',
+                        backgroundColor: imageScale >= 5 ? '#3d3d3d' : '#4a90e2',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: imageScale >= 5 ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      放大
+                    </button>
+
+                    <button
+                      onClick={() => setImageScale(1)}
+                      style={{
+                        padding: '6px 12px',
+                        fontSize: '0.875rem',
+                        backgroundColor: '#4a90e2',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      重置
+                    </button>
+
+                    <div style={{ flex: 1 }} />
+
+                    <button
+                      onClick={() => setImageRotation(r => (r - 90) % 360)}
+                      style={{
+                        padding: '6px 12px',
+                        fontSize: '0.875rem',
+                        backgroundColor: '#4a90e2',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      ↺ 左旋
+                    </button>
+
+                    <button
+                      onClick={() => setImageRotation(r => (r + 90) % 360)}
+                      style={{
+                        padding: '6px 12px',
+                        fontSize: '0.875rem',
+                        backgroundColor: '#4a90e2',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      右旋 ↻
+                    </button>
+                  </div>
+
+                  {/* Image Display */}
+                  <div style={{
+                    flex: 1,
+                    overflow: 'auto',
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    padding: '16px'
+                  }}>
+                    <img
+                      src={previewUrl}
+                      alt={previewDocName}
+                      style={{
+                        maxWidth: '100%',
+                        maxHeight: '100%',
+                        objectFit: 'contain',
+                        transform: `scale(${imageScale}) rotate(${imageRotation}deg)`,
+                        transition: 'transform 0.3s ease',
+                        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.5)'
+                      }}
+                    />
+                  </div>
+                </div>
+              ) : isGenericPreviewable(previewDocName) ? (
                 <iframe
                   src={previewUrl}
                   style={{
