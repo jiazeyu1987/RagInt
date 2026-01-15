@@ -623,6 +623,28 @@ class AuthClient {
     return { success: true, filename };
   }
 
+  async previewRagflowDocument(docId, dataset = '展厅', docName = null) {
+    const params = new URLSearchParams({ dataset });
+    if (docName) {
+      params.append('filename', docName);
+    }
+
+    const response = await this.fetchWithAuth(
+      authBackendUrl(`/api/ragflow/documents/${docId}/download?${params}`),
+      { method: 'GET' }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to preview document');
+    }
+
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+
+    return url;
+  }
+
   async batchDownload(documentsInfo) {
     const response = await this.fetchWithAuth(
       authBackendUrl('/api/ragflow/documents/batch/download'),
@@ -972,6 +994,113 @@ class AuthClient {
     }
 
     return response.json();  // { chat_ids: [...] }
+  }
+
+  // ==================== Agent/搜索体相关 API ====================
+
+  /**
+   * 列出所有搜索体
+   */
+  async listAgents(params = {}) {
+    const queryParams = new URLSearchParams(params).toString();
+    const response = await this.fetchWithAuth(
+      authBackendUrl(`/api/agents?${queryParams}`),
+      { method: 'GET' }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to list agents');
+    }
+
+    return response.json();  // { agents: [...], count: N }
+  }
+
+  /**
+   * 获取单个搜索体详情
+   */
+  async getAgent(agentId) {
+    const response = await this.fetchWithAuth(
+      authBackendUrl(`/api/agents/${agentId}`),
+      { method: 'GET' }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to get agent');
+    }
+
+    return response.json();
+  }
+
+  /**
+   * 与搜索体对话（返回 EventSource 用于流式响应）
+   */
+  createAgentCompletionStream(agentId, question, sessionId = null) {
+    const token = localStorage.getItem('access_token');
+    if (!token) {
+      throw new Error('No access token');
+    }
+
+    const url = new URL(authBackendUrl(`/api/agents/${agentId}/completions`));
+    url.searchParams.append('question', question);
+    if (sessionId) {
+      url.searchParams.append('session_id', sessionId);
+    }
+
+    return new EventSource(url, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+  }
+
+  // ==================== 知识库检索相关 API ====================
+
+  /**
+   * 在知识库中检索文本块
+   * @param {Object} searchParams - 搜索参数
+   * @param {string} searchParams.question - 查询问题或关键词
+   * @param {string[]} searchParams.dataset_ids - 知识库ID列表（可选，默认使用所有可用知识库）
+   * @param {number} searchParams.page - 页码，默认1
+   * @param {number} searchParams.page_size - 每页数量，默认30
+   * @param {number} searchParams.similarity_threshold - 相似度阈值（0-1），默认0.2
+   * @param {number} searchParams.top_k - 向量计算参与的chunk数量，默认30
+   * @param {boolean} searchParams.keyword - 是否启用关键词匹配，默认false
+   * @param {boolean} searchParams.highlight - 是否高亮匹配词，默认false
+   */
+  async searchChunks(searchParams) {
+    const response = await this.fetchWithAuth(
+      authBackendUrl('/api/search'),
+      {
+        method: 'POST',
+        body: JSON.stringify(searchParams)
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to search chunks');
+    }
+
+    return response.json();  // { chunks: [...], total: N, page: N, page_size: N }
+  }
+
+  /**
+   * 获取当前用户可用的知识库列表
+   */
+  async getAvailableDatasets() {
+    const response = await this.fetchWithAuth(
+      authBackendUrl('/api/datasets'),
+      { method: 'GET' }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to get datasets');
+    }
+
+    return response.json();  // { datasets: [...], count: N }
   }
 }
 

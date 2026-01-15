@@ -18,6 +18,7 @@ const Layout = ({ children }) => {
 
   const navigation = [
     { name: 'AI对话', path: '/chat' },
+    { name: '搜索', path: '/agents' },
     { name: '文档浏览', path: '/browser', permission: { resource: 'ragflow_documents', action: 'view' } },
     { name: '文档管理', path: '/documents', permission: { resource: 'kb_documents', action: 'view' } },
     { name: '上传文档', path: '/upload', permission: { resource: 'kb_documents', action: 'upload' } },

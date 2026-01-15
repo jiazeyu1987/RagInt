@@ -1,6 +1,6 @@
 {
   "api_key": "ragflow-lmBmCb-T_yV1D8gaV65ThoTLPLWsAr4zKUh72XKFFBs",
-  "base_url": "http://127.0.0.1",
+  "base_url": "http://127.0.0.1:9380",
   "dataset_name": "展厅",
   "default_conversation_name": "展厅聊天",
   "asr": {

@@ -10,6 +10,7 @@ import DocumentReview from './pages/DocumentReview';
 import DocumentBrowser from './pages/DocumentBrowser';
 import DocumentAudit from './pages/DocumentAudit';
 import Chat from './pages/Chat';
+import Agents from './pages/Agents';
 import Unauthorized from './pages/Unauthorized';
 import PermissionGuard from './components/PermissionGuard';
 
@@ -75,6 +76,16 @@ function App() {
               <PermissionGuard>
                 <Layout>
                   <Chat />
+                </Layout>
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/agents"
+            element={
+              <PermissionGuard>
+                <Layout>
+                  <Agents />
                 </Layout>
               </PermissionGuard>
             }

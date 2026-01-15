@@ -181,3 +181,4 @@ resource/
 /backend/data/recordings/*.db
 /fronted/node_modules
 /fronted/node_modules/
+/Auth/new_backend/data/uploads

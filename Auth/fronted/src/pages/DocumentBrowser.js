@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import authClient from '../api/authClient';
 
@@ -52,6 +53,7 @@ if (typeof window !== 'undefined') {
 }
 
 const DocumentBrowser = () => {
+  const location = useLocation();
   const { user, can, accessibleKbs } = useAuth();
   const [datasets, setDatasets] = useState([]);
   const [documents, setDocuments] = useState({});
@@ -68,6 +70,47 @@ const DocumentBrowser = () => {
   useEffect(() => {
     fetchAllDatasets();
   }, [accessibleKbs, user]); // 当用户权限变化时重新加载
+
+  // Handle navigation from search page - locate and preview specific document
+  useEffect(() => {
+    if (location.state?.documentId && datasets.length > 0) {
+      const { documentId, documentName, datasetId } = location.state;
+
+      // Find the dataset name from datasetId
+      const targetDataset = datasets.find(ds => ds.id === datasetId);
+      if (!targetDataset) {
+        setError(`无法找到知识库: ${datasetId}`);
+        return;
+      }
+
+      const datasetName = targetDataset.name || targetDataset.id;
+
+      // Expand the dataset
+      setExpandedDatasets(prev => new Set([...prev, datasetName]));
+
+      // Fetch documents for this dataset if not already loaded
+      if (!documents[datasetName]) {
+        fetchDocumentsForDataset(datasetName);
+      }
+
+      // Wait for documents to load, then preview the target document
+      const checkAndPreview = setInterval(() => {
+        if (documents[datasetName] && documents[datasetName].length > 0) {
+          clearInterval(checkAndPreview);
+
+          const targetDoc = documents[datasetName].find(doc => doc.id === documentId);
+          if (targetDoc) {
+            handleView(documentId, datasetName);
+          } else {
+            setError(`无法在知识库 "${datasetName}" 中找到文档: ${documentName}`);
+          }
+        }
+      }, 500);
+
+      // Cleanup interval after 10 seconds
+      setTimeout(() => clearInterval(checkAndPreview), 10000);
+    }
+  }, [location.state, datasets, documents]);
 
   // 当用户切换时，清空之前的文档数据
   useEffect(() => {
