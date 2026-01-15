@@ -20,23 +20,34 @@ async def list_users(
     payload: UsersViewRequired,
     deps: AppDependencies = Depends(get_deps),
     role: Optional[str] = None,
+    group_id: Optional[int] = None,
     status: Optional[str] = None,
     limit: int = 100,
 ):
     """List users with optional filters"""
     users = deps.user_store.list_users(role=role, status=status, limit=limit)
-    return [
-        UserResponse(
-            user_id=u.user_id,
-            username=u.username,
-            email=u.email,
-            role=u.role,
-            status=u.status,
-            created_at_ms=u.created_at_ms,
-            last_login_at_ms=u.last_login_at_ms,
+
+    result = []
+    for u in users:
+        # 获取权限组信息
+        group = None
+        if u.group_id:
+            group = deps.permission_group_store.get_group(u.group_id)
+
+        result.append(
+            UserResponse(
+                user_id=u.user_id,
+                username=u.username,
+                email=u.email,
+                group_id=u.group_id,
+                group_name=group['group_name'] if group else None,
+                role=u.role,  # 保留role字段用于向后兼容
+                status=u.status,
+                created_at_ms=u.created_at_ms,
+                last_login_at_ms=u.last_login_at_ms,
+            )
         )
-        for u in users
-    ]
+    return result
 
 
 @router.post("", response_model=UserResponse, status_code=201)
@@ -47,11 +58,27 @@ async def create_user(
 ):
     """Create a new user"""
     try:
+        # 如果没有指定权限组，使用默认的查看者组
+        group_id = user_data.group_id
+        if not group_id:
+            # 查找默认的查看者权限组
+            default_group = deps.permission_group_store.get_group_by_name("viewer")
+            if default_group:
+                group_id = default_group['group_id']
+            else:
+                raise HTTPException(status_code=400, detail="未找到默认权限组")
+
+        # 获取权限组信息以设置role字段（向后兼容）
+        group = deps.permission_group_store.get_group(group_id)
+        if not group:
+            raise HTTPException(status_code=400, detail="权限组不存在")
+
         user = deps.user_store.create_user(
             username=user_data.username,
             password=user_data.password,
             email=user_data.email,
-            role=user_data.role,
+            role=group['group_name'],  # 使用权限组名称作为role
+            group_id=group_id,
             status=user_data.status,
             created_by=payload.sub,
         )
@@ -59,6 +86,8 @@ async def create_user(
             user_id=user.user_id,
             username=user.username,
             email=user.email,
+            group_id=user.group_id,
+            group_name=group['group_name'],
             role=user.role,
             status=user.status,
             created_at_ms=user.created_at_ms,
@@ -78,10 +107,18 @@ async def get_user(
     user = deps.user_store.get_by_user_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
+
+    # 获取权限组信息
+    group = None
+    if user.group_id:
+        group = deps.permission_group_store.get_group(user.group_id)
+
     return UserResponse(
         user_id=user.user_id,
         username=user.username,
         email=user.email,
+        group_id=user.group_id,
+        group_name=group['group_name'] if group else None,
         role=user.role,
         status=user.status,
         created_at_ms=user.created_at_ms,
@@ -97,18 +134,35 @@ async def update_user(
     deps: AppDependencies = Depends(get_deps),
 ):
     """Update user"""
+    # 如果要更新权限组，需要先验证权限组存在
+    role = None
+    if user_data.group_id is not None:
+        group = deps.permission_group_store.get_group(user_data.group_id)
+        if not group:
+            raise HTTPException(status_code=400, detail="权限组不存在")
+        role = group['group_name']
+
     user = deps.user_store.update_user(
         user_id=user_id,
         email=user_data.email,
-        role=user_data.role,
+        role=role,
+        group_id=user_data.group_id,
         status=user_data.status,
     )
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
+
+    # 获取权限组信息
+    group = None
+    if user.group_id:
+        group = deps.permission_group_store.get_group(user.group_id)
+
     return UserResponse(
         user_id=user.user_id,
         username=user.username,
         email=user.email,
+        group_id=user.group_id,
+        group_name=group['group_name'] if group else None,
         role=user.role,
         status=user.status,
         created_at_ms=user.created_at_ms,

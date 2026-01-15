@@ -1,13 +1,20 @@
 import React, { useEffect, useState } from 'react';
 import authClient from '../api/authClient';
+import { useAuth } from '../hooks/useAuth';
 
 const Agents = () => {
+  const { canDownload } = useAuth();
   const [datasets, setDatasets] = useState([]);
   const [selectedDatasetIds, setSelectedDatasetIds] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  // Preview states
+  const [previewData, setPreviewData] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
 
   // Search parameters
   const [page, setPage] = useState(1);
@@ -180,6 +187,32 @@ const Agents = () => {
     } catch (err) {
       setError(`下载文档失败: ${err.message}`);
     }
+  };
+
+  const handlePreviewDocument = async (docId, docName, datasetId) => {
+    try {
+      setError(null);
+      setPreviewLoading(true);
+      setShowPreviewModal(true);
+
+      // Find the dataset name from the selected datasets
+      const dataset = datasets.find(ds => ds.id === datasetId);
+      const datasetName = dataset ? (dataset.name || dataset.id) : '展厅';
+
+      // Call preview API
+      const data = await authClient.previewDocument(docId, datasetName);
+      setPreviewData(data);
+    } catch (err) {
+      setError(`预览文档失败: ${err.message}`);
+      setShowPreviewModal(false);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const closePreviewModal = () => {
+    setShowPreviewModal(false);
+    setPreviewData(null);
   };
 
   // Manual highlight function as fallback
@@ -530,6 +563,29 @@ const Agents = () => {
                     <div style={{ display: 'flex', gap: '8px' }}>
                       {docId && (
                         <button
+                          onClick={() => handlePreviewDocument(docId, docName, datasetId)}
+                          style={{
+                            padding: '6px 14px',
+                            fontSize: '0.875rem',
+                            backgroundColor: '#3b82f6',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            fontWeight: '500'
+                          }}
+                          onMouseEnter={(e) => e.target.style.backgroundColor = '#2563eb'}
+                          onMouseLeave={(e) => e.target.style.backgroundColor = '#3b82f6'}
+                          title="查看文件内容"
+                        >
+                          👁️ 查看
+                        </button>
+                      )}
+                      {docId && canDownload() && (
+                        <button
                           onClick={() => handleDownloadDocument(docId, docName, datasetId)}
                           style={{
                             padding: '6px 14px',
@@ -657,6 +713,120 @@ const Agents = () => {
           >
             ×
           </button>
+        </div>
+      )}
+
+      {/* Preview Modal */}
+      {showPreviewModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 2000
+        }}>
+          <div style={{
+            backgroundColor: 'white',
+            borderRadius: '8px',
+            maxWidth: '90vw',
+            maxHeight: '90vh',
+            width: '80%',
+            maxHeight: '80vh',
+            display: 'flex',
+            flexDirection: 'column',
+            boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)'
+          }}>
+            {/* Header */}
+            <div style={{
+              padding: '16px 24px',
+              borderBottom: '1px solid #e5e7eb',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '600', color: '#111827' }}>
+                文档预览 - {previewData?.filename || ''}
+              </h3>
+              <button
+                onClick={closePreviewModal}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '1.5rem',
+                  cursor: 'pointer',
+                  color: '#6b7280',
+                  padding: '0',
+                  width: '32px',
+                  height: '32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+                onMouseEnter={(e) => e.target.style.color = '#111827'}
+                onMouseLeave={(e) => e.target.style.color = '#6b7280'}
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Content */}
+            <div style={{
+              padding: '24px',
+              overflowY: 'auto',
+              flex: 1
+            }}>
+              {previewLoading ? (
+                <div style={{ textAlign: 'center', padding: '40px' }}>加载中...</div>
+              ) : previewData?.type === 'text' ? (
+                <pre style={{
+                  margin: 0,
+                  whiteSpace: 'pre-wrap',
+                  wordWrap: 'break-word',
+                  fontFamily: 'monospace',
+                  fontSize: '0.875rem',
+                  lineHeight: '1.6'
+                }}>
+                  {previewData.content}
+                </pre>
+              ) : previewData?.type === 'image' ? (
+                <div style={{ textAlign: 'center' }}>
+                  <img
+                    src={`data:image/${previewData.image_type};base64,${previewData.content}`}
+                    alt={previewData.filename}
+                    style={{ maxWidth: '100%', maxHeight: '70vh' }}
+                  />
+                </div>
+              ) : previewData?.type === 'pdf' ? (
+                <div style={{ textAlign: 'center' }}>
+                  <iframe
+                    src={`data:application/pdf;base64,${previewData.content}`}
+                    style={{
+                      width: '100%',
+                      height: '70vh',
+                      border: 'none'
+                    }}
+                    title={previewData.filename}
+                  />
+                </div>
+              ) : previewData?.type === 'unsupported' ? (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '40px',
+                  color: '#6b7280'
+                }}>
+                  <div style={{ fontSize: '3rem', marginBottom: '16px' }}>📄</div>
+                  <div>{previewData.message}</div>
+                </div>
+              ) : (
+                <div style={{ textAlign: 'center', padding: '40px' }}>无法预览</div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

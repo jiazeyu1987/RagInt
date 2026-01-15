@@ -17,21 +17,14 @@ const KnowledgeUpload = () => {
       try {
         setLoadingDatasets(true);
 
-        // 获取用户有权限的知识库列表
-        const userKbData = await authClient.getMyKnowledgeBases();
-        const userKbIds = userKbData.kb_ids || [];
-
-        // 获取所有知识库
+        // 获取知识库列表（后端已经根据权限组过滤过了）
         const data = await authClient.listRagflowDatasets();
-        const allKbs = data.datasets || [];
+        const datasets = data.datasets || [];
 
-        // 过滤出用户有权限的知识库
-        const accessibleKbs = allKbs.filter(kb => userKbIds.includes(kb.name));
+        setDatasets(datasets);
 
-        setDatasets(accessibleKbs);
-
-        if (accessibleKbs.length > 0) {
-          const defaultKb = accessibleKbs[0].name;
+        if (datasets.length > 0) {
+          const defaultKb = datasets[0].name;
           setKbId(defaultKb);
         } else {
           setError('您没有被分配任何知识库权限，请联系管理员');
@@ -212,7 +205,7 @@ const KnowledgeUpload = () => {
               <input
                 type="file"
                 onChange={handleFileSelect}
-                accept=".txt,.pdf,.doc,.docx,.md"
+                accept=".txt,.pdf,.doc,.docx,.md,.ppt,.pptx"
                 style={{ display: 'none' }}
                 id="fileInput"
               />
@@ -229,7 +222,7 @@ const KnowledgeUpload = () => {
               </label>
             </div>
             <div style={{ marginTop: '8px', fontSize: '0.85rem', color: '#6b7280' }}>
-              支持的文件类型: .txt, .pdf, .doc, .docx, .md (最大16MB)
+              支持的文件类型: .txt, .pdf, .doc, .docx, .md, .ppt, .pptx (最大16MB)
             </div>
           </div>
 

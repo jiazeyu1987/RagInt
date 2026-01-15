@@ -6,6 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import * as pdfjsLib from 'pdfjs-dist';
+import JSZip from 'jszip';
 
 // Configure PDF.js worker to use local file
 pdfjsLib.GlobalWorkerOptions.workerSrc = process.env.PUBLIC_URL + '/js/pdf.worker.min.mjs';
@@ -61,7 +62,7 @@ if (typeof window !== 'undefined') {
 
 const DocumentBrowser = () => {
   const location = useLocation();
-  const { user, can, accessibleKbs } = useAuth();
+  const { user, can, canDownload, accessibleKbs } = useAuth();
   const [datasets, setDatasets] = useState([]);
   const [documents, setDocuments] = useState({});
   const [loading, setLoading] = useState(true);
@@ -74,6 +75,9 @@ const DocumentBrowser = () => {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [markdownContent, setMarkdownContent] = useState(null);
   const [docxContent, setDocxContent] = useState(null);
+  const [docContent, setDocContent] = useState(null);
+  const [pptxSlides, setPptxSlides] = useState(null);
+  const [pptxCurrentSlide, setPptxCurrentSlide] = useState(0);
   const [excelData, setExcelData] = useState(null);
   const [pdfDocument, setPdfDocument] = useState(null);
   const [pdfNumPages, setPdfNumPages] = useState(0);
@@ -210,22 +214,18 @@ const DocumentBrowser = () => {
     try {
       setLoading(true);
 
-      // 获取所有知识库
+      // 获取所有知识库（后端已经根据权限组过滤过了）
       const data = await authClient.listRagflowDatasets();
-      const allKbs = data.datasets || [];
+      const datasets = data.datasets || [];
 
-      // 根据用户权限过滤知识库
-      // 管理员可以看到所有知识库
-      // 其他用户只能看到被分配的知识库
-      let filteredKbs = allKbs;
-      if (user?.role !== 'admin') {
-        filteredKbs = allKbs.filter(kb => accessibleKbs.includes(kb.name));
-      }
+      // 直接使用后端返回的数据，不需要前端再次过滤
+      setDatasets(datasets);
 
-      setDatasets(filteredKbs);
-
-      if (filteredKbs.length === 0 && user?.role !== 'admin') {
+      // 如果没有知识库，显示提示
+      if (datasets.length === 0) {
         setError('您没有被分配任何知识库权限，请联系管理员');
+      } else {
+        setError(null);
       }
     } catch (err) {
       setError(err.message);
@@ -294,6 +294,9 @@ const DocumentBrowser = () => {
       setPreviewDocName(docName);
       setMarkdownContent(null);
       setDocxContent(null);
+      setDocContent(null);
+      setPptxSlides(null);
+      setPptxCurrentSlide(0);
       setExcelData(null);
       setPdfDocument(null);
       setPdfNumPages(0);
@@ -311,12 +314,41 @@ const DocumentBrowser = () => {
         const text = await response.text();
         setMarkdownContent(text);
         setPreviewUrl(url);
-      } else if (isDocxFile(docName)) {
+      } else if (isDocFile(docName) || isDocxFile(docName)) {
         const url = await authClient.previewRagflowDocument(docId, datasetName, docName);
         const response = await fetch(url);
         const arrayBuffer = await response.arrayBuffer();
         const result = await mammoth.convertToHtml({ arrayBuffer });
-        setDocxContent(result.value);
+        if (isDocFile(docName)) {
+          setDocContent(result.value);
+        } else {
+          setDocxContent(result.value);
+        }
+        setPreviewUrl(url);
+      } else if (isPptxFile(docName)) {
+        const url = await authClient.previewRagflowDocument(docId, datasetName, docName);
+        const response = await fetch(url);
+        const arrayBuffer = await response.arrayBuffer();
+
+        // Parse PPTX (it's a ZIP file)
+        const zip = await JSZip.loadAsync(arrayBuffer);
+        const slideFiles = [];
+
+        // Get all slide files
+        for (let i = 1; i <= 999; i++) {
+          const slidePath = `ppt/slides/slide${i}.xml`;
+          const slideFile = zip.file(slidePath);
+          if (!slideFile) break;
+
+          const content = await slideFile.async('string');
+          slideFiles.push({
+            index: i,
+            content: content
+          });
+        }
+
+        setPptxSlides(slideFiles);
+        setPptxCurrentSlide(0);
         setPreviewUrl(url);
       } else if (isExcelFile(docName)) {
         const url = await authClient.previewRagflowDocument(docId, datasetName, docName);
@@ -355,6 +387,8 @@ const DocumentBrowser = () => {
       setPreviewUrl(null);
       setMarkdownContent(null);
       setDocxContent(null);
+      setDocContent(null);
+      setPptxSlides(null);
       setExcelData(null);
       setPdfDocument(null);
     } finally {
@@ -371,6 +405,9 @@ const DocumentBrowser = () => {
     setPreviewDocName(null);
     setMarkdownContent(null);
     setDocxContent(null);
+    setDocContent(null);
+    setPptxSlides(null);
+    setPptxCurrentSlide(0);
     setExcelData(null);
     setPdfDocument(null);
     setPdfNumPages(0);
@@ -380,7 +417,7 @@ const DocumentBrowser = () => {
   const isPreviewable = (filename) => {
     if (!filename) return false;
     const ext = filename.toLowerCase().split('.').pop();
-    const previewableExts = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'svg', 'webp', 'txt', 'md', 'mdocx', 'docx', 'xlsx', 'xls'];
+    const previewableExts = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'svg', 'webp', 'txt', 'md', 'mdocx', 'docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls'];
     return previewableExts.includes(ext);
   };
 
@@ -401,6 +438,24 @@ const DocumentBrowser = () => {
     if (!filename) return false;
     const ext = filename.toLowerCase().split('.').pop();
     return ext === 'docx';
+  };
+
+  const isDocFile = (filename) => {
+    if (!filename) return false;
+    const ext = filename.toLowerCase().split('.').pop();
+    return ext === 'doc';
+  };
+
+  const isPptxFile = (filename) => {
+    if (!filename) return false;
+    const ext = filename.toLowerCase().split('.').pop();
+    return ext === 'pptx';
+  };
+
+  const isPptFile = (filename) => {
+    if (!filename) return false;
+    const ext = filename.toLowerCase().split('.').pop();
+    return ext === 'ppt';
   };
 
   const isExcelFile = (filename) => {
@@ -622,7 +677,7 @@ const DocumentBrowser = () => {
         >
           刷新
         </button>
-        {getSelectedCount() > 0 && (
+        {getSelectedCount() > 0 && canDownload() && (
           <>
             <button
               onClick={handleBatchDownload}
@@ -868,33 +923,35 @@ const DocumentBrowser = () => {
                                       '查看'
                                     )}
                                   </button>
-                                  <button
-                                    onClick={() => handleDownload(doc.id, dataset.name)}
-                                    disabled={actionLoading[`${doc.id}-download`]}
-                                    title="下载"
-                                    style={{
-                                      padding: '6px 12px',
-                                      backgroundColor: '#3b82f6',
-                                      color: 'white',
-                                      border: 'none',
-                                      borderRadius: '4px',
-                                      cursor: 'pointer',
-                                      fontSize: '0.85rem',
-                                      opacity: actionLoading[`${doc.id}-download`] ? 0.6 : 1,
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: '6px',
-                                    }}
-                                  >
-                                    {actionLoading[`${doc.id}-download`] ? (
-                                      <>
-                                        <Spinner size={14} />
-                                        <span>下载中</span>
-                                      </>
-                                    ) : (
-                                      '下载'
-                                    )}
-                                  </button>
+                                  {canDownload() && (
+                                    <button
+                                      onClick={() => handleDownload(doc.id, dataset.name)}
+                                      disabled={actionLoading[`${doc.id}-download`]}
+                                      title="下载"
+                                      style={{
+                                        padding: '6px 12px',
+                                        backgroundColor: '#3b82f6',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer',
+                                        fontSize: '0.85rem',
+                                        opacity: actionLoading[`${doc.id}-download`] ? 0.6 : 1,
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '6px',
+                                      }}
+                                    >
+                                      {actionLoading[`${doc.id}-download`] ? (
+                                        <>
+                                          <Spinner size={14} />
+                                          <span>下载中</span>
+                                        </>
+                                      ) : (
+                                        '下载'
+                                      )}
+                                    </button>
+                                  )}
                                   {canDelete() && (
                                     <button
                                       onClick={() => handleDelete(doc.id, dataset.name)}
@@ -1035,6 +1092,130 @@ const DocumentBrowser = () => {
                     }}
                     dangerouslySetInnerHTML={{ __html: docxContent }}
                   />
+                </div>
+              ) : isDocFile(previewDocName) ? (
+                <div className="table-preview" style={{
+                  padding: '24px',
+                  backgroundColor: 'white',
+                  borderRadius: '8px',
+                  height: '70vh',
+                  overflow: 'auto',
+                  border: '1px solid #e5e7eb'
+                }}>
+                  <div style={{
+                    marginBottom: '16px',
+                    padding: '8px 12px',
+                    backgroundColor: '#fef3c7',
+                    borderLeft: '4px solid #f59e0b',
+                    fontSize: '0.875rem',
+                    color: '#92400e'
+                  }}>
+                    ℹ️ 此为老版本Word文档（.doc），格式可能不完全准确
+                  </div>
+                  <div
+                    style={{
+                      fontSize: '0.875rem',
+                      lineHeight: '1.6',
+                      color: '#1f2937'
+                    }}
+                    dangerouslySetInnerHTML={{ __html: docContent }}
+                  />
+                </div>
+              ) : isPptxFile(previewDocName) ? (
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  height: '70vh',
+                  backgroundColor: '#fef3c7',
+                  borderRadius: '8px',
+                  padding: '48px',
+                  border: '2px solid #f59e0b'
+                }}>
+                  <div style={{ fontSize: '4rem', marginBottom: '24px' }}>📊</div>
+                  <div style={{
+                    fontSize: '1.5rem',
+                    fontWeight: 'bold',
+                    color: '#92400e',
+                    marginBottom: '16px',
+                    textAlign: 'center'
+                  }}>
+                    PowerPoint演示文稿（.pptx）
+                  </div>
+                  <div style={{
+                    fontSize: '1rem',
+                    color: '#78350f',
+                    textAlign: 'center',
+                    maxWidth: '600px',
+                    marginBottom: '32px',
+                    lineHeight: '1.6'
+                  }}>
+                    由于PPTX文件格式复杂，无法在浏览器中完整渲染视觉效果。<br />
+                    建议您使用"下载"按钮保存文件后，使用Microsoft PowerPoint、WPS或其他兼容软件打开查看。
+                  </div>
+                  <div style={{
+                    padding: '16px 24px',
+                    backgroundColor: '#fffbeb',
+                    border: '1px solid #fcd34d',
+                    borderRadius: '8px',
+                    fontSize: '0.875rem',
+                    color: '#92400e',
+                    textAlign: 'center'
+                  }}>
+                    💡 <strong>提示：</strong>
+                    <ul style={{ margin: '8px 0 0 0', paddingLeft: '20px', textAlign: 'left' }}>
+                      <li>PPTX文件包含复杂的布局、动画和多媒体元素</li>
+                      <li>浏览器无法完整渲染PowerPoint的视觉效果</li>
+                      <li>下载后使用PowerPoint打开可获得完整体验</li>
+                    </ul>
+                  </div>
+                </div>
+              ) : isPptFile(previewDocName) ? (
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  height: '70vh',
+                  backgroundColor: '#fef3c7',
+                  borderRadius: '8px',
+                  padding: '48px',
+                  border: '2px solid #f59e0b'
+                }}>
+                  <div style={{ fontSize: '4rem', marginBottom: '24px' }}>📊</div>
+                  <div style={{
+                    fontSize: '1.5rem',
+                    fontWeight: 'bold',
+                    color: '#92400e',
+                    marginBottom: '16px',
+                    textAlign: 'center'
+                  }}>
+                    老版本PowerPoint文件（.ppt）
+                  </div>
+                  <div style={{
+                    fontSize: '1rem',
+                    color: '#78350f',
+                    textAlign: 'center',
+                    maxWidth: '500px',
+                    marginBottom: '32px',
+                    lineHeight: '1.6'
+                  }}>
+                    由于技术限制，老版本PPT文件（.ppt）无法在浏览器中直接预览。<br />
+                    建议您使用"下载"按钮保存文件后，使用Microsoft PowerPoint或其他兼容软件打开。
+                  </div>
+                  <div style={{
+                    padding: '16px 24px',
+                    backgroundColor: '#fffbeb',
+                    border: '1px solid #fcd34d',
+                    borderRadius: '8px',
+                    fontSize: '0.875rem',
+                    color: '#92400e',
+                    textAlign: 'center'
+                  }}>
+                    💡 <strong>建议：</strong>如果可能，建议将PPT文件转换为PPTX格式后再上传，<br />
+                    以获得更好的兼容性和在线预览体验。
+                  </div>
                 </div>
               ) : isExcelFile(previewDocName) ? (
                 <div className="table-preview" style={{

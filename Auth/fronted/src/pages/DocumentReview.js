@@ -3,7 +3,7 @@ import { useAuth } from '../hooks/useAuth';
 import authClient from '../api/authClient';
 
 const DocumentReview = () => {
-  const { user, isReviewer, isAdmin } = useAuth();
+  const { user, isReviewer, isAdmin, canDownload } = useAuth();
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -21,21 +21,14 @@ const DocumentReview = () => {
       try {
         setLoadingDatasets(true);
 
-        // 获取用户有权限的知识库列表
-        const userKbData = await authClient.getMyKnowledgeBases();
-        const userKbIds = userKbData.kb_ids || [];
-
-        // 获取所有知识库
+        // 获取知识库列表（后端已经根据权限组过滤过了）
         const data = await authClient.listRagflowDatasets();
-        const allKbs = data.datasets || [];
+        const datasets = data.datasets || [];
 
-        // 过滤出用户有权限的知识库
-        const accessibleKbs = allKbs.filter(kb => userKbIds.includes(kb.name));
+        setDatasets(datasets);
 
-        setDatasets(accessibleKbs);
-
-        if (accessibleKbs.length > 0) {
-          setSelectedDataset(accessibleKbs[0].name);
+        if (datasets.length > 0) {
+          setSelectedDataset(datasets[0].name);
         } else {
           setError('您没有被分配任何知识库权限，请联系管理员');
         }
@@ -193,21 +186,23 @@ const DocumentReview = () => {
             >
               {selectedDocIds.size === documents.length ? '取消全选' : '全选'}
             </button>
-            <button
-              onClick={handleBatchDownload}
-              disabled={selectedDocIds.size === 0 || batchDownloadLoading}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: selectedDocIds.size > 0 && !batchDownloadLoading ? '#10b981' : '#9ca3af',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: selectedDocIds.size > 0 && !batchDownloadLoading ? 'pointer' : 'not-allowed',
-                fontSize: '0.9rem',
-              }}
-            >
-              {batchDownloadLoading ? '下载中...' : `下载选中 (${selectedDocIds.size})`}
-            </button>
+            {canDownload() && (
+              <button
+                onClick={handleBatchDownload}
+                disabled={selectedDocIds.size === 0 || batchDownloadLoading}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: selectedDocIds.size > 0 && !batchDownloadLoading ? '#10b981' : '#9ca3af',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: selectedDocIds.size > 0 && !batchDownloadLoading ? 'pointer' : 'not-allowed',
+                  fontSize: '0.9rem',
+                }}
+              >
+                {batchDownloadLoading ? '下载中...' : `下载选中 (${selectedDocIds.size})`}
+              </button>
+            )}
           </div>
         </div>
 
@@ -311,22 +306,24 @@ const DocumentReview = () => {
                     {new Date(doc.uploaded_at_ms).toLocaleString('zh-CN')}
                   </td>
                   <td style={{ padding: '12px 16px', textAlign: 'right' }}>
-                    <button
-                      onClick={() => handleDownload(doc.doc_id)}
-                      disabled={downloadLoading === doc.doc_id}
-                      style={{
-                        padding: '6px 12px',
-                        backgroundColor: downloadLoading === doc.doc_id ? '#9ca3af' : '#3b82f6',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '4px',
-                        cursor: downloadLoading === doc.doc_id ? 'not-allowed' : 'pointer',
-                        fontSize: '0.9rem',
-                        marginRight: '8px',
-                      }}
-                    >
-                      {downloadLoading === doc.doc_id ? '下载中...' : '下载'}
-                    </button>
+                    {canDownload() && (
+                      <button
+                        onClick={() => handleDownload(doc.doc_id)}
+                        disabled={downloadLoading === doc.doc_id}
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: downloadLoading === doc.doc_id ? '#9ca3af' : '#3b82f6',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '4px',
+                          cursor: downloadLoading === doc.doc_id ? 'not-allowed' : 'pointer',
+                          fontSize: '0.9rem',
+                          marginRight: '8px',
+                        }}
+                      >
+                        {downloadLoading === doc.doc_id ? '下载中...' : '下载'}
+                      </button>
+                    )}
                     {doc.status === 'pending' && isReviewer() ? (
                       <>
                         <button

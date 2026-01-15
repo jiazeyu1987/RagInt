@@ -4,7 +4,6 @@ from typing import Annotated, Optional
 
 from authx import TokenPayload
 from core.security import auth
-from core.permissions import RagflowViewRequired, RagflowDeleteRequired
 from dependencies import AppDependencies
 
 
@@ -15,19 +14,105 @@ def get_deps(request: Request) -> AppDependencies:
     return request.app.state.deps
 
 
+def get_current_payload(request: Request) -> TokenPayload:
+    """
+    Get current user token payload (no special permissions required)
+    Similar to auth.get_payload() but without scope checking
+    """
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+
+    token = auth_header.split(" ")[1]
+
+    # Use AuthX's internal token verification
+    payload = auth._decode_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    return payload
+
+
+# Authenticated user dependency (no special permissions required)
+AuthRequired = Annotated[TokenPayload, Depends(get_current_payload)]
+
+
 @router.get("/datasets")
 async def list_datasets(
-    payload: RagflowViewRequired,
+    payload: AuthRequired,
     deps: AppDependencies = Depends(get_deps),
 ):
-    """List RAGFlow datasets"""
-    datasets = deps.ragflow_service.list_datasets()
-    return {"datasets": datasets}
+    """
+    列出RAGFlow数据集（基于权限组过滤）
+
+    权限规则：
+    - 管理员：可以看到所有数据集
+    - 其他角色：根据权限组的accessible_kbs配置
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    logger.info("=" * 80)
+    logger.info("[GET /api/ragflow/datasets] Called")
+
+    # 获取当前用户
+    user = deps.user_store.get_by_user_id(payload.sub)
+    if not user:
+        logger.error("[GET /api/ragflow/datasets] User not found")
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    logger.info(f"[GET /api/ragflow/datasets] Current user: {user.username}, role: {user.role}, group_id: {user.group_id}")
+
+    # 获取所有数据集
+    all_datasets = deps.ragflow_service.list_datasets()
+    logger.info(f"[GET /api/ragflow/datasets] Total datasets from RAGFlow: {len(all_datasets)}")
+    for ds in all_datasets:
+        logger.info(f"  - Dataset: id={ds.get('id')}, name={ds.get('name')}")
+
+    # 管理员返回所有数据集
+    if user.role == "admin":
+        logger.info(f"[GET /api/ragflow/datasets] Admin user {user.username} showing all {len(all_datasets)} datasets")
+        return {"datasets": all_datasets}
+
+    # 非管理员用户根据权限组过滤
+    if not user.group_id:
+        logger.warning(f"[GET /api/ragflow/datasets] User {user.username} has no group_id, returning empty datasets")
+        return {"datasets": []}
+
+    group = deps.permission_group_store.get_group(user.group_id)
+    if not group:
+        logger.warning(f"[GET /api/ragflow/datasets] User {user.username} has invalid group_id {user.group_id}, returning empty datasets")
+        return {"datasets": []}
+
+    logger.info(f"[GET /api/ragflow/datasets] User's permission group: {group['group_name']}")
+
+    # 获取权限组配置的可访问知识库
+    accessible_kbs = group.get('accessible_kbs', [])
+    logger.info(f"[GET /api/ragflow/datasets] Accessible KBs from permission group: {accessible_kbs}")
+
+    if accessible_kbs and len(accessible_kbs) > 0:
+        # 权限组指定了具体的知识库，需要过滤
+        logger.info(f"[GET /api/ragflow/datasets] Filtering datasets, accessible_kbs is not empty")
+        filtered_datasets = []
+        for ds in all_datasets:
+            ds_name = ds.get('name')
+            if ds_name in accessible_kbs:
+                filtered_datasets.append(ds)
+                logger.info(f"  ✓ Match: {ds_name}")
+            else:
+                logger.info(f"  ✗ No match: {ds_name}")
+
+        logger.info(f"[GET /api/ragflow/datasets] User {user.username} can access {len(filtered_datasets)} datasets")
+        return {"datasets": filtered_datasets}
+    else:
+        # 权限组的 accessible_kbs 为空数组，返回所有
+        logger.info(f"[GET /api/ragflow/datasets] Accessible KBs is empty, showing all {len(all_datasets)} datasets")
+        return {"datasets": all_datasets}
 
 
 @router.get("/documents")
 async def list_ragflow_documents(
-    payload: RagflowViewRequired,
+    payload: AuthRequired,
     deps: AppDependencies = Depends(get_deps),
     dataset_name: str = "展厅",
 ):
@@ -39,7 +124,7 @@ async def list_ragflow_documents(
 @router.get("/documents/{doc_id}/status")
 async def get_document_status(
     doc_id: str,
-    payload: RagflowViewRequired,
+    payload: AuthRequired,
     deps: AppDependencies = Depends(get_deps),
     dataset_name: str = "展厅",
 ):
@@ -53,7 +138,7 @@ async def get_document_status(
 @router.get("/documents/{doc_id}")
 async def get_document_detail(
     doc_id: str,
-    payload: RagflowViewRequired,
+    payload: AuthRequired,
     deps: AppDependencies = Depends(get_deps),
     dataset_name: str = "展厅",
 ):
@@ -67,7 +152,7 @@ async def get_document_detail(
 @router.get("/documents/{doc_id}/download")
 async def download_document(
     doc_id: str,
-    payload: RagflowViewRequired,
+    payload: AuthRequired,
     deps: AppDependencies = Depends(get_deps),
     dataset: str = "展厅",
     filename: str = None,
@@ -137,14 +222,122 @@ async def download_document(
         raise HTTPException(status_code=500, detail=f"下载失败: {str(e)}")
 
 
+@router.get("/documents/{doc_id}/preview")
+async def preview_document(
+    doc_id: str,
+    payload: AuthRequired,
+    deps: AppDependencies = Depends(get_deps),
+    dataset: str = "展厅",
+):
+    """
+    预览文档内容（根据文件类型返回不同格式）
+
+    支持的文件类型：
+    - 文本文件 (.txt, .md, .csv, .json): 返回文本内容
+    - 图片 (.png, .jpg, .jpeg, .gif, .bmp): 返回图片base64或URL
+    - PDF: 返回PDF文件内容
+    - 其他: 返回不支持预览的提示
+    """
+    import logging
+    import base64
+    from pathlib import Path
+
+    logger = logging.getLogger(__name__)
+    logger.info("=" * 80)
+    logger.info("[PREVIEW] preview_document() called")
+    logger.info(f"[PREVIEW]   doc_id: {doc_id}")
+    logger.info(f"[PREVIEW]   dataset: {dataset}")
+    logger.info(f"[PREVIEW]   user: {payload.sub}")
+
+    try:
+        # 下载文档
+        file_content, filename = deps.ragflow_service.download_document(doc_id, dataset)
+
+        if file_content is None:
+            logger.error(f"[PREVIEW] Failed to download document {doc_id}")
+            raise HTTPException(status_code=404, detail="文档不存在")
+
+        # 检查文件扩展名
+        file_ext = Path(filename).suffix.lower() if filename else ""
+        logger.info(f"[PREVIEW] File extension: {file_ext}")
+
+        # 文本文件类型
+        text_extensions = ['.txt', '.md', '.csv', '.json', '.xml', '.log', '.svg', '.html', '.css', '.js']
+
+        # 图片文件类型
+        image_extensions = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp']
+
+        if file_ext in text_extensions:
+            # 文本文件：直接返回文本内容
+            try:
+                text_content = file_content.decode('utf-8')
+                logger.info(f"[PREVIEW] Returning text content ({len(text_content)} chars)")
+                return {
+                    "type": "text",
+                    "filename": filename,
+                    "content": text_content
+                }
+            except UnicodeDecodeError:
+                try:
+                    text_content = file_content.decode('gbk')
+                    logger.info(f"[PREVIEW] Returning text content with GBK encoding ({len(text_content)} chars)")
+                    return {
+                        "type": "text",
+                        "filename": filename,
+                        "content": text_content
+                    }
+                except:
+                    logger.error(f"[PREVIEW] Failed to decode text file")
+                    raise HTTPException(status_code=400, detail="无法解码文本文件")
+
+        elif file_ext in image_extensions:
+            # 图片文件：返回base64编码的图片
+            base64_image = base64.b64encode(file_content).decode('utf-8')
+            image_type = file_ext[1:]  # 去掉点号
+            logger.info(f"[PREVIEW] Returning image content ({len(file_content)} bytes)")
+            return {
+                "type": "image",
+                "filename": filename,
+                "content": base64_image,
+                "image_type": image_type
+            }
+
+        elif file_ext == '.pdf':
+            # PDF文件：返回base64编码的PDF
+            base64_pdf = base64.b64encode(file_content).decode('utf-8')
+            logger.info(f"[PREVIEW] Returning PDF content ({len(file_content)} bytes)")
+            return {
+                "type": "pdf",
+                "filename": filename,
+                "content": base64_pdf
+            }
+
+        else:
+            # 其他文件类型：不支持预览
+            logger.warning(f"[PREVIEW] Unsupported file type: {file_ext}")
+            return {
+                "type": "unsupported",
+                "filename": filename,
+                "message": f"不支持的文件类型: {file_ext}，请下载后查看"
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[PREVIEW] Exception: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"预览失败: {str(e)}")
+
+
 @router.delete("/documents/{doc_id}")
 async def delete_ragflow_document(
     doc_id: str,
-    payload: RagflowDeleteRequired,
+    payload: AuthRequired,
     deps: AppDependencies = Depends(get_deps),
     dataset_name: str = "展厅",
 ):
-    """Delete document from RAGFlow"""
+    """Delete document from RAGFlow (based on permission group)"""
     import logging
     logger = logging.getLogger(__name__)
 
@@ -153,6 +346,24 @@ async def delete_ragflow_document(
     logger.info(f"[DELETE RAGFLOW]   doc_id: {doc_id}")
     logger.info(f"[DELETE RAGFLOW]   dataset_name: {dataset_name}")
     logger.info(f"[DELETE RAGFLOW]   deleted_by: {payload.sub}")
+
+    # 获取用户并检查删除权限
+    user = deps.user_store.get_by_user_id(payload.sub)
+    if not user:
+        logger.error("[DELETE RAGFLOW] User not found")
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    # 管理员可以直接删除
+    if user.role != "admin":
+        # 非管理员需要检查权限组的 can_delete 权限
+        if not user.group_id:
+            logger.warning(f"[DELETE RAGFLOW] User {user.username} has no group_id")
+            raise HTTPException(status_code=403, detail="您没有删除权限，请联系管理员")
+
+        group = deps.permission_group_store.get_group(user.group_id)
+        if not group or not group.get('can_delete', 0):
+            logger.warning(f"[DELETE RAGFLOW] User {user.username} has no delete permission")
+            raise HTTPException(status_code=403, detail="您没有删除权限，请联系管理员")
 
     # 查找本地数据库中对应的文档记录
     local_doc = deps.kb_store.get_document_by_ragflow_id(doc_id, dataset_name)
@@ -214,7 +425,7 @@ async def delete_ragflow_document(
 @router.post("/documents/batch/download")
 async def batch_download_documents(
     request: Request,
-    payload: RagflowViewRequired,
+    payload: AuthRequired,
     deps: AppDependencies = Depends(get_deps),
 ):
     """Batch download documents from RAGFlow as ZIP"""
@@ -267,7 +478,7 @@ async def batch_download_documents(
 
 @router.get("/downloads")
 async def list_downloads(
-    payload: RagflowViewRequired,
+    payload: AuthRequired,
     deps: AppDependencies = Depends(get_deps),
     kb_id: Optional[str] = None,
     downloaded_by: Optional[str] = None,

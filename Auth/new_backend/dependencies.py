@@ -10,6 +10,7 @@ from services.download_log_store import DownloadLogStore
 from services.user_chat_permission_store import UserChatPermissionStore
 from services.ragflow_chat_service import RagflowChatService
 from services.chat_session_store import ChatSessionStore
+from services.permission_group_store import PermissionGroupStore
 
 
 @dataclass
@@ -23,6 +24,7 @@ class AppDependencies:
     user_chat_permission_store: UserChatPermissionStore
     ragflow_chat_service: RagflowChatService
     chat_session_store: ChatSessionStore
+    permission_group_store: PermissionGroupStore
 
 
 def create_dependencies(db_path: str = None) -> AppDependencies:
@@ -43,4 +45,5 @@ def create_dependencies(db_path: str = None) -> AppDependencies:
         user_chat_permission_store=UserChatPermissionStore(db_path=str(db_path)),
         ragflow_chat_service=RagflowChatService(session_store=chat_session_store),
         chat_session_store=chat_session_store,
+        permission_group_store=PermissionGroupStore(database_path=str(db_path)),
     )

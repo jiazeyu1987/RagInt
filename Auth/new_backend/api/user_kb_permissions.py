@@ -150,7 +150,7 @@ async def get_my_knowledge_bases(
     deps: AppDependencies = Depends(get_deps),
 ):
     """
-    获取当前用户可访问的知识库列表
+    获取当前用户可访问的知识库列表（基于权限组）
 
     Args:
         payload: 当前用户token payload
@@ -158,24 +158,64 @@ async def get_my_knowledge_bases(
     Returns:
         KbListResponse: 知识库ID列表
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    logger.info("=" * 80)
+    logger.info("[GET /api/me/kbs] Called")
+
     # 获取当前用户
     user = deps.user_store.get_by_user_id(payload.sub)
     if not user:
+        logger.error("[GET /api/me/kbs] User not found")
         raise HTTPException(status_code=404, detail="用户不存在")
 
-    # 管理员自动拥有所有权限（特殊处理）
+    logger.info(f"[GET /api/me/kbs] Current user: {user.username}, role: {user.role}, group_id: {user.group_id}")
+
+    # 管理员自动拥有所有权限
     if user.role == "admin":
         try:
             # 从RAGFlow获取所有知识库
             datasets = deps.ragflow_service.list_datasets()
-            kb_ids = [ds['name'] for ds in datasets] if datasets else ["展厅"]
-        except Exception:
-            # 如果RAGFlow连接失败，返回默认知识库
-            kb_ids = ["展厅"]
+            kb_ids = [ds['name'] for ds in datasets] if datasets else []
+            logger.info(f"[GET /api/me/kbs] Admin user, returning all {len(kb_ids)} KBs: {kb_ids}")
+        except Exception as e:
+            logger.error(f"[GET /api/me/kbs] Failed to get all datasets: {e}")
+            kb_ids = []
     else:
-        # 其他用户从数据库获取权限
-        kb_ids = deps.user_kb_permission_store.get_user_kbs(payload.sub)
+        # 其他用户从权限组获取权限
+        if user.group_id:
+            group = deps.permission_group_store.get_group(user.group_id)
+            if group:
+                logger.info(f"[GET /api/me/kbs] User's permission group: {group['group_name']}")
+                # 获取权限组配置的可访问知识库
+                accessible_kbs = group.get('accessible_kbs', [])
+                logger.info(f"[GET /api/me/kbs] Accessible KBs from permission group: {accessible_kbs}")
+                if accessible_kbs and len(accessible_kbs) > 0:
+                    # 权限组指定了具体的知识库
+                    kb_ids = accessible_kbs
+                    logger.info(f"[GET /api/me/kbs] Using configured KBs: {kb_ids}")
+                else:
+                    # 权限组未指定（空数组），则可以访问所有
+                    logger.info(f"[GET /api/me/kbs] Accessible KBs is empty, fetching all datasets from RAGFlow")
+                    try:
+                        datasets = deps.ragflow_service.list_datasets()
+                        kb_ids = [ds['name'] for ds in datasets] if datasets else []
+                        logger.info(f"[GET /api/me/kbs] Fetched {len(kb_ids)} KBs from RAGFlow: {kb_ids}")
+                    except Exception as e:
+                        logger.error(f"[GET /api/me/kbs] Failed to get all datasets: {e}")
+                        kb_ids = []
+            else:
+                # 权限组不存在
+                logger.warning(f"[GET /api/me/kbs] Permission group {user.group_id} not found")
+                kb_ids = []
+        else:
+            # 用户没有分配权限组
+            logger.warning(f"[GET /api/me/kbs] User {user.username} has no group_id")
+            kb_ids = []
 
+    logger.info(f"[GET /api/me/kbs] Returning {len(kb_ids)} KBs for user {user.username}: {kb_ids}")
+    logger.info("=" * 80)
     return KbListResponse(kb_ids=kb_ids)
 
 

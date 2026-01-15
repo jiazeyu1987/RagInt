@@ -7,14 +7,14 @@ class UserCreate(BaseModel):
     username: str
     password: str
     email: Optional[str] = None
-    role: str = "viewer"
+    group_id: Optional[int] = None  # 使用权限组ID而非角色
     status: str = "active"
 
 
 class UserUpdate(BaseModel):
     """User update model"""
     email: Optional[str] = None
-    role: Optional[str] = None
+    group_id: Optional[int] = None  # 使用权限组ID而非角色
     status: Optional[str] = None
 
 
@@ -23,7 +23,9 @@ class UserResponse(BaseModel):
     user_id: str
     username: str
     email: Optional[str] = None
-    role: str
+    group_id: Optional[int] = None  # 权限组ID
+    group_name: Optional[str] = None  # 权限组名称
+    role: str  # 保留role字段用于向后兼容
     status: str
     created_at_ms: int
     last_login_at_ms: Optional[int] = None

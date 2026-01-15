@@ -139,11 +139,31 @@ async def get_current_user(
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
 
+    # 获取权限组操作权限（如果有权限组）
+    permissions = {
+        'can_upload': False,
+        'can_review': False,
+        'can_download': False,
+        'can_delete': False
+    }
+
+    if user.group_id:
+        group = deps.permission_group_store.get_group(user.group_id)
+        if group:
+            permissions = {
+                'can_upload': group.get('can_upload', False),
+                'can_review': group.get('can_review', False),
+                'can_download': group.get('can_download', False),
+                'can_delete': group.get('can_delete', False)
+            }
+
     return {
         "user_id": user.user_id,
         "username": user.username,
         "email": user.email,
         "role": user.role,
         "status": user.status,
+        "group_id": user.group_id,
         "scopes": get_scopes_for_role(user.role),
+        "permissions": permissions
     }

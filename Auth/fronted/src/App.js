@@ -11,6 +11,7 @@ import DocumentBrowser from './pages/DocumentBrowser';
 import DocumentAudit from './pages/DocumentAudit';
 import Chat from './pages/Chat';
 import Agents from './pages/Agents';
+import PermissionGroupManagement from './pages/PermissionGroupManagement';
 import Unauthorized from './pages/Unauthorized';
 import PermissionGuard from './components/PermissionGuard';
 
@@ -33,7 +34,7 @@ function App() {
           <Route
             path="/users"
             element={
-              <PermissionGuard permission={{ resource: 'users', action: 'view' }}>
+              <PermissionGuard allowedRoles={['admin']}>
                 <Layout>
                   <UserManagement />
                 </Layout>
@@ -43,7 +44,7 @@ function App() {
           <Route
             path="/upload"
             element={
-              <PermissionGuard permission={{ resource: 'kb_documents', action: 'upload' }}>
+              <PermissionGuard>
                 <Layout>
                   <KnowledgeUpload />
                 </Layout>
@@ -53,7 +54,7 @@ function App() {
           <Route
             path="/documents"
             element={
-              <PermissionGuard permission={{ resource: 'kb_documents', action: 'view' }}>
+              <PermissionGuard>
                 <Layout>
                   <DocumentReview />
                 </Layout>
@@ -63,7 +64,7 @@ function App() {
           <Route
             path="/browser"
             element={
-              <PermissionGuard permission={{ resource: 'ragflow_documents', action: 'view' }}>
+              <PermissionGuard>
                 <Layout>
                   <DocumentBrowser />
                 </Layout>
@@ -93,9 +94,19 @@ function App() {
           <Route
             path="/audit"
             element={
-              <PermissionGuard allowedRoles={['admin']}>
+              <PermissionGuard>
                 <Layout>
                   <DocumentAudit />
+                </Layout>
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/permission-groups"
+            element={
+              <PermissionGuard allowedRoles={['admin']}>
+                <Layout>
+                  <PermissionGroupManagement />
                 </Layout>
               </PermissionGuard>
             }

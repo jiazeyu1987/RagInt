@@ -4,7 +4,7 @@ import { useAuth } from '../hooks/useAuth';
 import PermissionGuard from './PermissionGuard';
 
 const Layout = ({ children }) => {
-  const { user, logout } = useAuth();
+  const { user, logout, canUpload, canReview } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -19,11 +19,12 @@ const Layout = ({ children }) => {
   const navigation = [
     { name: 'AI对话', path: '/chat' },
     { name: '搜索', path: '/agents' },
-    { name: '文档浏览', path: '/browser', permission: { resource: 'ragflow_documents', action: 'view' } },
-    { name: '文档管理', path: '/documents', permission: { resource: 'kb_documents', action: 'view' } },
-    { name: '上传文档', path: '/upload', permission: { resource: 'kb_documents', action: 'upload' } },
-    { name: '用户管理', path: '/users', permission: { resource: 'users', action: 'view' } },
-    { name: '审核记录', path: '/audit', allowedRoles: ['admin'] },
+    { name: '文档浏览', path: '/browser' },
+    { name: '文档管理', path: '/documents', show: canReview },
+    { name: '上传文档', path: '/upload', show: canUpload },
+    { name: '审核记录', path: '/audit', show: canReview },
+    { name: '用户管理', path: '/users', allowedRoles: ['admin'] },
+    { name: '权限组管理', path: '/permission-groups', allowedRoles: ['admin'] },
   ];
 
   return (
@@ -62,42 +63,13 @@ const Layout = ({ children }) => {
 
         <nav style={{ flex: 1, padding: '10px 0' }}>
           {navigation.map((item) => {
-            // For items with allowedRoles, use role-based guard
-            if (item.allowedRoles) {
-              return (
-                <PermissionGuard key={item.path} allowedRoles={item.allowedRoles} fallback={null}>
-                  <Link
-                    to={item.path}
-                    style={{
-                      display: 'block',
-                      padding: '12px 20px',
-                      color: isActive(item.path) ? '#60a5fa' : '#d1d5db',
-                      textDecoration: 'none',
-                      backgroundColor: isActive(item.path) ? '#374151' : 'transparent',
-                      transition: 'background-color 0.2s',
-                      whiteSpace: sidebarOpen ? 'normal' : 'nowrap',
-                      overflow: 'hidden',
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isActive(item.path)) {
-                        e.target.style.backgroundColor = '#374151';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isActive(item.path)) {
-                        e.target.style.backgroundColor = 'transparent';
-                      }
-                    }}
-                  >
-                    {sidebarOpen ? item.name : item.name[0]}
-                  </Link>
-                </PermissionGuard>
-              );
+            // 检查是否应该显示此菜单项
+            if (item.show !== undefined && !item.show()) {
+              return null;
             }
 
-            // For items with permission, use permission-based guard
             return (
-              <PermissionGuard key={item.path} permission={item.permission} fallback={null}>
+              <PermissionGuard key={item.path} allowedRoles={item.allowedRoles} fallback={null}>
                 <Link
                   to={item.path}
                   style={{

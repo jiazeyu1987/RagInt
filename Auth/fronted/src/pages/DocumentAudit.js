@@ -3,7 +3,7 @@ import { useAuth } from '../hooks/useAuth';
 import authClient from '../api/authClient';
 
 const DocumentAudit = () => {
-  const { isAdmin } = useAuth();
+  const { isAdmin, accessibleKbs } = useAuth();
   const [documents, setDocuments] = useState([]);
   const [deletions, setDeletions] = useState([]);
   const [downloads, setDownloads] = useState([]);
@@ -102,35 +102,61 @@ const DocumentAudit = () => {
     return name || '其他';
   };
 
-  // 筛选文档
+  // 筛选文档（基于权限）
   const filteredDocuments = useMemo(() => {
     return documents.filter(doc => {
+      // 权限过滤：非管理员只能看到有权限的知识库
+      if (!isAdmin() && accessibleKbs.length > 0 && !accessibleKbs.includes(doc.kb_id)) {
+        return false;
+      }
+
       if (filterKb && doc.kb_id !== filterKb) return false;
       if (filterStatus && doc.status !== filterStatus) return false;
       return true;
     });
-  }, [documents, filterKb, filterStatus]);
+  }, [documents, filterKb, filterStatus, isAdmin, accessibleKbs]);
 
-  // 筛选删除记录
+  // 筛选删除记录（基于权限）
   const filteredDeletions = useMemo(() => {
     return deletions.filter(del => {
+      // 权限过滤：非管理员只能看到有权限的知识库
+      if (!isAdmin() && accessibleKbs.length > 0 && !accessibleKbs.includes(del.kb_id)) {
+        return false;
+      }
+
       if (filterKb && del.kb_id !== filterKb) return false;
       return true;
     });
-  }, [deletions, filterKb]);
+  }, [deletions, filterKb, isAdmin, accessibleKbs]);
 
-  // 筛选下载记录
+  // 筛选下载记录（基于权限）
   const filteredDownloads = useMemo(() => {
     return downloads.filter(down => {
+      // 权限过滤：非管理员只能看到有权限的知识库
+      if (!isAdmin() && accessibleKbs.length > 0 && !accessibleKbs.includes(down.kb_id)) {
+        return false;
+      }
+
       if (filterKb && down.kb_id !== filterKb) return false;
       return true;
     });
-  }, [downloads, filterKb]);
+  }, [downloads, filterKb, isAdmin, accessibleKbs]);
 
-  // 获取所有知识库列表（用于筛选器）
+  // 获取所有知识库列表（用于筛选器）- 基于权限过滤
   const knowledgeBases = useMemo(() => {
-    return Array.from(new Set(documents.map(d => d.kb_id)));
-  }, [documents]);
+    const allKbs = Array.from(new Set([
+      ...documents.map(d => d.kb_id),
+      ...deletions.map(d => d.kb_id),
+      ...downloads.map(d => d.kb_id)
+    ]));
+
+    // 非管理员只显示有权限的知识库
+    if (!isAdmin() && accessibleKbs.length > 0) {
+      return allKbs.filter(kb => accessibleKbs.includes(kb));
+    }
+
+    return allKbs;
+  }, [documents, deletions, downloads, isAdmin, accessibleKbs]);
 
   // 时间格式化
   const formatTime = (timestamp_ms) => {

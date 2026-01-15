@@ -623,6 +623,22 @@ class AuthClient {
     return { success: true, filename };
   }
 
+  async previewDocument(docId, dataset = '展厅') {
+    const params = new URLSearchParams({ dataset });
+
+    const response = await this.fetchWithAuth(
+      authBackendUrl(`/api/ragflow/documents/${docId}/preview?${params}`),
+      { method: 'GET' }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to preview document');
+    }
+
+    return await response.json();
+  }
+
   async previewRagflowDocument(docId, dataset = '展厅', docName = null) {
     const params = new URLSearchParams({ dataset });
     if (docName) {

@@ -1,7 +1,15 @@
 import uvicorn
+import logging
 
 if __name__ == "__main__":
     from main import app
+
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[logging.StreamHandler()]
+    )
 
     print("\n" + "=" * 50)
     print("Auth Backend (FastAPI + AuthX) starting...")
@@ -15,4 +23,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8001,
         reload=True,
+        log_level="info",
     )

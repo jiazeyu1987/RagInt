@@ -158,7 +158,7 @@ async def get_my_chats(
     deps: AppDependencies = Depends(get_deps),
 ):
     """
-    获取当前用户可访问的聊天助手列表
+    获取当前用户可访问的聊天助手列表（基于权限组）
 
     Args:
         payload: 当前用户token payload
@@ -166,6 +166,9 @@ async def get_my_chats(
     Returns:
         ChatListResponse: 聊天助手ID列表
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
     # 获取当前用户
     user = deps.user_store.get_by_user_id(payload.sub)
     if not user:
@@ -174,15 +177,52 @@ async def get_my_chats(
     # 管理员自动拥有所有权限
     if user.role == "admin":
         try:
-            # 从RAGFlow获取所有聊天助手
+            # 从RAGFlow获取所有聊天助手和智能体
             all_chats = deps.ragflow_chat_service.list_chats(page_size=1000)
-            chat_ids = [chat.get("id") for chat in all_chats if chat.get("id")]
-        except Exception:
+            all_agents = deps.ragflow_chat_service.list_agents(page_size=1000)
+            chat_ids = []
+            for chat in all_chats:
+                if chat.get("id"):
+                    chat_ids.append(f"chat_{chat['id']}")
+            for agent in all_agents:
+                if agent.get("id"):
+                    chat_ids.append(f"agent_{agent['id']}")
+        except Exception as e:
+            logger.error(f"Failed to get all chats/agents: {e}")
             chat_ids = []
     else:
-        # 其他用户从数据库获取权限
-        chat_ids = deps.user_chat_permission_store.get_user_chats(payload.sub)
+        # 其他用户从权限组获取权限
+        if user.group_id:
+            group = deps.permission_group_store.get_group(user.group_id)
+            if group:
+                # 获取权限组配置的可访问聊天体
+                accessible_chats = group.get('accessible_chats', [])
+                if accessible_chats and len(accessible_chats) > 0:
+                    # 权限组指定了具体的聊天体
+                    chat_ids = accessible_chats
+                else:
+                    # 权限组未指定（空数组），则可以访问所有
+                    try:
+                        all_chats = deps.ragflow_chat_service.list_chats(page_size=1000)
+                        all_agents = deps.ragflow_chat_service.list_agents(page_size=1000)
+                        chat_ids = []
+                        for chat in all_chats:
+                            if chat.get("id"):
+                                chat_ids.append(f"chat_{chat['id']}")
+                        for agent in all_agents:
+                            if agent.get("id"):
+                                chat_ids.append(f"agent_{agent['id']}")
+                    except Exception as e:
+                        logger.error(f"Failed to get all chats/agents: {e}")
+                        chat_ids = []
+            else:
+                # 权限组不存在
+                chat_ids = []
+        else:
+            # 用户没有分配权限组
+            chat_ids = []
 
+    logger.info(f"User {user.username} (group_id={user.group_id}) has {len(chat_ids)} accessible chats")
     return ChatListResponse(chat_ids=chat_ids)
 
 

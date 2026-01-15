@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # File Upload
     UPLOAD_DIR: str = "data/uploads"
     MAX_FILE_SIZE: int = 16 * 1024 * 1024  # 16MB
-    ALLOWED_EXTENSIONS: set = {".txt", ".pdf", ".doc", ".docx", ".md"}
+    ALLOWED_EXTENSIONS: set = {".txt", ".pdf", ".doc", ".docx", ".md", ".ppt", ".pptx"}
 
     # CORS
     CORS_ORIGINS: list[str] = ["*"]

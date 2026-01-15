@@ -9,8 +9,7 @@ from pathlib import Path
 
 from authx import TokenPayload
 from core.security import auth
-from core.permissions import KbViewRequired, KbUploadRequired, KbDeleteRequired
-from models.document import DocumentResponse, StatsResponse, BatchDownloadRequest
+from models.document import DocumentResponse
 from dependencies import AppDependencies
 from config import settings
 
@@ -22,77 +21,74 @@ def get_deps(request: Request) -> AppDependencies:
     return request.app.state.deps
 
 
+def get_current_payload(request: Request) -> TokenPayload:
+    """
+    Get current user token payload (no special permissions required)
+    Similar to auth.get_payload() but without scope checking
+    """
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+
+    token = auth_header.split(" ")[1]
+
+    # Use AuthX's internal token verification
+    payload = auth._decode_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    return payload
+
+
+# Authenticated user dependency (no special permissions required)
+AuthRequired = Annotated[TokenPayload, Depends(get_current_payload)]
+
+
 @router.post("/upload", response_model=DocumentResponse, status_code=201)
 async def upload_document(
     request: Request,
-    payload: KbUploadRequired,
+    payload: AuthRequired,
     file: UploadFile = File(...),
     deps: AppDependencies = Depends(get_deps),
 ):
     """
     上传文档到本地存储（pending状态）
-
-    新流程：
-    1. 检查用户是否有该知识库权限（管理员自动通过）
-    2. 验证文件大小和类型
-    3. 存储到本地 uploads 目录
-    4. 创建本地记录（status=pending）
-    5. 等待审核者批准后上传到RAGFlow
+    基于权限组检查上传权限
     """
     import logging
     logger = logging.getLogger(__name__)
 
-    # ========== BACKEND STEP 1: Request Received ==========
-    logger.info("=" * 80)
-    logger.info("BACKEND: Upload request received")
-    logger.info(f"BACKEND: Request URL: {request.url}")
-    logger.info(f"BACKEND: Query params: {dict(request.query_params)}")
-    logger.info(f"BACKEND: User ID from token: {payload.sub}")
-    logger.info(f"BACKEND: Full payload: {payload}")
-    logger.info(f"BACKEND: Payload attributes: dir={dir(payload)}")
-
     # Get kb_id from query parameter, default to '展厅'
     kb_id = request.query_params.get("kb_id", "展厅")
 
-    logger.info(f"BACKEND: Extracted kb_id: {repr(kb_id)}")
-    logger.info(f"BACKEND: kb_id type: {type(kb_id)}, length: {len(kb_id)}")
-    logger.info(f"BACKEND: File info: name={file.filename}, size={file.size if hasattr(file, 'size') else 'unknown'}")
-    logger.info("=" * 80)
-
-    # 1. 检查知识库权限（管理员自动通过）
+    # 获取用户并检查上传权限
     user = deps.user_store.get_by_user_id(payload.sub)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
 
-    # ========== BACKEND STEP 2: Permission Check ==========
-    logger.info(f"BACKEND: User info: username={user.username}, role={user.role}")
-
+    # 管理员可以直接上传
     if user.role != "admin":
-        # 获取用户的所有知识库权限
-        user_kbs = deps.user_kb_permission_store.get_user_kbs(payload.sub)
-        logger.info(f"BACKEND: User's KB permissions from DB: {user_kbs}")
-        logger.info(f"BACKEND: Checking if user has access to kb_id: {repr(kb_id)}")
+        # 非管理员需要检查权限组的 can_upload 权限
+        if not user.group_id:
+            raise HTTPException(status_code=403, detail="您没有上传权限，请联系管理员")
 
-        has_permission = deps.user_kb_permission_store.check_permission(payload.sub, kb_id)
-        logger.info(f"BACKEND: Permission check result: {has_permission}")
+        group = deps.permission_group_store.get_group(user.group_id)
+        if not group or not group.get('can_upload', 0):
+            raise HTTPException(status_code=403, detail="您没有上传权限，请联系管理员")
 
-        if not has_permission:
-            logger.warning(f"BACKEND: ACCESS DENIED - User {user.username} does not have permission for kb '{kb_id}'")
-            logger.warning(f"BACKEND: User has permissions: {user_kbs}")
-            raise HTTPException(status_code=403, detail=f"无权访问该知识库: {kb_id}")
+    logger.info(f"[UPLOAD] User {user.username} uploading to kb_id={kb_id}")
 
-    logger.info(f"BACKEND: Permission check PASSED for user {user.username} (role: {user.role})")
-    logger.info("=" * 80)
-
-    # 2. Validate file size
+    # Validate file size
     content = await file.read()
     if len(content) > settings.MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail="文件大小超过限制")
 
-    # 3. Validate file extension
+    # Validate file extension
     file_ext = Path(file.filename).suffix.lower()
     if file_ext not in settings.ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail="不支持的文件类型")
 
-    # 4. 存储到本地（而非直接上传RAGFlow）
+    # 存储到本地
     uploads_dir = Path(__file__).parent.parent / "data" / "uploads"
     uploads_dir.mkdir(parents=True, exist_ok=True)
 
@@ -141,7 +137,7 @@ async def upload_document(
 
 @router.get("/documents")
 async def list_documents(
-    payload: KbViewRequired,
+    payload: AuthRequired,
     deps: AppDependencies = Depends(get_deps),
     status: Optional[str] = None,
     kb_id: Optional[str] = None,
@@ -153,35 +149,18 @@ async def list_documents(
 
     权限规则：
     - 管理员：可以看到所有文档
-    - 其他角色：只能看到有权限的知识库的文档
-    - 操作员：只能看到自己上传的文档
+    - 其他角色：可以看到所有文档（基于权限组，无其他限制）
     """
+    import logging
+    logger = logging.getLogger(__name__)
 
-    # 获取当前用户及其权限
     user = deps.user_store.get_by_user_id(payload.sub)
+    logger.info(f"[LIST DOCS] User: {user.username}, role: {user.role}, kb_id: {kb_id}, status: {status}")
 
-    # 非管理员用户只能看到有权限的知识库
-    if user.role != "admin":
-        user_kb_ids = deps.user_kb_permission_store.get_user_kbs(user.user_id)
+    # 管理员可以看到所有文档
+    docs = deps.kb_store.list_documents(status=status, kb_id=kb_id, uploaded_by=uploaded_by, limit=limit)
 
-        # 如果指定了kb_id，检查权限
-        if kb_id and kb_id not in user_kb_ids:
-            raise HTTPException(status_code=403, detail="无权访问该知识库")
-
-        # 如果未指定kb_id，过滤结果（只返回用户有权限的KB文档）
-        if kb_id is None:
-            docs = deps.kb_store.list_documents(status=status, kb_id=None, uploaded_by=uploaded_by, limit=limit)
-            # 过滤：只保留用户有权限的知识库文档
-            docs = [d for d in docs if d.kb_id in user_kb_ids]
-        else:
-            docs = deps.kb_store.list_documents(status=status, kb_id=kb_id, uploaded_by=uploaded_by, limit=limit)
-    else:
-        # 管理员看到所有文档
-        docs = deps.kb_store.list_documents(status=status, kb_id=kb_id, uploaded_by=uploaded_by, limit=limit)
-
-    # operator角色只能看自己的文档
-    if user.role == "operator" and uploaded_by is None:
-        docs = [d for d in docs if d.uploaded_by == user.user_id]
+    logger.info(f"[LIST DOCS] Found {len(docs)} documents")
 
     return {
         "documents": [
@@ -208,7 +187,7 @@ async def list_documents(
 @router.get("/documents/{doc_id}")
 async def get_document(
     doc_id: str,
-    payload: KbViewRequired,
+    payload: AuthRequired,
     deps: AppDependencies = Depends(get_deps),
 ):
     """Get document details"""
@@ -235,7 +214,7 @@ async def get_document(
 @router.get("/documents/{doc_id}/download")
 async def download_document(
     doc_id: str,
-    payload: KbViewRequired,
+    payload: AuthRequired,
     deps: AppDependencies = Depends(get_deps),
 ):
     """Download document file"""
@@ -267,58 +246,56 @@ async def download_document(
 
 @router.get("/stats")
 async def get_stats(
-    payload: KbViewRequired,
+    payload: AuthRequired,
     deps: AppDependencies = Depends(get_deps),
 ):
     """Get document statistics"""
+    total = deps.kb_store.count_documents()
+    pending = deps.kb_store.count_documents(status="pending")
+    approved = deps.kb_store.count_documents(status="approved")
+    rejected = deps.kb_store.count_documents(status="rejected")
 
-    # Get current user info to check role
-    user = deps.user_store.get_by_user_id(payload.sub)
-
-    # For operator role, count only their own documents
-    uploaded_by = None
-    if user and user.role == "operator":
-        uploaded_by = user.user_id
-
-    total = deps.kb_store.count_documents(uploaded_by=uploaded_by)
-    pending = deps.kb_store.count_documents(status="pending", uploaded_by=uploaded_by)
-    approved = deps.kb_store.count_documents(status="approved", uploaded_by=uploaded_by)
-    rejected = deps.kb_store.count_documents(status="rejected", uploaded_by=uploaded_by)
-
-    return StatsResponse(
-        total_documents=total,
-        pending_documents=pending,
-        approved_documents=approved,
-        rejected_documents=rejected,
-    )
+    return {
+        "total_documents": total,
+        "pending_documents": pending,
+        "approved_documents": approved,
+        "rejected_documents": rejected,
+    }
 
 
 @router.delete("/documents/{doc_id}")
 async def delete_document(
     doc_id: str,
-    payload: KbDeleteRequired,
+    payload: AuthRequired,
     deps: AppDependencies = Depends(get_deps),
 ):
-    """Delete document"""
+    """Delete document (based on permission group)"""
     import logging
     logger = logging.getLogger(__name__)
 
-    logger.info("=" * 80)
-    logger.info("[DELETE] delete_document() called")
-    logger.info(f"[DELETE]   doc_id: {doc_id}")
-    logger.info(f"[DELETE]   deleted_by (payload.sub): {payload.sub}")
+    # 获取用户并检查删除权限
+    user = deps.user_store.get_by_user_id(payload.sub)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    # 管理员可以直接删除
+    if user.role != "admin":
+        # 非管理员需要检查权限组的 can_delete 权限
+        if not user.group_id:
+            raise HTTPException(status_code=403, detail="您没有删除权限，请联系管理员")
+
+        group = deps.permission_group_store.get_group(user.group_id)
+        if not group or not group.get('can_delete', 0):
+            raise HTTPException(status_code=403, detail="您没有删除权限，请联系管理员")
+
+    logger.info(f"[DELETE] delete_document() called, doc_id: {doc_id}, deleted_by: {payload.sub}")
 
     doc = deps.kb_store.get_document(doc_id)
     if not doc:
         logger.error(f"[DELETE] Document not found: {doc_id}")
         raise HTTPException(status_code=404, detail="文档不存在")
 
-    logger.info(f"[DELETE]   Document found: filename={doc.filename}, kb_id={doc.kb_id}")
-    logger.info(f"[DELETE]   file_path={doc.file_path}")
-    logger.info(f"[DELETE]   original_uploader={doc.uploaded_by}, original_reviewer={doc.reviewed_by}")
-
-    # 记录删除操作（在删除之前记录）
-    logger.info("[DELETE] Calling deletion_log_store.log_deletion()...")
+    # 记录删除操作
     deps.deletion_log_store.log_deletion(
         doc_id=doc.doc_id,
         filename=doc.filename,
@@ -351,7 +328,7 @@ async def delete_document(
 
 @router.get("/deletions")
 async def list_deletions(
-    payload: KbViewRequired,
+    payload: AuthRequired,
     deps: AppDependencies = Depends(get_deps),
     kb_id: Optional[str] = None,
     limit: int = 100,
@@ -361,27 +338,9 @@ async def list_deletions(
 
     权限规则：
     - 管理员：可以看到所有删除记录
-    - 其他角色：只能看到有权限的知识库的删除记录
+    - 其他角色：可以看到所有删除记录
     """
-    user = deps.user_store.get_by_user_id(payload.sub)
-
-    # 非管理员用户只能看到有权限的知识库
-    if user.role != "admin":
-        user_kb_ids = deps.user_kb_permission_store.get_user_kbs(user.user_id)
-
-        # 如果指定了kb_id，检查权限
-        if kb_id and kb_id not in user_kb_ids:
-            raise HTTPException(status_code=403, detail="无权访问该知识库")
-
-        # 如果未指定kb_id，过滤结果
-        if kb_id is None:
-            all_deletions = deps.deletion_log_store.list_deletions(kb_id=None, limit=limit)
-            deletions = [d for d in all_deletions if d.kb_id in user_kb_ids]
-        else:
-            deletions = deps.deletion_log_store.list_deletions(kb_id=kb_id, limit=limit)
-    else:
-        # 管理员看到所有删除记录
-        deletions = deps.deletion_log_store.list_deletions(kb_id=kb_id, limit=limit)
+    deletions = deps.deletion_log_store.list_deletions(kb_id=kb_id, limit=limit)
 
     return {
         "deletions": [
@@ -405,40 +364,27 @@ async def list_deletions(
 @router.post("/documents/batch/download")
 async def batch_download_documents(
     request: Request,
-    payload: KbViewRequired,
-    body: BatchDownloadRequest,
+    payload: AuthRequired,
+    body: dict,
     deps: AppDependencies = Depends(get_deps),
 ):
     """
     批量下载文档（打包成ZIP）
-
-    权限规则：
-    - 用户只能下载有权限的知识库中的文档
     """
     import logging
     logger = logging.getLogger(__name__)
 
-    doc_ids = body.doc_ids
+    doc_ids = body.get("doc_ids", [])
     logger.info(f"[BATCH DOWNLOAD] Request to download {len(doc_ids)} documents")
     logger.info(f"[BATCH DOWNLOAD] User: {payload.sub}")
 
-    # 获取当前用户
-    user = deps.user_store.get_by_user_id(payload.sub)
-
-    # 获取文档并检查权限
+    # 获取文档
     valid_docs = []
     for doc_id in doc_ids:
         doc = deps.kb_store.get_document(doc_id)
         if not doc:
             logger.warning(f"[BATCH DOWNLOAD] Document not found: {doc_id}")
             continue
-
-        # 检查知识库权限
-        if user.role != "admin":
-            has_permission = deps.user_kb_permission_store.check_permission(payload.sub, doc.kb_id)
-            if not has_permission:
-                logger.warning(f"[BATCH DOWNLOAD] User {user.username} has no permission for doc {doc_id} in KB {doc.kb_id}")
-                continue
 
         # 检查文件是否存在
         if not os.path.exists(doc.file_path):

@@ -14,6 +14,7 @@ class User:
     password_hash: str
     email: Optional[str] = None
     role: str = "viewer"
+    group_id: Optional[int] = None  # 权限组ID
     status: str = "active"
     created_at_ms: int = 0
     last_login_at_ms: Optional[int] = None
@@ -40,7 +41,7 @@ class UserStore:
         cursor = conn.cursor()
         try:
             cursor.execute("""
-                SELECT user_id, username, password_hash, email, role, status,
+                SELECT user_id, username, password_hash, email, role, group_id, status,
                        created_at_ms, last_login_at_ms, created_by
                 FROM users WHERE username = ?
             """, (username,))
@@ -56,7 +57,7 @@ class UserStore:
         cursor = conn.cursor()
         try:
             cursor.execute("""
-                SELECT user_id, username, password_hash, email, role, status,
+                SELECT user_id, username, password_hash, email, role, group_id, status,
                        created_at_ms, last_login_at_ms, created_by
                 FROM users WHERE user_id = ?
             """, (user_id,))
@@ -73,6 +74,7 @@ class UserStore:
         password: str,
         email: Optional[str] = None,
         role: str = "viewer",
+        group_id: Optional[int] = None,
         status: str = "active",
         created_by: Optional[str] = None
     ) -> User:
@@ -85,10 +87,10 @@ class UserStore:
         try:
             cursor.execute("""
                 INSERT INTO users (
-                    user_id, username, password_hash, email, role, status,
+                    user_id, username, password_hash, email, role, group_id, status,
                     created_at_ms, created_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (user_id, username, password_hash, email, role, status, now_ms, created_by))
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (user_id, username, password_hash, email, role, group_id, status, now_ms, created_by))
             conn.commit()
             return User(
                 user_id=user_id,
@@ -96,6 +98,7 @@ class UserStore:
                 password_hash=password_hash,
                 email=email,
                 role=role,
+                group_id=group_id,
                 status=status,
                 created_at_ms=now_ms,
                 created_by=created_by
@@ -110,6 +113,7 @@ class UserStore:
         user_id: str,
         email: Optional[str] = None,
         role: Optional[str] = None,
+        group_id: Optional[int] = None,
         status: Optional[str] = None
     ) -> Optional[User]:
         updates = []
@@ -121,6 +125,9 @@ class UserStore:
         if role is not None:
             updates.append("role = ?")
             params.append(role)
+        if group_id is not None:
+            updates.append("group_id = ?")
+            params.append(group_id)
         if status is not None:
             updates.append("status = ?")
             params.append(status)
@@ -165,7 +172,7 @@ class UserStore:
         cursor = conn.cursor()
         try:
             query = """
-                SELECT user_id, username, password_hash, email, role, status,
+                SELECT user_id, username, password_hash, email, role, group_id, status,
                        created_at_ms, last_login_at_ms, created_by
                 FROM users
                 WHERE 1=1

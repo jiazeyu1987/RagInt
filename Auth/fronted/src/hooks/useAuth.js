@@ -21,11 +21,23 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [accessibleKbs, setAccessibleKbs] = useState([]);  // 用户可访问的知识库列表
+  const [permissions, setPermissions] = useState({  // 权限组操作权限
+    can_upload: false,
+    can_review: false,
+    can_download: false,
+    can_delete: false
+  });
 
   const invalidateAuth = useCallback(() => {
     authClient.clearAuth();
     setUser(null);
     setAccessibleKbs([]);
+    setPermissions({
+      can_upload: false,
+      can_review: false,
+      can_download: false,
+      can_delete: false
+    });
   }, []);
 
   useEffect(() => {
@@ -65,6 +77,10 @@ export const AuthProvider = ({ children }) => {
             // 更新用户信息
             authClient.setAuth(authClient.accessToken, authClient.refreshToken, currentUser);
             setUser(currentUser);
+            // 更新权限组操作权限
+            if (currentUser.permissions) {
+              setPermissions(currentUser.permissions);
+            }
           } catch (err) {
             // 令牌可能已过期，尝试刷新
             if (authClient.refreshToken) {
@@ -72,6 +88,10 @@ export const AuthProvider = ({ children }) => {
                 await authClient.refreshAccessToken();
                 const currentUser = await authClient.getCurrentUser();
                 setUser(currentUser);
+                // 更新权限组操作权限
+                if (currentUser.permissions) {
+                  setPermissions(currentUser.permissions);
+                }
               } catch (refreshErr) {
                 invalidateAuth();
               }
@@ -120,6 +140,10 @@ export const AuthProvider = ({ children }) => {
       // 新后端的 login 方法已经在内部调用了 /me 并设置 user
       console.log('[Login] Logged in user:', data.user);
       setUser(data.user);
+      // 更新权限组操作权限
+      if (data.user.permissions) {
+        setPermissions(data.user.permissions);
+      }
       return { success: true };
     } catch (err) {
       setError(err.message);
@@ -146,8 +170,8 @@ export const AuthProvider = ({ children }) => {
   };
 
   const isAdmin = () => user?.role === 'admin';
-  const isReviewer = () => ['admin', 'reviewer'].includes(user?.role);
-  const isOperator = () => ['admin', 'reviewer', 'operator'].includes(user?.role);
+  const isReviewer = () => user?.role === 'admin' || permissions.can_review;
+  const isOperator = () => user?.role === 'admin' || permissions.can_upload || permissions.can_review;
 
   /**
    * 简化的权限检查方法（同步）
@@ -204,6 +228,11 @@ export const AuthProvider = ({ children }) => {
     can,
     accessibleKbs,      // 用户可访问的知识库列表
     canAccessKb,        // 知识库权限检查方法
+    permissions,        // 权限组操作权限
+    canUpload: () => user?.role === 'admin' || permissions.can_upload,
+    canReview: () => user?.role === 'admin' || permissions.can_review,
+    canDownload: () => user?.role === 'admin' || permissions.can_download,
+    canDelete: () => user?.role === 'admin' || permissions.can_delete,
     isAuthenticated: !!user,
   };
 

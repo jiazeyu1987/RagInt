@@ -7,7 +7,6 @@ from pydantic import BaseModel
 
 from authx import TokenPayload
 from core.security import auth
-from core.permissions import KbViewRequired
 from dependencies import AppDependencies
 
 
@@ -66,11 +65,11 @@ async def list_chats(
     chat_id: Optional[str] = None,
 ):
     """
-    列出用户有权限访问的聊天助手
+    列出用户有权限访问的聊天助手（基于权限组）
 
     权限规则：
     - 管理员：可以看到所有聊天助手
-    - 其他角色：只能看到有权限的聊天助手
+    - 其他角色：根据权限组的accessible_chats配置
     """
     user = deps.user_store.get_by_user_id(payload.sub)
 
@@ -84,10 +83,22 @@ async def list_chats(
         chat_id=chat_id
     )
 
-    # 非管理员用户过滤
+    # 非管理员用户根据权限组过滤
     if user.role != "admin":
-        user_chat_ids = deps.user_chat_permission_store.get_user_chats(user.user_id)
-        all_chats = [chat for chat in all_chats if chat.get("id") in user_chat_ids]
+        if user.group_id:
+            group = deps.permission_group_store.get_group(user.group_id)
+            if group:
+                accessible_chats = group.get('accessible_chats', [])
+                if accessible_chats and len(accessible_chats) > 0:
+                    # 权限组指定了具体的聊天体，需要过滤
+                    chat_id_set = set()
+                    for cid in accessible_chats:
+                        if cid.startswith('chat_'):
+                            chat_id_set.add(cid[5:])  # 去掉 'chat_' 前缀
+                        elif cid.startswith('agent_'):
+                            chat_id_set.add(cid[6:])  # 去掉 'agent_' 前缀
+                    all_chats = [chat for chat in all_chats if chat.get("id") in chat_id_set]
+        # 如果权限组为空或没有权限组，返回所有（或者可以返回空列表，根据需求）
 
     return {
         "chats": all_chats,
@@ -101,21 +112,72 @@ async def get_my_chats(
     deps: AppDependencies = Depends(get_deps),
 ):
     """
-    获取当前用户有权限访问的聊天助手列表（返回完整的聊天助手信息）
+    获取当前用户有权限访问的聊天助手列表（基于权限组）
     """
     user = deps.user_store.get_by_user_id(payload.sub)
 
-    # 获取所有聊天助手
+    # 获取所有聊天助手和智能体
     all_chats = deps.ragflow_chat_service.list_chats(page_size=1000)
+    all_agents = deps.ragflow_chat_service.list_agents(page_size=1000)
 
-    # 非管理员用户过滤
-    if user.role != "admin":
-        user_chat_ids = deps.user_chat_permission_store.get_user_chats(user.user_id)
-        all_chats = [chat for chat in all_chats if chat.get("id") in user_chat_ids]
+    # 获取用户的可访问聊天体列表（从权限组）
+    if user.role == "admin":
+        # 管理员可以看到所有
+        accessible_chat_ids = []
+    else:
+        # 从权限组获取可访问的聊天体
+        if user.group_id:
+            group = deps.permission_group_store.get_group(user.group_id)
+            if group:
+                accessible_chats = group.get('accessible_chats', [])
+                if accessible_chats and len(accessible_chats) > 0:
+                    # 权限组指定了具体的聊天体
+                    accessible_chat_ids = accessible_chats
+                else:
+                    # 权限组未指定（空数组），可以访问所有
+                    accessible_chat_ids = []
+            else:
+                # 权限组不存在
+                accessible_chat_ids = []
+        else:
+            # 用户没有分配权限组
+            accessible_chat_ids = []
+
+    # 如果有指定的聊天体ID列表，则过滤
+    if accessible_chat_ids:
+        # 将chat_xxx和agent_xxx转换为xxx
+        chat_id_set = set()
+        for cid in accessible_chat_ids:
+            if cid.startswith('chat_'):
+                chat_id_set.add(cid[5:])  # 去掉 'chat_' 前缀
+            elif cid.startswith('agent_'):
+                chat_id_set.add(cid[6:])  # 去掉 'agent_' 前缀
+
+        # 过滤聊天助手和智能体
+        filtered_chats = [chat for chat in all_chats if chat.get("id") in chat_id_set]
+        filtered_agents = [agent for agent in all_agents if agent.get("id") in chat_id_set]
+
+        # 添加type字段区分
+        chats_with_type = []
+        for chat in filtered_chats:
+            chat['type'] = 'chat'
+            chats_with_type.append(chat)
+        for agent in filtered_agents:
+            agent['type'] = 'agent'
+            chats_with_type.append(agent)
+    else:
+        # 没有限制，返回所有
+        chats_with_type = []
+        for chat in all_chats:
+            chat['type'] = 'chat'
+            chats_with_type.append(chat)
+        for agent in all_agents:
+            agent['type'] = 'agent'
+            chats_with_type.append(agent)
 
     return {
-        "chats": all_chats,
-        "count": len(all_chats)
+        "chats": chats_with_type,
+        "count": len(chats_with_type)
     }
 
 
@@ -125,13 +187,24 @@ async def get_chat(
     payload: AuthRequired,
     deps: AppDependencies = Depends(get_deps),
 ):
-    """获取单个聊天助手详情"""
+    """获取单个聊天助手详情（基于权限组）"""
     user = deps.user_store.get_by_user_id(payload.sub)
 
-    # 检查权限
+    # 检查权限（基于权限组）
     if user.role != "admin":
-        has_permission = deps.user_chat_permission_store.check_permission(user.user_id, chat_id)
-        if not has_permission:
+        if user.group_id:
+            group = deps.permission_group_store.get_group(user.group_id)
+            if group:
+                accessible_chats = group.get('accessible_chats', [])
+                if accessible_chats and len(accessible_chats) > 0:
+                    # 权限组指定了具体的聊天体，检查是否包含
+                    if f"chat_{chat_id}" not in accessible_chats:
+                        raise HTTPException(status_code=403, detail="无权访问该聊天助手")
+            else:
+                # 权限组不存在
+                raise HTTPException(status_code=403, detail="无权访问该聊天助手")
+        else:
+            # 用户没有分配权限组
             raise HTTPException(status_code=403, detail="无权访问该聊天助手")
 
     chat = deps.ragflow_chat_service.get_chat(chat_id)
@@ -157,10 +230,21 @@ async def create_session(
     """
     user = deps.user_store.get_by_user_id(payload.sub)
 
-    # 检查权限
+    # 检查权限（基于权限组）
     if user.role != "admin":
-        has_permission = deps.user_chat_permission_store.check_permission(user.user_id, chat_id)
-        if not has_permission:
+        if user.group_id:
+            group = deps.permission_group_store.get_group(user.group_id)
+            if group:
+                accessible_chats = group.get('accessible_chats', [])
+                if accessible_chats and len(accessible_chats) > 0:
+                    # 权限组指定了具体的聊天体，检查是否包含
+                    if f"chat_{chat_id}" not in accessible_chats:
+                        raise HTTPException(status_code=403, detail="无权访问该聊天助手")
+            else:
+                # 权限组不存在
+                raise HTTPException(status_code=403, detail="无权访问该聊天助手")
+        else:
+            # 用户没有分配权限组
             raise HTTPException(status_code=403, detail="无权访问该聊天助手")
 
     # 创建会话（使用当前用户的user_id）
@@ -192,10 +276,21 @@ async def list_sessions(
     """
     user = deps.user_store.get_by_user_id(payload.sub)
 
-    # 检查权限
+    # 检查权限（基于权限组）
     if user.role != "admin":
-        has_permission = deps.user_chat_permission_store.check_permission(user.user_id, chat_id)
-        if not has_permission:
+        if user.group_id:
+            group = deps.permission_group_store.get_group(user.group_id)
+            if group:
+                accessible_chats = group.get('accessible_chats', [])
+                if accessible_chats and len(accessible_chats) > 0:
+                    # 权限组指定了具体的聊天体，检查是否包含
+                    if f"chat_{chat_id}" not in accessible_chats:
+                        raise HTTPException(status_code=403, detail="无权访问该聊天助手")
+            else:
+                # 权限组不存在
+                raise HTTPException(status_code=403, detail="无权访问该聊天助手")
+        else:
+            # 用户没有分配权限组
             raise HTTPException(status_code=403, detail="无权访问该聊天助手")
 
     # 从 RAGFlow API 获取当前用户的会话列表（包含 messages）
@@ -228,11 +323,24 @@ async def chat_completion(
 
     user = deps.user_store.get_by_user_id(payload.sub)
 
-    # 检查权限
+    # 检查权限（基于权限组）
     if user.role != "admin":
-        has_permission = deps.user_chat_permission_store.check_permission(user.user_id, chat_id)
-        if not has_permission:
-            logger.warning(f"[CHAT] User {user.username} has no permission for chat {chat_id}")
+        if user.group_id:
+            group = deps.permission_group_store.get_group(user.group_id)
+            if group:
+                accessible_chats = group.get('accessible_chats', [])
+                if accessible_chats and len(accessible_chats) > 0:
+                    # 权限组指定了具体的聊天体，检查是否包含
+                    if f"chat_{chat_id}" not in accessible_chats:
+                        logger.warning(f"[CHAT] User {user.username} has no permission for chat {chat_id}")
+                        raise HTTPException(status_code=403, detail="无权访问该聊天助手")
+            else:
+                # 权限组不存在
+                logger.warning(f"[CHAT] User {user.username} has no permission group")
+                raise HTTPException(status_code=403, detail="无权访问该聊天助手")
+        else:
+            # 用户没有分配权限组
+            logger.warning(f"[CHAT] User {user.username} has no permission group assigned")
             raise HTTPException(status_code=403, detail="无权访问该聊天助手")
 
     if not body.question:
@@ -286,10 +394,21 @@ async def delete_sessions(
     # Extract session_ids from request body
     session_ids = body.ids if body else None
 
-    # 检查权限
+    # 检查权限（基于权限组）
     if user.role != "admin":
-        has_permission = deps.user_chat_permission_store.check_permission(user.user_id, chat_id)
-        if not has_permission:
+        if user.group_id:
+            group = deps.permission_group_store.get_group(user.group_id)
+            if group:
+                accessible_chats = group.get('accessible_chats', [])
+                if accessible_chats and len(accessible_chats) > 0:
+                    # 权限组指定了具体的聊天体，检查是否包含
+                    if f"chat_{chat_id}" not in accessible_chats:
+                        raise HTTPException(status_code=403, detail="无权访问该聊天助手")
+            else:
+                # 权限组不存在
+                raise HTTPException(status_code=403, detail="无权访问该聊天助手")
+        else:
+            # 用户没有分配权限组
             raise HTTPException(status_code=403, detail="无权访问该聊天助手")
 
     # 非管理员用户：检查会话所有权
