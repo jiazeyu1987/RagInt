@@ -7,6 +7,9 @@ from services.ragflow_service import RagflowService
 from services.user_kb_permission_store import UserKbPermissionStore
 from services.deletion_log_store import DeletionLogStore
 from services.download_log_store import DownloadLogStore
+from services.user_chat_permission_store import UserChatPermissionStore
+from services.ragflow_chat_service import RagflowChatService
+from services.chat_session_store import ChatSessionStore
 
 
 @dataclass
@@ -17,12 +20,18 @@ class AppDependencies:
     user_kb_permission_store: UserKbPermissionStore
     deletion_log_store: DeletionLogStore
     download_log_store: DownloadLogStore
+    user_chat_permission_store: UserChatPermissionStore
+    ragflow_chat_service: RagflowChatService
+    chat_session_store: ChatSessionStore
 
 
 def create_dependencies(db_path: str = None) -> AppDependencies:
     if db_path is None:
         script_dir = Path(__file__).parent
         db_path = script_dir / "data" / "auth.db"
+
+    # Create session store first
+    chat_session_store = ChatSessionStore(db_path=str(db_path))
 
     return AppDependencies(
         user_store=UserStore(db_path=str(db_path)),
@@ -31,4 +40,7 @@ def create_dependencies(db_path: str = None) -> AppDependencies:
         user_kb_permission_store=UserKbPermissionStore(db_path=str(db_path)),
         deletion_log_store=DeletionLogStore(db_path=str(db_path)),
         download_log_store=DownloadLogStore(db_path=str(db_path)),
+        user_chat_permission_store=UserChatPermissionStore(db_path=str(db_path)),
+        ragflow_chat_service=RagflowChatService(session_store=chat_session_store),
+        chat_session_store=chat_session_store,
     )

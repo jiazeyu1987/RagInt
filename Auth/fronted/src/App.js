@@ -9,6 +9,7 @@ import KnowledgeUpload from './pages/KnowledgeUpload';
 import DocumentReview from './pages/DocumentReview';
 import DocumentBrowser from './pages/DocumentBrowser';
 import DocumentAudit from './pages/DocumentAudit';
+import Chat from './pages/Chat';
 import Unauthorized from './pages/Unauthorized';
 import PermissionGuard from './components/PermissionGuard';
 
@@ -64,6 +65,16 @@ function App() {
               <PermissionGuard permission={{ resource: 'ragflow_documents', action: 'view' }}>
                 <Layout>
                   <DocumentBrowser />
+                </Layout>
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/chat"
+            element={
+              <PermissionGuard>
+                <Layout>
+                  <Chat />
                 </Layout>
               </PermissionGuard>
             }

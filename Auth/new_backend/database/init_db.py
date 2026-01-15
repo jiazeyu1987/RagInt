@@ -83,6 +83,44 @@ def init_database(db_path: str = None):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_kb_user ON user_kb_permissions(user_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_kb_kb ON user_kb_permissions(kb_id)")
 
+    # Create user_chat_permissions table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_chat_permissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            chat_id TEXT NOT NULL,
+            granted_by TEXT NOT NULL,
+            granted_at_ms INTEGER NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(user_id),
+            FOREIGN KEY (granted_by) REFERENCES users(user_id),
+            UNIQUE(user_id, chat_id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_chat_user ON user_chat_permissions(user_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_chat_chat ON user_chat_permissions(chat_id)")
+
+    # Create chat_sessions table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            chat_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            created_at_ms INTEGER NOT NULL,
+            is_deleted INTEGER NOT NULL DEFAULT 0,
+            deleted_at_ms INTEGER,
+            deleted_by TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(user_id),
+            FOREIGN KEY (deleted_by) REFERENCES users(user_id),
+            UNIQUE(session_id, chat_id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_sessions_session ON chat_sessions(session_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_sessions_chat ON chat_sessions(chat_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions(user_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_sessions_deleted ON chat_sessions(is_deleted)")
+
     # Create deletion_logs table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS deletion_logs (

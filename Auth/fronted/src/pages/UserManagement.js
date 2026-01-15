@@ -23,9 +23,17 @@ const UserManagement = () => {
   const [showPermissionsModal, setShowPermissionsModal] = useState(false);
   const [userKbMap, setUserKbMap] = useState({}); // 存储每个用户的权限列表
 
+  // 聊天助手权限相关 state
+  const [availableChats, setAvailableChats] = useState([]);
+  const [editingChatPermissionsUser, setEditingChatPermissionsUser] = useState(null);
+  const [userChatPermissions, setUserChatPermissions] = useState([]);
+  const [showChatPermissionsModal, setShowChatPermissionsModal] = useState(false);
+  const [userChatMap, setUserChatMap] = useState({}); // 存储每个用户的聊天助手权限列表
+
   useEffect(() => {
     fetchUsers();
     fetchKnowledgeBases();  // 加载知识库列表
+    fetchChats();  // 加载聊天助手列表
   }, []);
 
   useEffect(() => {
@@ -55,6 +63,34 @@ const UserManagement = () => {
         }
       }
       setUserKbMap(kbMap);
+
+      // 加载每个用户的聊天助手权限
+      const chatMap = {};
+      for (const user of data) {
+        if (user.role === 'admin') {
+          // 管理员自动拥有所有权限
+          chatMap[user.user_id] = ['所有聊天助手'];
+        } else {
+          try {
+            const chatData = await authClient.getUserChats(user.user_id);
+            // 获取聊天助手的名称而不是ID
+            const chatNames = [];
+            for (const chatId of chatData.chat_ids || []) {
+              try {
+                const chat = await authClient.getChat(chatId);
+                chatNames.push(chat.name || chatId);
+              } catch (err) {
+                chatNames.push(chatId);
+              }
+            }
+            chatMap[user.user_id] = chatNames;
+          } catch (err) {
+            console.error(`Failed to load chats for user ${user.username}:`, err);
+            chatMap[user.user_id] = [];
+          }
+        }
+      }
+      setUserChatMap(chatMap);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -130,6 +166,61 @@ const UserManagement = () => {
     setUserKbPermissions([]);
   };
 
+  // 聊天助手权限相关函数
+  const fetchChats = async () => {
+    try {
+      const data = await authClient.listMyChats();
+      setAvailableChats(data.chats || []);
+    } catch (err) {
+      console.error('Failed to load chats:', err);
+      setError('无法加载聊天助手列表');
+    }
+  };
+
+  const handleConfigureChatPermissions = async (user) => {
+    try {
+      console.log('[LOAD CHAT PERMISSIONS] User:', user);
+      setEditingChatPermissionsUser(user);
+      const data = await authClient.getUserChats(user.user_id);
+      console.log('[LOAD CHAT PERMISSIONS] Current chat IDs:', data.chat_ids);
+      setUserChatPermissions(data.chat_ids || []);
+      setShowChatPermissionsModal(true);
+    } catch (err) {
+      console.error('[LOAD CHAT PERMISSIONS] Error:', err);
+      setError(err.message);
+    }
+  };
+
+  const handleSaveChatPermissions = async () => {
+    try {
+      console.log('[SAVE CHAT PERMISSIONS] User:', editingChatPermissionsUser);
+      console.log('[SAVE CHAT PERMISSIONS] Chat IDs:', userChatPermissions);
+
+      const result = await authClient.batchGrantChats(
+        [editingChatPermissionsUser.user_id],
+        userChatPermissions
+      );
+
+      console.log('[SAVE CHAT PERMISSIONS] Result:', result);
+
+      setShowChatPermissionsModal(false);
+      setEditingChatPermissionsUser(null);
+      alert('聊天助手权限配置已保存');
+
+      // 刷新用户列表和权限映射
+      fetchUsers();
+    } catch (err) {
+      console.error('[SAVE CHAT PERMISSIONS] Error:', err);
+      setError(err.message);
+    }
+  };
+
+  const handleCloseChatPermissionsModal = () => {
+    setShowChatPermissionsModal(false);
+    setEditingChatPermissionsUser(null);
+    setUserChatPermissions([]);
+  };
+
   const getRoleColor = (role) => {
     const colors = {
       admin: '#ef4444',
@@ -190,6 +281,7 @@ const UserManagement = () => {
               <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>角色</th>
               <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>状态</th>
               <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>知识库权限</th>
+              <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>聊天助手权限</th>
               <th style={{ padding: '12px 16px', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>创建时间</th>
               <th style={{ padding: '12px 16px', textAlign: 'right', borderBottom: '1px solid #e5e7eb' }}>操作</th>
             </tr>
@@ -238,6 +330,26 @@ const UserManagement = () => {
                     <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>未配置</span>
                   )}
                 </td>
+                <td style={{ padding: '12px 16px', color: '#6b7280', fontSize: '0.85rem', maxWidth: '300px' }}>
+                  {userChatMap[user.user_id] && userChatMap[user.user_id].length > 0 ? (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                      {userChatMap[user.user_id].map((chat, index) => (
+                        <span key={index} style={{
+                          display: 'inline-block',
+                          padding: '2px 6px',
+                          borderRadius: '3px',
+                          backgroundColor: '#dcfce7',
+                          color: '#166534',
+                          fontSize: '0.8rem',
+                        }}>
+                          {chat}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>未配置</span>
+                  )}
+                </td>
                 <td style={{ padding: '12px 16px', color: '#6b7280', fontSize: '0.9rem' }}>
                   {new Date(user.created_at_ms).toLocaleString('zh-CN')}
                 </td>
@@ -259,7 +371,22 @@ const UserManagement = () => {
                           marginRight: '8px',
                         }}
                       >
-                        权限
+                        KB权限
+                      </button>
+                      <button
+                        onClick={() => handleConfigureChatPermissions(user)}
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: '#10b981',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          fontSize: '0.9rem',
+                          marginRight: '8px',
+                        }}
+                      >
+                        聊天权限
                       </button>
                       {canManageUsers && user.username !== 'admin' && (
                         <button
@@ -537,6 +664,121 @@ const UserManagement = () => {
                   border: 'none',
                   borderRadius: '4px',
                   cursor: availableKbs.length === 0 ? 'not-allowed' : 'pointer',
+                }}
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 聊天助手权限配置模态框 */}
+      {showChatPermissionsModal && editingChatPermissionsUser && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1000,
+        }}>
+          <div style={{
+            backgroundColor: 'white',
+            padding: '32px',
+            borderRadius: '8px',
+            width: '100%',
+            maxWidth: '500px',
+            maxHeight: '80vh',
+            overflowY: 'auto',
+          }}>
+            <h3 style={{ margin: '0 0 24px 0' }}>
+              配置聊天助手权限 - {editingChatPermissionsUser.username}
+            </h3>
+            <div style={{ marginBottom: '24px' }}>
+              <p style={{ margin: '0 0 16px 0', color: '#6b7280', fontSize: '0.9rem' }}>
+                选择该用户可以访问的聊天助手：
+              </p>
+              {availableChats.length === 0 ? (
+                <div style={{ color: '#f59e0b', padding: '12px', backgroundColor: '#fef3c7', borderRadius: '4px' }}>
+                  暂无可用聊天助手
+                </div>
+              ) : (
+                <div style={{
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '4px',
+                  maxHeight: '300px',
+                  overflowY: 'auto',
+                }}>
+                  {availableChats.map((chat) => (
+                    <label
+                      key={chat.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        padding: '12px 16px',
+                        borderBottom: '1px solid #e5e7eb',
+                        cursor: 'pointer',
+                        transition: 'background-color 0.2s',
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f9fafb'}
+                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={userChatPermissions.includes(chat.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setUserChatPermissions([...userChatPermissions, chat.id]);
+                          } else {
+                            setUserChatPermissions(userChatPermissions.filter(c => c !== chat.id));
+                          }
+                        }}
+                        style={{
+                          marginRight: '12px',
+                          width: '18px',
+                          height: '18px',
+                          cursor: 'pointer',
+                        }}
+                      />
+                      <span style={{ flex: 1 }}>{chat.name || chat.id}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button
+                type="button"
+                onClick={handleCloseChatPermissionsModal}
+                style={{
+                  flex: 1,
+                  padding: '10px',
+                  backgroundColor: '#6b7280',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                }}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveChatPermissions}
+                disabled={availableChats.length === 0}
+                style={{
+                  flex: 1,
+                  padding: '10px',
+                  backgroundColor: availableChats.length === 0 ? '#9ca3af' : '#10b981',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: availableChats.length === 0 ? 'not-allowed' : 'pointer',
                 }}
               >
                 保存

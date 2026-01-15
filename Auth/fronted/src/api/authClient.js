@@ -790,6 +790,189 @@ class AuthClient {
 
     return response.json();  // { kb_ids: [...] }
   }
+
+  // ==================== Chat 相关 API ====================
+
+  /**
+   * 获取用户有权限的聊天助手列表
+   */
+  async listMyChats() {
+    const response = await this.fetchWithAuth(
+      authBackendUrl('/api/chats/my'),
+      { method: 'GET' }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to get my chats');
+    }
+
+    return response.json();  // { chat_ids: [...] }
+  }
+
+  /**
+   * 获取聊天助手详情
+   */
+  async getChat(chatId) {
+    const response = await this.fetchWithAuth(
+      authBackendUrl(`/api/chats/${chatId}`),
+      { method: 'GET' }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to get chat');
+    }
+
+    return response.json();
+  }
+
+  /**
+   * 创建聊天会话
+   */
+  async createChatSession(chatId, name = '新会话') {
+    const response = await this.fetchWithAuth(
+      authBackendUrl(`/api/chats/${chatId}/sessions`),
+      {
+        method: 'POST',
+        body: JSON.stringify({ name })
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to create session');
+    }
+
+    return response.json();
+  }
+
+  /**
+   * 列出聊天助手的所有会话
+   */
+  async listChatSessions(chatId) {
+    const response = await this.fetchWithAuth(
+      authBackendUrl(`/api/chats/${chatId}/sessions`),
+      { method: 'GET' }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to list sessions');
+    }
+
+    return response.json();
+  }
+
+  /**
+   * 删除聊天会话
+   */
+  async deleteChatSessions(chatId, sessionIds = null) {
+    const response = await this.fetchWithAuth(
+      authBackendUrl(`/api/chats/${chatId}/sessions`),
+      {
+        method: 'DELETE',
+        body: JSON.stringify(sessionIds ? { ids: sessionIds } : {})
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to delete sessions');
+    }
+
+    return response.json();
+  }
+
+  // ==================== 聊天助手权限相关 API ====================
+
+  /**
+   * 获取用户的聊天助手权限列表（管理员）
+   */
+  async getUserChats(userId) {
+    const response = await this.fetchWithAuth(
+      authBackendUrl(`/api/users/${userId}/chats`),
+      { method: 'GET' }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to get user chats');
+    }
+
+    return response.json();  // { chat_ids: [...] }
+  }
+
+  /**
+   * 授予用户聊天助手权限
+   */
+  async grantChatAccess(userId, chatId) {
+    const response = await this.fetchWithAuth(
+      authBackendUrl(`/api/users/${userId}/chats/${encodeURIComponent(chatId)}`),
+      { method: 'POST' }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to grant chat access');
+    }
+
+    return response.json();
+  }
+
+  /**
+   * 撤销用户聊天助手权限
+   */
+  async revokeChatAccess(userId, chatId) {
+    const response = await this.fetchWithAuth(
+      authBackendUrl(`/api/users/${userId}/chats/${encodeURIComponent(chatId)}`),
+      { method: 'DELETE' }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to revoke chat access');
+    }
+
+    return response.json();
+  }
+
+  /**
+   * 批量授权多个用户多个聊天助手
+   */
+  async batchGrantChats(userIds, chatIds) {
+    const response = await this.fetchWithAuth(
+      authBackendUrl('/api/users/batch-grant-chats'),
+      {
+        method: 'POST',
+        body: JSON.stringify({ user_ids: userIds, chat_ids: chatIds })
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to batch grant chats');
+    }
+
+    return response.json();
+  }
+
+  /**
+   * 获取当前用户可访问的聊天助手列表
+   */
+  async getMyChats() {
+    const response = await this.fetchWithAuth(
+      authBackendUrl('/api/me/chats'),
+      { method: 'GET' }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to get my chats');
+    }
+
+    return response.json();  // { chat_ids: [...] }
+  }
 }
 
 export default new AuthClient();
