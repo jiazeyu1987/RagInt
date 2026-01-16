@@ -9,24 +9,8 @@
       "trim_silence": true,
       "normalize": true
     },
-    "funasr": {
-      "model": "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
-      "device": "cpu",
-      "disable_update": true,
-      "kwargs": {}
-    },
-    "faster_whisper": {
-      "model": "large-v3",
-      "device": "cpu",
-      "compute_type": "int8",
-      "cpu_threads": null,
-      "language": "zh",
-      "beam_size": 5,
-      "vad_filter": true,
-      "initial_prompt": null
-    },
     "dashscope": {
-      "api_key": "YOUR_DASHSCOPE_API_KEY_HERE",
+      "api_key": "sk-cd7176a23d484b02b23ba916b261d7ec",
       "model": "paraformer-realtime-v2",
       "kwargs": {
         "disfluency_removal_enabled": false
@@ -172,7 +156,7 @@
       "pitch_rate": 1.0,
       "additional_params": {},
       "url": "",
-      "api_key": "sk-96bb32e240ad40b195207a088d321b90",
+      "api_key": "sk-cd7176a23d484b02b23ba916b261d7ec",
       "method": "POST",
       "timeout_s": 30,
       "text_field": "text",

@@ -1,19 +1,9 @@
 import { RecorderManager } from './RecorderManager';
 import { PcmWsRecorderManager } from './PcmWsRecorderManager';
+import { buildAsrHttpEndpoint, buildAsrWsUrl } from '../config/voiceEndpoints';
 
 function safeTrim(v) {
   return String(v == null ? '' : v).trim();
-}
-
-function buildAsrHttpEndpoint(baseUrl) {
-  const base = safeTrim(baseUrl || 'http://localhost:8000').replace(/\/+$/, '');
-  return `${base}/api/speech_to_text`;
-}
-
-function buildAsrWsUrl(baseUrl) {
-  const base = safeTrim(baseUrl || 'http://localhost:8000').replace(/\/+$/, '');
-  const wsBase = base.replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:');
-  return `${wsBase}/ws/asr`;
 }
 
 export class RecordingWorkflowManager {
@@ -196,7 +186,8 @@ export class RecordingWorkflowManager {
 
     if (this._asrMode === 'ws_pcm') {
       this._recorder = new PcmWsRecorderManager({
-        wsUrl: buildAsrWsUrl(baseUrl),
+        wsUrl: buildAsrWsUrl(baseUrl, { role: 'rec' }),
+        label: 'rec',
         clientId,
         requestId: `asrws_${Date.now()}_${Math.random().toString(16).slice(2)}`,
         sampleRate: 16000,

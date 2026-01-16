@@ -26,11 +26,7 @@ export function TourModePanel({
   const selectedSet = useMemo(() => new Set(overrideStops), [overrideStops]);
 
   return (
-    <div className="settings-section">
-      <div className="settings-title" style={{ fontWeight: 600, marginBottom: 8 }}>
-        讲解模式
-      </div>
-
+    <div className="settings-block">
       <label className="kb-select" style={{ display: 'block', marginBottom: 8 }}>
         <span>模式</span>
         <select value={String(tourMode || 'basic')} onChange={(e) => onChangeTourMode && onChangeTourMode(e.target.value)}>

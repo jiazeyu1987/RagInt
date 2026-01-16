@@ -1,4 +1,5 @@
 import React from 'react';
+import { WAKE_WORD_FEATURE_ENABLED } from '../config/features';
 
 export function ControlBar({
   useAgentMode,
@@ -59,37 +60,35 @@ export function ControlBar({
   onJump,
   onReset,
 }) {
+  void [
+    useAgentMode,
+    onChangeUseAgentMode,
+    agentOptions,
+    selectedAgentId,
+    onChangeSelectedAgentId,
+    guideStyle,
+    onChangeGuideStyle,
+    tourMeta,
+    tourZone,
+    onChangeTourZone,
+    audienceProfile,
+    onChangeAudienceProfile,
+    groupMode,
+    onChangeGroupMode,
+  ];
+
   return (
     <div className="controls">
-      <label className="tts-toggle">
-        <input type="checkbox" checked={!!useAgentMode} onChange={(e) => onChangeUseAgentMode && onChangeUseAgentMode(e.target.checked)} />
-        <span>使用智能体</span>
+      <label className="kb-select">
+        <span>Chat(会话)</span>
+        <select value={selectedChat} onChange={(e) => onChangeSelectedChat && onChangeSelectedChat(e.target.value)}>
+          {(chatOptions && chatOptions.length ? chatOptions : [selectedChat]).map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
       </label>
-
-      {useAgentMode ? (
-        <label className="kb-select">
-          <span>智能体</span>
-          <select value={selectedAgentId} onChange={(e) => onChangeSelectedAgentId && onChangeSelectedAgentId(e.target.value)}>
-            <option value="">请选择</option>
-            {(agentOptions || []).map((a) => (
-              <option key={a.id} value={String(a.id)}>
-                {a.title}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : (
-        <label className="kb-select">
-          <span>Chat(会话)</span>
-          <select value={selectedChat} onChange={(e) => onChangeSelectedChat && onChangeSelectedChat(e.target.value)}>
-            {(chatOptions && chatOptions.length ? chatOptions : [selectedChat]).map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
 
       <label className="tts-toggle">
         <input type="checkbox" checked={!!guideEnabled} onChange={(e) => onChangeGuideEnabled && onChangeGuideEnabled(e.target.checked)} />
@@ -107,47 +106,6 @@ export function ControlBar({
           </select>
         </label>
       ) : null}
-
-      {guideEnabled ? (
-        <label className="kb-select">
-          <span>风格</span>
-          <select value={guideStyle} onChange={(e) => onChangeGuideStyle && onChangeGuideStyle(e.target.value)}>
-            <option value="friendly">通俗</option>
-            <option value="pro">专业</option>
-          </select>
-        </label>
-      ) : null}
-
-      {guideEnabled ? (
-        <label className="kb-select">
-          <span>展区</span>
-          <select value={tourZone} onChange={(e) => onChangeTourZone && onChangeTourZone(e.target.value)}>
-            {(tourMeta && Array.isArray(tourMeta.zones) ? tourMeta.zones : ['默认路线']).map((z) => (
-              <option key={String(z)} value={String(z)}>
-                {String(z)}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
-
-      {guideEnabled ? (
-        <label className="kb-select">
-          <span>人群</span>
-          <select value={audienceProfile} onChange={(e) => onChangeAudienceProfile && onChangeAudienceProfile(e.target.value)}>
-            {(tourMeta && Array.isArray(tourMeta.profiles) ? tourMeta.profiles : ['大众', '儿童', '专业']).map((p) => (
-              <option key={String(p)} value={String(p)}>
-                {String(p)}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
-
-      <label className="tts-toggle" title="多人围观：轮询提问 + 优先级">
-        <input type="checkbox" checked={!!groupMode} onChange={(e) => onChangeGroupMode && onChangeGroupMode(e.target.checked)} />
-        <span>多人围观</span>
-      </label>
 
       <label className="tts-toggle">
         <input type="checkbox" checked={!!ttsEnabled} onChange={(e) => onChangeTtsEnabled && onChangeTtsEnabled(e.target.checked)} />
@@ -266,7 +224,9 @@ export function ControlBar({
         </div>
       ) : null}
 
-      <label className="tts-toggle" title="Software wake word (browser SpeechRecognition).">
+      {WAKE_WORD_FEATURE_ENABLED ? (
+        <>
+          <label className="tts-toggle" title="Wake word via backend streaming ASR (WebSocket PCM).">
         <input type="checkbox" checked={!!wakeWordEnabled} onChange={(e) => onChangeWakeWordEnabled && onChangeWakeWordEnabled(e.target.checked)} />
         <span>Wake Word</span>
       </label>
@@ -294,6 +254,8 @@ export function ControlBar({
           <input type="checkbox" checked={!!wakeWordStrict} onChange={(e) => onChangeWakeWordStrict && onChangeWakeWordStrict(e.target.checked)} />
           <span>Strict</span>
         </label>
+      ) : null}
+        </>
       ) : null}
     </div>
   );

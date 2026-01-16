@@ -8,7 +8,18 @@ from dataclasses import dataclass
 
 
 def _norm(s: str) -> str:
-    return unicodedata.normalize("NFKC", str(s or "")).strip().lower()
+    s = unicodedata.normalize("NFKC", str(s or "")).strip()
+    if not s:
+        return ""
+    kept: list[str] = []
+    for ch in s:
+        if ch.isspace():
+            continue
+        cat = unicodedata.category(ch)
+        if cat and cat[0] in ("P", "S", "Z"):
+            continue
+        kept.append(ch.casefold())
+    return "".join(kept)
 
 
 def parse_wake_words(raw: str | None) -> list[str]:

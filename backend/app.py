@@ -33,6 +33,8 @@ from backend.api.tour_command import create_blueprint as create_tour_command_blu
 from backend.api.selling_points import create_blueprint as create_selling_points_blueprint
 from backend.api.ops import create_blueprint as create_ops_blueprint
 
+from backend.ws.asr_ws import register_asr_ws
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -208,6 +210,8 @@ def create_app() -> Flask:
         selling_points_store=selling_points_store,
         ops_store=ops_store,
     )
+    # Expose deps for ASGI wrapper / WS endpoints.
+    app.config["deps"] = deps
 
     def _init_ragflow() -> bool:
         try:
@@ -233,6 +237,9 @@ def create_app() -> Flask:
     app.register_blueprint(create_speech_blueprint(deps))
     app.register_blueprint(create_recordings_blueprint(deps))
     app.register_blueprint(create_tts_blueprint(deps))
+
+    # WebSocket endpoints (Flask-Sock).
+    register_asr_ws(app, deps)
     return app
 
 
@@ -246,7 +253,10 @@ def main() -> None:
 
     app = create_app()
     logger.info("启动语音问答后端服务")
-    app.run(host=host, port=port, debug=debug)
+    # Note: Flask-Sock uses `simple-websocket`, which starts a background thread to read frames.
+    # Using gevent sockets here can trigger `greenlet.error: Cannot switch to a different thread`.
+    # For local/dev, run with werkzeug (Flask built-in server) so `/ws/asr` works reliably.
+    app.run(host=host, port=port, debug=debug, threaded=True)
 
 
 if __name__ == "__main__":

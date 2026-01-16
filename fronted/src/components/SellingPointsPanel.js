@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { deleteSellingPoint, listSellingPoints, upsertSellingPoint } from '../api/sellingPoints';
 
-export function SellingPointsPanel({ stopName } = {}) {
+export function SellingPointsPanel({ stopName, hideTitle } = {}) {
   const sn = String(stopName || '').trim();
   const [items, setItems] = useState([]);
   const [err, setErr] = useState('');
@@ -31,10 +31,12 @@ export function SellingPointsPanel({ stopName } = {}) {
   }, [sn]);
 
   return (
-    <div className="settings-section">
-      <div className="settings-title" style={{ fontWeight: 600, marginBottom: 8 }}>
-        {title}
-      </div>
+    <div className="settings-block">
+      {hideTitle ? null : (
+        <div className="settings-title" style={{ fontWeight: 600, marginBottom: 8 }}>
+          {title}
+        </div>
+      )}
 
       {err ? <div style={{ color: '#b00020', fontSize: 12, marginBottom: 8 }}>{err}</div> : null}
 
@@ -85,4 +87,3 @@ export function SellingPointsPanel({ stopName } = {}) {
     </div>
   );
 }
-

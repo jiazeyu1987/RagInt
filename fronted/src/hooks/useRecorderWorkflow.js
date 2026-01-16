@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { RecordingWorkflowManager } from '../managers/RecordingWorkflowManager';
+import { VOICE_DEBUG } from '../config/features';
 
 export function useRecorderWorkflow({
   baseUrl,
@@ -12,12 +13,12 @@ export function useRecorderWorkflow({
   unlockAudio,
   ttsEnabledRef,
   audioContextRef,
-  asrMode = 'http', // 'http' | 'ws_pcm'
+  asrMode = 'ws_pcm', // 'http' | 'ws_pcm'
 } = {}) {
   const [isRecording, setIsRecording] = useState(false);
   const mgrRef = useRef(null);
   if (!mgrRef.current) {
-    mgrRef.current = new RecordingWorkflowManager({ onLog: (...args) => console.log(...args) });
+    mgrRef.current = new RecordingWorkflowManager({ onLog: (...args) => (VOICE_DEBUG ? console.log(...args) : null) });
   }
 
   useEffect(() => {

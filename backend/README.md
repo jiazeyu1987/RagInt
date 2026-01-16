@@ -5,6 +5,7 @@
 From repo root:
 
 - `python -m backend`
+  - `/ws/asr` is implemented via Flask-Sock (simple-websocket) and is intended for local/dev runs.
 
 Key endpoints:
 

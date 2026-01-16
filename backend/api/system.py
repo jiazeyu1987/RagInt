@@ -11,6 +11,7 @@ from io import BytesIO
 from flask import Blueprint, Response, jsonify, request
 
 from backend.version import get_version
+from backend.services.config_utils import get_nested
 
 
 def create_blueprint(deps):
@@ -211,6 +212,18 @@ def create_blueprint(deps):
 
     @bp.route("/health", methods=["GET"])
     def health():
-        return jsonify({"asr_loaded": deps.asr_service.funasr_loaded, "ragflow_connected": deps.session is not None})
+        cfg = {}
+        with contextlib.suppress(Exception):
+            cfg = deps.ragflow_service.load_config() or {}
+        key = str(get_nested(cfg, ["asr", "dashscope", "api_key"], "") or "").strip()
+        if not key:
+            key = str(get_nested(cfg, ["tts", "bailian", "api_key"], "") or "").strip()
+        return jsonify(
+            {
+                "asr_provider": getattr(deps.asr_service, "provider", "dashscope"),
+                "asr_api_key_configured": bool(key),
+                "ragflow_connected": deps.session is not None,
+            }
+        )
 
     return bp

@@ -185,100 +185,22 @@ def _dashscope_asr_recognize(
     return "".join(texts).strip()
 
 
+def _normalize_api_key(raw: str | None) -> str:
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    upper = s.upper()
+    if upper in ("YOUR_DASHSCOPE_API_KEY_HERE", "YOUR_API_KEY_HERE"):
+        return ""
+    if "YOUR_" in upper and "API_KEY" in upper:
+        return ""
+    return s
+
+
 class ASRService:
     def __init__(self, logger: logging.Logger | None = None):
         self._logger = logger or logging.getLogger(__name__)
-        self._funasr_model = None
-        self.funasr_loaded = False
-        self.funasr_available = False
-        self._funasr_lock = threading.Lock()
-
-        self._fw_model = None
-        self.faster_whisper_loaded = False
-        self.faster_whisper_available = False
-        self._fw_lock = threading.Lock()
-
-        with contextlib.suppress(Exception):
-            import funasr  # noqa: F401
-
-            self.funasr_available = True
-        if not self.funasr_available:
-            self._logger.error("FunASR模块不可用: No module named 'funasr'")
-
-        with contextlib.suppress(Exception):
-            import faster_whisper  # noqa: F401
-
-            self.faster_whisper_available = True
-        if not self.faster_whisper_available:
-            self._logger.info("faster-whisper模块不可用: No module named 'faster_whisper'")
-
-    def _ensure_funasr_model(self, app_config: dict) -> bool:
-        if self.funasr_loaded and self._funasr_model is not None:
-            return True
-        if not self.funasr_available:
-            return False
-
-        cfg = get_nested(app_config, ["asr", "funasr"], {}) or {}
-        model_name = str(
-            cfg.get("model", "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch") or ""
-        ).strip()
-        device = str(cfg.get("device", "cpu") or "cpu").strip()
-        disable_update = bool(cfg.get("disable_update", True))
-        kwargs = cfg.get("kwargs") or {}
-        if not isinstance(kwargs, dict):
-            kwargs = {}
-
-        with self._funasr_lock:
-            if self.funasr_loaded and self._funasr_model is not None:
-                return True
-            try:
-                from funasr import AutoModel
-
-                self._logger.info(f"funasr_loading model={model_name} device={device} disable_update={disable_update}")
-                self._funasr_model = AutoModel(model=model_name, device=device, disable_update=disable_update, **kwargs)
-                self.funasr_loaded = True
-                self._logger.info("FunASR模型加载成功")
-                return True
-            except Exception as e:
-                self._funasr_model = None
-                self.funasr_loaded = False
-                self._logger.error(f"FunASR模型加载失败: {e}", exc_info=True)
-                return False
-
-    def _ensure_faster_whisper_model(self, app_config: dict) -> bool:
-        if self.faster_whisper_loaded and self._fw_model is not None:
-            return True
-        if not self.faster_whisper_available:
-            return False
-
-        cfg = get_nested(app_config, ["asr", "faster_whisper"], {}) or {}
-        model_size_or_path = str(cfg.get("model", "large-v3") or "large-v3").strip()
-        device = str(cfg.get("device", "cpu") or "cpu").strip()
-        compute_type = str(cfg.get("compute_type", "int8") or "int8").strip()
-        cpu_threads = cfg.get("cpu_threads", None)
-        cpu_threads = int(cpu_threads) if cpu_threads is not None and str(cpu_threads).strip() != "" else None
-
-        with self._fw_lock:
-            if self.faster_whisper_loaded and self._fw_model is not None:
-                return True
-            try:
-                from faster_whisper import WhisperModel
-
-                self._logger.info(
-                    f"faster_whisper_loading model={model_size_or_path} device={device} compute_type={compute_type} cpu_threads={cpu_threads}"
-                )
-                kwargs = {"device": device, "compute_type": compute_type}
-                if cpu_threads is not None:
-                    kwargs["cpu_threads"] = cpu_threads
-                self._fw_model = WhisperModel(model_size_or_path, **kwargs)
-                self.faster_whisper_loaded = True
-                self._logger.info("faster-whisper模型加载成功")
-                return True
-            except Exception as e:
-                self._fw_model = None
-                self.faster_whisper_loaded = False
-                self._logger.error(f"faster-whisper模型加载失败: {e}", exc_info=True)
-                return False
+        self.provider = "dashscope"
 
     def transcribe(
         self,
@@ -291,12 +213,10 @@ class ASRService:
     ) -> str:
         cancel_event = cancel_event or threading.Event()
         asr_cfg = get_nested(app_config, ["asr"], {}) or {}
-        provider = str(asr_cfg.get("provider", "funasr")).strip().lower() or "funasr"
-
         dashscope_model = str(get_nested(app_config, ["asr", "dashscope", "model"], "paraformer-realtime-v2") or "").strip()
-        dashscope_api_key = str(get_nested(app_config, ["asr", "dashscope", "api_key"], "") or "").strip()
+        dashscope_api_key = _normalize_api_key(get_nested(app_config, ["asr", "dashscope", "api_key"], "") or "")
         if not dashscope_api_key:
-            dashscope_api_key = str(get_nested(app_config, ["tts", "bailian", "api_key"], "") or "").strip()
+            dashscope_api_key = _normalize_api_key(get_nested(app_config, ["tts", "bailian", "api_key"], "") or "")
         dashscope_kwargs = get_nested(app_config, ["asr", "dashscope", "kwargs"], {}) or {}
         if not isinstance(dashscope_kwargs, dict):
             dashscope_kwargs = {}
@@ -367,77 +287,6 @@ class ASRService:
             )
             if float(probe.get("duration_s", 0.0) or 0.0) < 0.15 or float(probe.get("rms", 0.0) or 0.0) < 0.002:
                 self._logger.warning(f"asr_audio_too_short_or_quiet probe={probe}")
-
-            if provider == "funasr":
-                if self._ensure_funasr_model(app_config) and self._funasr_model is not None:
-                    if cancel_event.is_set():
-                        raise RuntimeError("asr_cancelled")
-                    x = _read_wav_pcm16_mono_16k(wav_path)
-                    with SuppressOutput():
-                        result = self._funasr_model.generate(input=x, is_final=True)
-                    text = ""
-                    if result and isinstance(result, list) and isinstance(result[0], dict) and result[0].get("text"):
-                        text = str(result[0]["text"]).strip()
-                    if not text:
-                        self._logger.warning("asr_funasr_empty")
-                    return text
-                self._logger.warning("asr_provider_funasr_unavailable -> fallback")
-                # fallthrough to next available provider
-
-            if provider in ("faster_whisper", "whisper") or (provider == "funasr" and not self.funasr_loaded):
-                if self._ensure_faster_whisper_model(app_config) and self._fw_model is not None:
-                    if cancel_event.is_set():
-                        raise RuntimeError("asr_cancelled")
-                    cfg = get_nested(app_config, ["asr", "faster_whisper"], {}) or {}
-                    language = str(cfg.get("language", "zh") or "zh").strip()
-                    beam_size = int(cfg.get("beam_size", 5) or 5)
-                    vad_filter = bool(cfg.get("vad_filter", True))
-                    initial_prompt = cfg.get("initial_prompt", None)
-                    initial_prompt = str(initial_prompt) if initial_prompt is not None and str(initial_prompt).strip() else None
-
-                    segments, info = self._fw_model.transcribe(
-                        wav_path,
-                        language=language,
-                        beam_size=beam_size,
-                        vad_filter=vad_filter,
-                        initial_prompt=initial_prompt,
-                    )
-                    if cancel_event.is_set():
-                        raise RuntimeError("asr_cancelled")
-                    parts = []
-                    for seg in segments:
-                        t = getattr(seg, "text", None)
-                        if t:
-                            parts.append(str(t))
-                    text = "".join(parts).strip()
-                    if not text:
-                        self._logger.warning(f"asr_faster_whisper_empty lang={language} beam={beam_size} vad={vad_filter}")
-                    return text
-                if provider in ("faster_whisper", "whisper"):
-                    self._logger.warning("asr_provider_faster_whisper_unavailable -> fallback")
-                # fallthrough to dashscope
-
-            # Final fallback: DashScope ASR
-            if provider not in ("funasr", "faster_whisper", "whisper", "dashscope"):
-                self._logger.warning(f"asr_provider_unknown provider={provider} -> fallback_to_dashscope")
-                if not dashscope_api_key:
-                    self._logger.error("asr_missing_api_key (set asr.dashscope.api_key or tts.bailian.api_key)")
-                    return ""
-                if cancel_event.is_set():
-                    raise RuntimeError("asr_cancelled")
-                text = _dashscope_asr_recognize(
-                    wav_path,
-                    api_key=dashscope_api_key,
-                    model=dashscope_model or "paraformer-realtime-v2",
-                    sample_rate=16000,
-                    kwargs=dashscope_kwargs,
-                )
-                if not (text or "").strip():
-                    self._logger.warning(
-                        f"asr_dashscope_empty model={dashscope_model or 'paraformer-realtime-v2'} "
-                        f"probe_duration_s={float(probe.get('duration_s', 0.0) or 0.0):.3f} probe_rms={probe.get('rms', None)}"
-                    )
-                return (text or "").strip()
 
             if not dashscope_api_key:
                 self._logger.error("asr_missing_api_key (set asr.dashscope.api_key or tts.bailian.api_key)")

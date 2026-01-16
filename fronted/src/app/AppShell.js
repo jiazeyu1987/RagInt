@@ -21,10 +21,9 @@ import { useTourBootstrap } from '../hooks/useTourBootstrap';
 import { useRagflowBootstrap } from '../hooks/useRagflowBootstrap';
 import { useTourState } from '../hooks/useTourState';
 import { useBreakpointSync } from '../hooks/useBreakpointSync';
-import { useWakeWordListener } from '../hooks/useWakeWordListener';
 import { useTourTemplates } from '../hooks/useTourTemplates';
 import { useTourPipelineManager } from '../hooks/useTourPipelineManager';
-import { useRecorderWorkflow } from '../hooks/useRecorderWorkflow';
+import { useVoiceInputManager } from '../hooks/useVoiceInputManager';
 import { useAskWorkflowManager } from '../hooks/useAskWorkflowManager';
 import { useTourRecordingOptions } from '../hooks/useTourRecordingOptions';
 import { useTourRecordings } from '../hooks/useTourRecordings';
@@ -652,26 +651,6 @@ function AppShell() {
   };
   */
 
-  const {
-    isRecording,
-    startRecording,
-    stopRecording,
-    recordOnce,
-    onRecordPointerDown,
-    onRecordPointerUp,
-    onRecordPointerCancel,
-  } = useRecorderWorkflow({
-    baseUrl: getBackendBase(),
-    minRecordMs: MIN_RECORD_MS,
-    clientIdRef,
-    setInputText,
-    setIsLoading,
-    decodeAndConvertToWav16kMono,
-    unlockAudio,
-    ttsEnabledRef,
-    audioContextRef,
-  });
-
   const { interruptCurrentRun, askQuestion } = useAskWorkflowManager({
     baseUrl: getBackendBase(),
     getIsLoading: () => isLoading,
@@ -723,40 +702,56 @@ function AppShell() {
     runCoordinatorRef,
   });
 
-  useWakeWordListener({
-    enabled: !!wakeWordEnabled,
-    clientId,
-    wakeWord,
-    strictMode: !!wakeWordStrict,
-    cooldownMs: wakeWordCooldownMs,
-    isBusy: () => !!isLoading || !!isRecording,
-    recordOnce,
-    askQuestion,
-    submitText: async (q) => {
-      return getRunCoordinator().submitUserText({
-        text: q,
-        trigger: 'wake_word',
-        groupMode: false,
-        speakerName,
-        priority: 'normal',
-        useAgentMode,
-        selectedAgentId,
-      });
-    },
-    maxRecordMs: 3500,
-    onFeedback: ({ message } = {}) => {
-      const m = String(message || '').trim();
-      if (!m) return;
-      setQueueStatus(m);
-      try {
-        window.clearTimeout(window.__wakeWordStatusTimer);
-      } catch (_) {
-        // ignore
-      }
-      window.__wakeWordStatusTimer = window.setTimeout(() => setQueueStatus(''), 2000);
-    },
-  });
+  const wakeWordFeedback = ({ message } = {}) => {
+    const m = String(message || '').trim();
+    if (!m) return;
+    setQueueStatus(m);
+    try {
+      window.clearTimeout(window.__wakeWordStatusTimer);
+    } catch (_) {
+      // ignore
+    }
+    window.__wakeWordStatusTimer = window.setTimeout(() => setQueueStatus(''), 2000);
+  };
 
+  const wakeWordSubmitText = async (q) => {
+    return getRunCoordinator().submitUserText({
+      text: q,
+      trigger: 'wake_word',
+      groupMode: false,
+      speakerName,
+      priority: 'normal',
+      useAgentMode,
+      selectedAgentId,
+    });
+  };
+
+  const {
+    isRecording,
+    startRecording,
+    stopRecording,
+    onRecordPointerDown,
+    onRecordPointerUp,
+    onRecordPointerCancel,
+  } = useVoiceInputManager({
+    baseUrl: getBackendBase(),
+    minRecordMs: MIN_RECORD_MS,
+    clientIdRef,
+    setInputText,
+    setIsLoading,
+    decodeAndConvertToWav16kMono,
+    unlockAudio,
+    ttsEnabledRef,
+    audioContextRef,
+    isLoading,
+    wakeWordEnabled,
+    wakeWord,
+    wakeWordStrict,
+    wakeWordCooldownMs,
+    onWakeWordFeedback: wakeWordFeedback,
+    askQuestion,
+    submitText: wakeWordSubmitText,
+  });
 
   const handleTextSubmit = async (e) => {
     e.preventDefault();
@@ -1093,7 +1088,7 @@ function AppShell() {
           onContinueTour={continueTour}
           onSubmit={handleTextSubmit}
           textInputProps={textInputProps}
-        />
+        >
             <button
               className={`record-btn ${isRecording ? 'recording' : ''}`}
               onPointerDown={onRecordPointerDown}

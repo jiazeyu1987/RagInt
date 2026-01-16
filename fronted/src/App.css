@@ -739,6 +739,34 @@ h1 {
   padding: 12px 14px 18px;
 }
 
+.settings-group {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 16px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
+}
+
+.settings-group + .settings-group {
+  margin-top: 12px;
+}
+
+.settings-group-title {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.settings-group-body .settings-divider {
+  margin: 10px 0;
+}
+
+.settings-block {
+  display: block;
+}
+
 .settings-section {
   display: flex;
   flex-wrap: wrap;

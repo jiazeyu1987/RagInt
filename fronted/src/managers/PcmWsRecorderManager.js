@@ -1,22 +1,32 @@
+import { VOICE_DEBUG } from '../config/features';
+
 export class PcmWsRecorderManager {
   constructor({
     wsUrl,
     clientId,
     requestId,
     sampleRate = 16000,
+    continuous = false,
+    label,
+    startPayload,
     onStateChange,
     onPartialText,
     onFinalText,
+    onEvent,
     onError,
     onLog,
   } = {}) {
     this._wsUrl = String(wsUrl || '');
+    this._label = String(label || '');
     this._clientId = String(clientId || '');
     this._requestId = String(requestId || '');
     this._targetSampleRate = Number(sampleRate) || 16000;
+    this._continuous = !!continuous;
+    this._startPayload = startPayload && typeof startPayload === 'object' ? startPayload : null;
     this._onStateChange = typeof onStateChange === 'function' ? onStateChange : null;
     this._onPartialText = typeof onPartialText === 'function' ? onPartialText : null;
     this._onFinalText = typeof onFinalText === 'function' ? onFinalText : null;
+    this._onEvent = typeof onEvent === 'function' ? onEvent : null;
     this._onError = typeof onError === 'function' ? onError : null;
     this._log = typeof onLog === 'function' ? onLog : null;
 
@@ -27,8 +37,43 @@ export class PcmWsRecorderManager {
     this._ws = null;
     this._isRecording = false;
     this._stopping = false;
+    this._connecting = false;
     this._sentBytes = 0;
     this._lastStatsMs = 0;
+    this._sessionId = 0;
+    this._stopTimer = null;
+    this._finalReceived = false;
+  }
+
+  _stopCapture() {
+    try {
+      if (this._processorNode) this._processorNode.disconnect();
+    } catch (_) {
+      // ignore
+    }
+    try {
+      if (this._sourceNode) this._sourceNode.disconnect();
+    } catch (_) {
+      // ignore
+    }
+    this._processorNode = null;
+    this._sourceNode = null;
+
+    const ac = this._audioContext;
+    this._audioContext = null;
+    try {
+      if (ac) ac.close();
+    } catch (_) {
+      // ignore
+    }
+
+    const s = this._stream;
+    this._stream = null;
+    try {
+      if (s) s.getTracks().forEach((t) => t.stop());
+    } catch (_) {
+      // ignore
+    }
   }
 
   get isRecording() {
@@ -47,7 +92,7 @@ export class PcmWsRecorderManager {
   }
 
   _fail(msg, err) {
-    if (this._log) this._log('[ASR-WS]', msg, err || '');
+    if (this._log) this._log('[ASR-WS]', { label: this._label }, msg, err || '');
     if (this._onError) {
       try {
         this._onError(msg, err);
@@ -104,7 +149,15 @@ export class PcmWsRecorderManager {
   }
 
   async start() {
-    if (this._isRecording) return;
+    if (this._isRecording || this._connecting) return;
+    // If a previous session didn't fully clean up (e.g. missing final), reset now.
+    if (this._ws || this._stream || this._audioContext) {
+      this._cleanup();
+    }
+    if (this._stopTimer) {
+      clearTimeout(this._stopTimer);
+      this._stopTimer = null;
+    }
     if (!this._wsUrl) {
       this._fail('Missing wsUrl');
       return;
@@ -120,7 +173,14 @@ export class PcmWsRecorderManager {
 
     let stream = null;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
     } catch (err) {
       this._fail('Failed to access microphone permission', err);
       return;
@@ -139,6 +199,32 @@ export class PcmWsRecorderManager {
     this._ws = ws;
     this._sentBytes = 0;
     this._lastStatsMs = Date.now();
+    this._sessionId += 1;
+    const sessionId = this._sessionId;
+    this._finalReceived = false;
+    const label =
+      this._label ||
+      (VOICE_DEBUG
+        ? (() => {
+            try {
+              const u = new URL(this._wsUrl, window.location && window.location.href ? window.location.href : undefined);
+              return String(u.searchParams.get('role') || '');
+            } catch (_) {
+              return '';
+            }
+          })()
+        : '');
+    const startStack =
+      VOICE_DEBUG && this._log
+        ? (() => {
+            try {
+              const s = new Error().stack || '';
+              return s.split('\n').slice(0, 10).join('\n');
+            } catch (_) {
+              return '';
+            }
+          })()
+        : '';
 
     ws.onmessage = (ev) => {
       try {
@@ -146,33 +232,65 @@ export class PcmWsRecorderManager {
         if (!data) return;
         const t = String(data.type || '').toLowerCase();
         const text = data.text != null ? String(data.text) : '';
-        if (this._log) this._log('[ASR-WS] recv', { type: t, textLen: text.length, dt_ms: data.dt_ms });
+        if (this._log) this._log('[ASR-WS] recv', { label, sessionId, type: t, textLen: text.length, dt_ms: data.dt_ms });
+        if (this._onEvent) this._onEvent(data);
         if (t === 'partial') {
           if (this._onPartialText) this._onPartialText(text, data);
         } else if (t === 'final') {
+          this._finalReceived = true;
           if (this._onFinalText) this._onFinalText(text, data);
-          this._cleanup();
+          if (!this._continuous) this._cleanup();
         } else if (t === 'error') {
-          this._fail(`ASR ws error: ${String(data.error || 'unknown')}`);
+          this._fail(`ASR ws error: ${String(data.error || data.message || 'unknown')}`);
         }
       } catch (_) {
         // ignore
       }
     };
     ws.onerror = () => {
-      this._fail('WebSocket error');
+      const st = ws ? ws.readyState : -1;
+      // Browsers may surface protocol errors during/after a normal stop+final flow.
+      // Don't treat it as a recording failure once we've already received `final` or stopped.
+      if (this._stopping || this._finalReceived) {
+        try {
+          if (this._log) this._log('[ASR-WS] ws_error_ignored', { label, sessionId, state: st, stopping: this._stopping, final: this._finalReceived });
+        } catch (_) {
+          // ignore
+        }
+        this._cleanup();
+        return;
+      }
+      this._fail(`WebSocket error (label=${label} session=${sessionId} state=${st})`);
+      this._cleanup();
+    };
+    ws.onclose = (ev) => {
+      try {
+        if (this._log) {
+          this._log('[ASR-WS] close', {
+            label,
+            sessionId,
+            code: ev && ev.code,
+            reason: ev && ev.reason,
+            wasClean: ev && ev.wasClean,
+          });
+        }
+      } catch (_) {
+        // ignore
+      }
     };
 
+    this._connecting = true;
     await new Promise((resolve) => {
       ws.onopen = () => resolve();
       ws.onclose = () => resolve();
     });
+    this._connecting = false;
     if (ws.readyState !== WebSocket.OPEN) {
       this._fail('WebSocket not open');
       this._cleanup();
       return;
     }
-    if (this._log) this._log('[ASR-WS] open', { wsUrl: this._wsUrl });
+    if (this._log) this._log('[ASR-WS] open', { label, sessionId, wsUrl: this._wsUrl, stack: startStack });
 
     try {
       const startMsg = {
@@ -181,8 +299,10 @@ export class PcmWsRecorderManager {
         client_id: this._clientId,
         sample_rate: this._targetSampleRate,
         encoding: 'pcm_s16le',
+        continuous: !!this._continuous,
+        ...(this._startPayload || {}),
       };
-      if (this._log) this._log('[ASR-WS] send_start', startMsg);
+      if (this._log) this._log('[ASR-WS] send_start', { label, sessionId, ...startMsg });
       ws.send(JSON.stringify(startMsg));
     } catch (err) {
       this._fail('Failed to send start message', err);
@@ -231,6 +351,8 @@ export class PcmWsRecorderManager {
           this._lastStatsMs = nowMs;
           if (this._log) {
             this._log('[ASR-WS] send_stats', {
+              label,
+              sessionId,
               sentKB: Math.round(this._sentBytes / 1024),
               bufferedKB: Math.round((this._ws && this._ws.bufferedAmount ? this._ws.bufferedAmount : 0) / 1024),
               srcRate: audioContext.sampleRate,
@@ -262,24 +384,36 @@ export class PcmWsRecorderManager {
     if (!this._isRecording) return;
     this._setRecording(false);
     this._stopping = true;
+    // Release microphone immediately; keep WS alive briefly to receive final text.
+    this._stopCapture();
     try {
       if (this._ws && this._ws.readyState === WebSocket.OPEN) {
-        if (this._log) this._log('[ASR-WS] send_stop', { sentKB: Math.round(this._sentBytes / 1024) });
+        if (this._log) this._log('[ASR-WS] send_stop', { label: this._label, sentKB: Math.round(this._sentBytes / 1024) });
         this._ws.send(JSON.stringify({ type: 'stop' }));
       }
     } catch (_) {
       // ignore
     }
     // Keep WS open briefly to receive final; cleanup on final or after timeout.
-    setTimeout(() => {
-      if (this._log) this._log('[ASR-WS] stop_timeout_cleanup', { sentKB: Math.round(this._sentBytes / 1024) });
+    if (this._stopTimer) {
+      clearTimeout(this._stopTimer);
+      this._stopTimer = null;
+    }
+    this._stopTimer = setTimeout(() => {
+      this._stopTimer = null;
+      if (this._log) this._log('[ASR-WS] stop_timeout_cleanup', { label: this._label, sentKB: Math.round(this._sentBytes / 1024) });
       this._cleanup();
-    }, 120000);
+    }, this._continuous ? 2000 : 8000);
   }
 
   cancel() {
     this._setRecording(false);
     this._stopping = true;
+    if (this._stopTimer) {
+      clearTimeout(this._stopTimer);
+      this._stopTimer = null;
+    }
+    this._stopCapture();
     try {
       if (this._ws && this._ws.readyState === WebSocket.OPEN) {
         if (this._log) this._log('[ASR-WS] send_cancel', { sentKB: Math.round(this._sentBytes / 1024) });
@@ -292,34 +426,12 @@ export class PcmWsRecorderManager {
   }
 
   _cleanup() {
-    try {
-      if (this._processorNode) this._processorNode.disconnect();
-    } catch (_) {
-      // ignore
+    this._connecting = false;
+    if (this._stopTimer) {
+      clearTimeout(this._stopTimer);
+      this._stopTimer = null;
     }
-    try {
-      if (this._sourceNode) this._sourceNode.disconnect();
-    } catch (_) {
-      // ignore
-    }
-    this._processorNode = null;
-    this._sourceNode = null;
-
-    const ac = this._audioContext;
-    this._audioContext = null;
-    try {
-      if (ac) ac.close();
-    } catch (_) {
-      // ignore
-    }
-
-    const s = this._stream;
-    this._stream = null;
-    try {
-      if (s) s.getTracks().forEach((t) => t.stop());
-    } catch (_) {
-      // ignore
-    }
+    this._stopCapture();
 
     const ws = this._ws;
     this._ws = null;

@@ -10,10 +10,7 @@ export function StagePanel({
   disabled,
 } = {}) {
   return (
-    <div className="settings-section">
-      <div className="settings-title" style={{ fontWeight: 600, marginBottom: 8 }}>
-        控场面板
-      </div>
+    <div className="settings-block">
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <button type="button" disabled={!!disabled} onClick={() => onPause && onPause()}>
           暂停
@@ -37,4 +34,3 @@ export function StagePanel({
     </div>
   );
 }
-
