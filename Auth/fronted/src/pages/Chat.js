@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import authClient from '../api/authClient';
+import { httpClient } from '../shared/http/httpClient';
+import { chatApi } from '../features/chat/api';
 
 const Chat = () => {
   const { user } = useAuth();
@@ -47,7 +48,7 @@ const Chat = () => {
   const fetchChats = async () => {
     try {
       setLoading(true);
-      const data = await authClient.listMyChats();
+      const data = await chatApi.listMyChats();
       setChats(data.chats || []);
       if (data.chats && data.chats.length > 0) {
         setSelectedChatId(data.chats[0].id);
@@ -63,7 +64,7 @@ const Chat = () => {
     if (!selectedChatId) return;
 
     try {
-      const data = await authClient.listChatSessions(selectedChatId);
+      const data = await chatApi.listChatSessions(selectedChatId);
       setSessions(data.sessions || []);
       if (data.sessions && data.sessions.length > 0) {
         setSelectedSessionId(data.sessions[0].id);
@@ -81,7 +82,7 @@ const Chat = () => {
     if (!selectedChatId) return;
 
     try {
-      const session = await authClient.createChatSession(selectedChatId, '新会话');
+      const session = await chatApi.createChatSession(selectedChatId, '新会话');
       setSessions([session, ...sessions]);
       setSelectedSessionId(session.id);
       setMessages(session.messages || []);
@@ -106,7 +107,7 @@ const Chat = () => {
     if (!deleteConfirm.sessionId || !selectedChatId) return;
 
     try {
-      await authClient.deleteChatSessions(selectedChatId, [deleteConfirm.sessionId]);
+      await chatApi.deleteChatSessions(selectedChatId, [deleteConfirm.sessionId]);
 
       // 从列表中移除已删除的 session
       setSessions(sessions.filter(s => s.id !== deleteConfirm.sessionId));
@@ -138,11 +139,10 @@ const Chat = () => {
       let fullAssistantMessage = '';
 
       // 使用EventSource处理SSE流
-      const response = await fetch(`${authClient.baseURL}/api/chats/${selectedChatId}/completions`, {
+      const response = await httpClient.request(`/api/chats/${selectedChatId}/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authClient.accessToken}`
         },
         body: JSON.stringify({
           question: inputMessage,

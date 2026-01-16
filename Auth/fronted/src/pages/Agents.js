@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import authClient from '../api/authClient';
 import { useAuth } from '../hooks/useAuth';
+import { agentsApi } from '../features/agents/api';
 
 const Agents = () => {
   const { canDownload } = useAuth();
@@ -56,7 +57,7 @@ const Agents = () => {
   const fetchDatasets = async () => {
     try {
       setLoading(true);
-      const data = await authClient.getAvailableDatasets();
+      const data = await agentsApi.getAvailableDatasets();
       setDatasets(data.datasets || []);
 
       // Select all datasets by default
@@ -85,7 +86,7 @@ const Agents = () => {
     setError(null);
 
     try {
-      const result = await authClient.searchChunks({
+      const result = await agentsApi.searchChunks({
         question: searchQuery,
         dataset_ids: selectedDatasetIds,
         page,

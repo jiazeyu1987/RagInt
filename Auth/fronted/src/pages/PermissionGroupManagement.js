@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { permissionGroupsApi } from '../features/permissionGroups/api';
 
 const PermissionGroupManagement = () => {
   const [groups, setGroups] = useState([]);
@@ -30,49 +31,25 @@ const PermissionGroupManagement = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
-
-      const [groupsRes, kbRes, chatRes] = await Promise.all([
-        fetch(`${process.env.REACT_APP_AUTH_URL}/api/permission-groups`, {
-          headers: { 'Authorization': `Bearer ${localStorage.getItem('accessToken')}` }
-        }),
-        fetch(`${process.env.REACT_APP_AUTH_URL}/api/permission-groups/resources/knowledge-bases`, {
-          headers: { 'Authorization': `Bearer ${localStorage.getItem('accessToken')}` }
-        }),
-        fetch(`${process.env.REACT_APP_AUTH_URL}/api/permission-groups/resources/chats`, {
-          headers: { 'Authorization': `Bearer ${localStorage.getItem('accessToken')}` }
-        })
+      const [groupsData, kbData, chatData] = await Promise.all([
+        permissionGroupsApi.list(),
+        permissionGroupsApi.listKnowledgeBases().catch((e) => ({ ok: false, error: e?.message, data: [] })),
+        permissionGroupsApi.listChats().catch((e) => ({ ok: false, error: e?.message, data: [] }))
       ]);
 
-      if (!groupsRes.ok) throw new Error('获取权限组失败');
-
-      const groupsData = await groupsRes.json();
       setGroups(groupsData.data || []);
 
-      // 处理知识库数据
-      if (kbRes.ok) {
-        const kbData = await kbRes.json();
-        if (kbData.ok) {
-          setKnowledgeBases(kbData.data || []);
-        } else {
-          console.warn('知识库加载警告:', kbData.error);
-          setKnowledgeBases([]);
-        }
+      if (kbData?.ok) {
+        setKnowledgeBases(kbData.data || []);
       } else {
-        console.warn('知识库API请求失败');
+        if (kbData?.error) console.warn('知识库加载警告:', kbData.error);
         setKnowledgeBases([]);
       }
 
-      // 处理聊天体数据
-      if (chatRes.ok) {
-        const chatData = await chatRes.json();
-        if (chatData.ok) {
-          setChatAgents(chatData.data || []);
-        } else {
-          console.warn('聊天体加载警告:', chatData.error);
-          setChatAgents([]);
-        }
+      if (chatData?.ok) {
+        setChatAgents(chatData.data || []);
       } else {
-        console.warn('聊天体API请求失败');
+        if (chatData?.error) console.warn('聊天体加载警告:', chatData.error);
         setChatAgents([]);
       }
 
@@ -122,15 +99,7 @@ const PermissionGroupManagement = () => {
     if (!groupToDelete) return;
 
     try {
-      const response = await fetch(`${process.env.REACT_APP_AUTH_URL}/api/permission-groups/${groupToDelete.group_id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('accessToken')}` }
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.detail || '删除失败');
-      }
+      await permissionGroupsApi.remove(groupToDelete.group_id);
 
       setShowDeleteConfirm(false);
       setGroupToDelete(null);
@@ -149,19 +118,7 @@ const PermissionGroupManagement = () => {
     e.preventDefault();
 
     try {
-      const response = await fetch(`${process.env.REACT_APP_AUTH_URL}/api/permission-groups`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
-        },
-        body: JSON.stringify(formData)
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.detail || '创建失败');
-      }
+      await permissionGroupsApi.create(formData);
 
       setShowCreateModal(false);
       await fetchData();
@@ -174,19 +131,7 @@ const PermissionGroupManagement = () => {
     e.preventDefault();
 
     try {
-      const response = await fetch(`${process.env.REACT_APP_AUTH_URL}/api/permission-groups/${selectedGroup.group_id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
-        },
-        body: JSON.stringify(formData)
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.detail || '更新失败');
-      }
+      await permissionGroupsApi.update(selectedGroup.group_id, formData);
 
       setShowEditModal(false);
       setSelectedGroup(null);

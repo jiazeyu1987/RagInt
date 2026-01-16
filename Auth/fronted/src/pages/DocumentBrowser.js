@@ -309,15 +309,15 @@ const DocumentBrowser = () => {
       }
 
       if (isMarkdownFile(docName)) {
-        const url = await authClient.previewRagflowDocument(docId, datasetName, docName);
-        const response = await fetch(url);
-        const text = await response.text();
+        const blob = await authClient.previewRagflowDocumentBlob(docId, datasetName, docName);
+        const url = window.URL.createObjectURL(blob);
+        const text = await blob.text();
         setMarkdownContent(text);
         setPreviewUrl(url);
       } else if (isDocFile(docName) || isDocxFile(docName)) {
-        const url = await authClient.previewRagflowDocument(docId, datasetName, docName);
-        const response = await fetch(url);
-        const arrayBuffer = await response.arrayBuffer();
+        const blob = await authClient.previewRagflowDocumentBlob(docId, datasetName, docName);
+        const url = window.URL.createObjectURL(blob);
+        const arrayBuffer = await blob.arrayBuffer();
         const result = await mammoth.convertToHtml({ arrayBuffer });
         if (isDocFile(docName)) {
           setDocContent(result.value);
@@ -326,9 +326,9 @@ const DocumentBrowser = () => {
         }
         setPreviewUrl(url);
       } else if (isPptxFile(docName)) {
-        const url = await authClient.previewRagflowDocument(docId, datasetName, docName);
-        const response = await fetch(url);
-        const arrayBuffer = await response.arrayBuffer();
+        const blob = await authClient.previewRagflowDocumentBlob(docId, datasetName, docName);
+        const url = window.URL.createObjectURL(blob);
+        const arrayBuffer = await blob.arrayBuffer();
 
         // Parse PPTX (it's a ZIP file)
         const zip = await JSZip.loadAsync(arrayBuffer);
@@ -351,9 +351,9 @@ const DocumentBrowser = () => {
         setPptxCurrentSlide(0);
         setPreviewUrl(url);
       } else if (isExcelFile(docName)) {
-        const url = await authClient.previewRagflowDocument(docId, datasetName, docName);
-        const response = await fetch(url);
-        const arrayBuffer = await response.arrayBuffer();
+        const blob = await authClient.previewRagflowDocumentBlob(docId, datasetName, docName);
+        const url = window.URL.createObjectURL(blob);
+        const arrayBuffer = await blob.arrayBuffer();
         const workbook = XLSX.read(arrayBuffer, { type: 'array' });
         const sheetNames = workbook.SheetNames;
         const sheetsData = {};
@@ -367,9 +367,9 @@ const DocumentBrowser = () => {
         setExcelData(sheetsData);
         setPreviewUrl(url);
       } else if (isPdfFile(docName)) {
-        const url = await authClient.previewRagflowDocument(docId, datasetName, docName);
-        const response = await fetch(url);
-        const arrayBuffer = await response.arrayBuffer();
+        const blob = await authClient.previewRagflowDocumentBlob(docId, datasetName, docName);
+        const url = window.URL.createObjectURL(blob);
+        const arrayBuffer = await blob.arrayBuffer();
 
         const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
         const pdf = await loadingTask.promise;

@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef, useCallback, createContext, useContext } from 'react';
+import { useState, useEffect, useCallback, createContext, useContext } from 'react';
 import authClient from '../api/authClient';
 import { STORAGE_KEYS } from '../constants/storageKeys';
+import tokenStore from '../shared/auth/tokenStore';
 
 const AuthContext = createContext(null);
 
@@ -54,10 +55,7 @@ export const AuthProvider = ({ children }) => {
           localStorage.setItem(STORAGE_KEYS.APP_VERSION, APP_VERSION);
 
           // 清除所有认证相关的localStorage数据
-          localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
-          localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
-          localStorage.removeItem(STORAGE_KEYS.USER);
-          localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
+          tokenStore.clearAuth();
 
           // 清除Cache Storage
           if ('caches' in window) {

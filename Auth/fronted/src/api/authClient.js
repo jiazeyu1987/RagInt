@@ -1,5 +1,6 @@
 import { authBackendUrl } from '../config/backend';
-import { STORAGE_KEYS } from '../constants/storageKeys';
+import tokenStore from '../shared/auth/tokenStore';
+import { httpClient } from '../shared/http/httpClient';
 
 /**
  * AuthClient - FastAPI + AuthX 适配版本
@@ -13,13 +14,9 @@ import { STORAGE_KEYS } from '../constants/storageKeys';
 class AuthClient {
   constructor() {
     this.baseURL = authBackendUrl('');
-    this.accessToken = localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
-    this.refreshToken = localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
-    try {
-      this.user = JSON.parse(localStorage.getItem(STORAGE_KEYS.USER) || 'null');
-    } catch {
-      this.user = null;
-    }
+    this.accessToken = tokenStore.getAccessToken();
+    this.refreshToken = tokenStore.getRefreshToken();
+    this.user = tokenStore.getUser();
 
     if (!this.accessToken) {
       this.user = null;
@@ -30,23 +27,19 @@ class AuthClient {
     this.accessToken = accessToken;
     this.refreshToken = refreshToken;
     this.user = user;
-    localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, accessToken);
-    localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, refreshToken);
-    localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
+    tokenStore.setAuth(accessToken, refreshToken, user);
   }
 
   clearAuth() {
     this.accessToken = null;
     this.refreshToken = null;
     this.user = null;
-    localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
-    localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
-    localStorage.removeItem(STORAGE_KEYS.USER);
+    tokenStore.clearAuth();
   }
 
   getAuthHeaders(includeContentType = true) {
     if (!this.accessToken) {
-      this.accessToken = localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
+      this.accessToken = tokenStore.getAccessToken();
     }
     const headers = {
       ...(this.accessToken ? { 'Authorization': `Bearer ${this.accessToken}` } : {})
@@ -61,65 +54,26 @@ class AuthClient {
    * 自动刷新访问令牌
    */
   async refreshAccessToken() {
-    if (!this.refreshToken) {
-      throw new Error('No refresh token available');
-    }
-
-    const response = await fetch(authBackendUrl('/api/auth/refresh'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.refreshToken}`
-      },
-    });
-
-    if (!response.ok) {
-      // 刷新失败，清除所有令牌并跳转登录
+    try {
+      const token = await httpClient.refreshAccessToken();
+      this.accessToken = token;
+      this.refreshToken = tokenStore.getRefreshToken();
+      return token;
+    } catch (e) {
       this.clearAuth();
       window.location.href = '/login';
-      throw new Error('Token refresh failed');
+      throw e;
     }
-
-    const data = await response.json();
-    this.accessToken = data.access_token;
-    localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, data.access_token);
-    return data.access_token;
   }
 
   /**
    * 带自动刷新的 fetch 封装
    */
   async fetchWithAuth(url, options = {}) {
-    // 如果 options.headers 已经包含 Authorization，不需要添加
-    const hasAuthHeader = options.headers && options.headers['Authorization'];
-    const headers = hasAuthHeader
-      ? options.headers
-      : { ...options.headers, ...this.getAuthHeaders() };
-
-    const response = await fetch(url, {
-      ...options,
-      headers,
-    });
-
-    // 如果 401，尝试刷新令牌一次
-    if (response.status === 401 && this.refreshToken) {
-      try {
-        await this.refreshAccessToken();
-        // 重试原请求（保留原始 headers，只更新 Authorization）
-        const retryHeaders = hasAuthHeader
-          ? { ...options.headers, 'Authorization': `Bearer ${this.accessToken}` }
-          : { ...options.headers, ...this.getAuthHeaders() };
-
-        return fetch(url, {
-          ...options,
-          headers: retryHeaders,
-        });
-      } catch (refreshError) {
-        // 刷新失败，已在 refreshAccessToken 中处理
-        throw refreshError;
-      }
-    }
-
+    const response = await httpClient.request(url, options);
+    this.accessToken = tokenStore.getAccessToken();
+    this.refreshToken = tokenStore.getRefreshToken();
+    this.user = tokenStore.getUser();
     return response;
   }
 
@@ -128,27 +82,17 @@ class AuthClient {
    * 新响应格式：{ access_token, refresh_token, token_type, scopes }
    */
   async login(username, password) {
-    const response = await fetch(authBackendUrl('/api/auth/login'), {
+    const data = await httpClient.requestJson(authBackendUrl('/api/auth/login'), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      skipAuth: true,
+      skipRefresh: true,
       body: JSON.stringify({ username, password }),
     });
 
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || 'Login failed');
-    }
-
-    const data = await response.json();
-
-    // 获取用户信息（新后端不返回 user 字段）
-    const userResponse = await fetch(authBackendUrl('/api/auth/me'), {
-      headers: {
-        'Authorization': `Bearer ${data.access_token}`
-      }
+    const user = await httpClient.requestJson(authBackendUrl('/api/auth/me'), {
+      headers: { 'Authorization': `Bearer ${data.access_token}` },
+      skipRefresh: true,
     });
-
-    const user = await userResponse.json();
 
     // 存储两种令牌
     this.setAuth(data.access_token, data.refresh_token, user);
@@ -164,9 +108,9 @@ class AuthClient {
    */
   async logout() {
     try {
-      await fetch(authBackendUrl('/api/auth/logout'), {
+      await httpClient.requestJson(authBackendUrl('/api/auth/logout'), {
         method: 'POST',
-        headers: this.getAuthHeaders(),
+        skipRefresh: true,
       });
     } catch (error) {
       console.error('Logout error:', error);
@@ -640,6 +584,12 @@ class AuthClient {
   }
 
   async previewRagflowDocument(docId, dataset = '展厅', docName = null) {
+    const blob = await this.previewRagflowDocumentBlob(docId, dataset, docName);
+    const url = window.URL.createObjectURL(blob);
+    return url;
+  }
+
+  async previewRagflowDocumentBlob(docId, dataset = '展厅', docName = null) {
     const params = new URLSearchParams({ dataset });
     if (docName) {
       params.append('filename', docName);
@@ -655,10 +605,7 @@ class AuthClient {
       throw new Error(error.detail || 'Failed to preview document');
     }
 
-    const blob = await response.blob();
-    const url = window.URL.createObjectURL(blob);
-
-    return url;
+    return response.blob();
   }
 
   async batchDownload(documentsInfo) {
@@ -1120,4 +1067,5 @@ class AuthClient {
   }
 }
 
-export default new AuthClient();
+const authClient = new AuthClient();
+export default authClient;

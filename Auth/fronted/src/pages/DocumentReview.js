@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import authClient from '../api/authClient';
+import { reviewApi } from '../features/review/api';
+import { knowledgeApi } from '../features/knowledge/api';
 
 const DocumentReview = () => {
   const { user, isReviewer, isAdmin, canDownload } = useAuth();
@@ -22,7 +23,7 @@ const DocumentReview = () => {
         setLoadingDatasets(true);
 
         // 获取知识库列表（后端已经根据权限组过滤过了）
-        const data = await authClient.listRagflowDatasets();
+        const data = await knowledgeApi.listRagflowDatasets();
         const datasets = data.datasets || [];
 
         setDatasets(datasets);
@@ -55,7 +56,7 @@ const DocumentReview = () => {
       setLoading(true);
       console.log('Fetching local pending documents for KB:', selectedDataset);
       // 获取本地待审核文档
-      const data = await authClient.listDocuments({
+      const data = await knowledgeApi.listLocalDocuments({
         status: 'pending',
         kb_id: selectedDataset
       });
@@ -74,7 +75,7 @@ const DocumentReview = () => {
 
     setActionLoading(docId);
     try {
-      await authClient.approveDocument(docId);
+      await reviewApi.approve(docId);
       fetchRagflowDocuments();
     } catch (err) {
       setError(err.message);
@@ -89,7 +90,7 @@ const DocumentReview = () => {
 
     setActionLoading(docId);
     try {
-      await authClient.rejectDocument(docId, notes);
+      await reviewApi.reject(docId, notes);
       fetchRagflowDocuments();
     } catch (err) {
       setError(err.message);
@@ -108,7 +109,7 @@ const DocumentReview = () => {
     setActionLoading(docId);
     try {
       console.log('[DocumentReview] Calling authClient.deleteDocument...');
-      await authClient.deleteDocument(docId);
+      await knowledgeApi.deleteLocalDocument(docId);
       console.log('[DocumentReview] Delete successful, refreshing documents...');
       fetchRagflowDocuments();
     } catch (err) {
@@ -122,7 +123,7 @@ const DocumentReview = () => {
   const handleDownload = async (docId) => {
     setDownloadLoading(docId);
     try {
-      await authClient.downloadLocalDocument(docId);
+      await knowledgeApi.downloadLocalDocument(docId);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -156,7 +157,7 @@ const DocumentReview = () => {
 
     setBatchDownloadLoading(true);
     try {
-      await authClient.batchDownloadLocalDocuments(Array.from(selectedDocIds));
+      await knowledgeApi.batchDownloadLocalDocuments(Array.from(selectedDocIds));
       setSelectedDocIds(new Set());
     } catch (err) {
       setError(err.message);

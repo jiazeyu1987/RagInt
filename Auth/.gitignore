@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local data
+new_backend/data/
+new_backend/**/data/
+
+# Node / React
+fronted/node_modules/
+fronted/build/
+
+# Env / secrets
+.env
+fronted/.env
+new_backend/.env
+
+# OS / editor
+.DS_Store
+Thumbs.db

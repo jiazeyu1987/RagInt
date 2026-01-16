@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import authClient from '../api/authClient';
+import { knowledgeApi } from '../features/knowledge/api';
 
 const KnowledgeUpload = () => {
   const navigate = useNavigate();
@@ -18,7 +18,7 @@ const KnowledgeUpload = () => {
         setLoadingDatasets(true);
 
         // 获取知识库列表（后端已经根据权限组过滤过了）
-        const data = await authClient.listRagflowDatasets();
+        const data = await knowledgeApi.listRagflowDatasets();
         const datasets = data.datasets || [];
 
         setDatasets(datasets);
@@ -95,7 +95,7 @@ const KnowledgeUpload = () => {
     });
 
     try {
-      const result = await authClient.uploadDocument(selectedFile, kbId);
+      const result = await knowledgeApi.uploadDocument(selectedFile, kbId);
       console.log('[Upload Flow] Step 10 - Upload success:', result);
       setSuccess(`文件 "${result.filename}" 上传成功，等待审核`);
       setSelectedFile(null);

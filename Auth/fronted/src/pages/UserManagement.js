@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import authClient from '../api/authClient';
 import { useAuth } from '../hooks/useAuth';
+import { permissionGroupsApi } from '../features/permissionGroups/api';
+import { usersApi } from '../features/users/api';
 
 const UserManagement = () => {
   const { can } = useAuth();
@@ -34,7 +35,7 @@ const UserManagement = () => {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const data = await authClient.listUsers();
+      const data = await usersApi.list();
       setUsers(data);
     } catch (err) {
       setError(err.message);
@@ -45,10 +46,7 @@ const UserManagement = () => {
 
   const fetchPermissionGroups = async () => {
     try {
-      const response = await fetch(`${process.env.REACT_APP_AUTH_URL}/api/permission-groups`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('accessToken')}` }
-      });
-      const data = await response.json();
+      const data = await permissionGroupsApi.list();
       if (data.ok) {
         setAvailableGroups(data.data || []);
       }
@@ -60,7 +58,7 @@ const UserManagement = () => {
   const handleCreateUser = async (e) => {
     e.preventDefault();
     try {
-      await authClient.createUser(newUser);
+      await usersApi.create(newUser);
       setShowCreateModal(false);
       setNewUser({ username: '', password: '', email: '', group_ids: [] });
       fetchUsers();
@@ -73,7 +71,7 @@ const UserManagement = () => {
     if (!window.confirm('确定要删除该用户吗？')) return;
 
     try {
-      await authClient.deleteUser(userId);
+      await usersApi.remove(userId);
       fetchUsers();
     } catch (err) {
       setError(err.message);
@@ -96,7 +94,7 @@ const UserManagement = () => {
 
   const handleSaveGroup = async () => {
     try {
-      await authClient.updateUser(editingGroupUser.user_id, {
+      await usersApi.update(editingGroupUser.user_id, {
         group_ids: selectedGroupIds
       });
       setShowGroupModal(false);
