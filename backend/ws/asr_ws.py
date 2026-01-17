@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import queue
 import threading
@@ -138,7 +139,19 @@ def _ws_asr_impl(ws, deps) -> None:  # pragma: no cover (WS integration)
     wake_word_service = getattr(deps, "wake_word_service", None)
     request_registry = getattr(deps, "request_registry", None)
     event_store = getattr(deps, "event_store", None)
-    logger = getattr(deps, "logger", None)
+    logger = getattr(deps, "logger", None) or logging.getLogger(__name__)
+    wake_debug = _safe_bool(os.environ.get("RAGINT_WAKE_DEBUG"), False)
+    # Wake flag TTL: once awakened, only forward ASR output during this window.
+    wake_active_ms = max(500, _safe_int(os.environ.get("RAGINT_WAKE_ACTIVE_MS"), 8000))
+    # Limit where the wake word may appear (to reduce false triggers / tolerate a little leading filler).
+    # Default 0 means "must be at beginning". You can override per-session by sending `wake_max_pos`.
+    wake_max_pos = max(0, _safe_int(os.environ.get("RAGINT_WAKE_CONTAINS_MAX_POS"), 0))
+    asr_final_wait_s = float(os.environ.get("RAGINT_ASR_FINAL_WAIT_S") or 1.2)
+    if asr_final_wait_s < 0:
+        asr_final_wait_s = 0.0
+    if asr_final_wait_s > 10:
+        asr_final_wait_s = 10.0
+    asr_force_final_on_stop = _safe_bool(os.environ.get("RAGINT_ASR_FORCE_FINAL_ON_STOP"), True)
 
     client_id = ""
     request_id = ""
@@ -171,6 +184,7 @@ def _ws_asr_impl(ws, deps) -> None:  # pragma: no cover (WS integration)
             if wake_match_mode not in ("contains", "prefix"):
                 wake_match_mode = "contains"
             wake_cooldown_ms = max(0, _safe_int(msg.get("wake_cooldown_ms"), 0))
+            wake_max_pos = max(0, min(20, _safe_int(msg.get("wake_max_pos"), wake_max_pos)))
             continuous = _safe_bool(msg.get("continuous"), False)
             emit_prewake = _safe_bool(msg.get("emit_prewake"), True)
     elif isinstance(first, (bytes, bytearray)):
@@ -218,6 +232,22 @@ def _ws_asr_impl(ws, deps) -> None:  # pragma: no cover (WS integration)
 
     wake_word = wake_word if wake_enabled else ""
     wake_word_norm = _norm_for_wake_match(wake_word) if wake_word else ""
+    if wake_enabled and wake_word and not wake_word_norm:
+        try:
+            ws.send(json.dumps({"type": "error", "error": "wake_word_invalid"}))
+        except Exception:
+            pass
+        return
+    if wake_debug:
+        try:
+            logger.info(
+                f"[{request_id}] asr_ws_start client_id={client_id} model={model} continuous={continuous} "
+                f"wake_enabled={wake_enabled} wake_mode={wake_match_mode} wake_word={wake_word!r} "
+                f"wake_norm={wake_word_norm!r} cooldown_ms={wake_cooldown_ms} emit_prewake={emit_prewake} "
+                f"wake_active_ms={wake_active_ms} wake_max_pos={wake_max_pos}"
+            )
+        except Exception:
+            pass
 
     outq: queue.Queue[dict] = queue.Queue()
     stop_flag = threading.Event()
@@ -235,14 +265,17 @@ def _ws_asr_impl(ws, deps) -> None:  # pragma: no cover (WS integration)
             super().__init__()
             self._wake_word = wake_word
             self._wake_word_norm = wake_word_norm
-            self._wake_buf_norm = ""
+            self._wake_prev_norm = ""
+            self._wake_last_ms = 0
             self._awakened = not bool(self._wake_word_norm)
+            self._awaken_deadline_ms = 0
             self._last_awake_text = ""
             self._final_sent = False
 
         def _reset_wake(self) -> None:
-            self._wake_buf_norm = ""
+            self._wake_prev_norm = ""
             self._awakened = not bool(self._wake_word_norm)
+            self._awaken_deadline_ms = 0
             self._last_awake_text = ""
             self._final_sent = False
 
@@ -319,16 +352,50 @@ def _ws_asr_impl(ws, deps) -> None:  # pragma: no cover (WS integration)
                     emit({"type": "partial", "text": str(text), "prewake": True})
 
                 if self._wake_word_norm:
+                    now_ms = int(time.time() * 1000)
+                    if self._wake_last_ms and (now_ms - self._wake_last_ms) > 1500:
+                        # Prevent accidental wake across long gaps / sentence boundaries in streaming partials.
+                        self._wake_prev_norm = ""
+                    self._wake_last_ms = now_ms
                     text_norm, mapping = _normalize_with_mapping(str(text))
-                    combined = (self._wake_buf_norm + text_norm) if text_norm else self._wake_buf_norm
+                    if not text_norm:
+                        return
+
+                    # DashScope partials are often "cumulative" (each partial repeats the full text so far).
+                    # Treat those as replacements, not appends, otherwise concatenation can create false
+                    # wake-word matches across duplicated partial boundaries.
+                    prev = self._wake_prev_norm
+                    if prev and text_norm.startswith(prev):
+                        combined = text_norm
+                        buf_len = 0
+                    else:
+                        # For non-cumulative streams, only keep a small tail to allow cross-boundary matching
+                        # without unbounded concatenation.
+                        tail_len = max(0, len(self._wake_word_norm) - 1)
+                        tail_len = min(64, tail_len)
+                        tail = prev[-tail_len:] if (prev and tail_len > 0) else ""
+                        combined = tail + text_norm
+                        buf_len = len(tail)
+
                     match_at = combined.find(self._wake_word_norm)
-                    if wake_match_mode == "prefix" and match_at != 0:
+                    if match_at != -1 and match_at > wake_max_pos:
                         match_at = -1
 
-                    if match_at != -1 and self._record_wake_event(str(text)):
+                    if match_at != -1:
+                        if wake_debug:
+                            try:
+                                logger.info(
+                                    f"[{request_id}] wake_candidate client_id={client_id} mode={wake_match_mode} "
+                                    f"combined_len={len(combined)} match_at={match_at} buf_len={buf_len} "
+                                    f"is_final={is_final} wake_active_ms={wake_active_ms}"
+                                )
+                            except Exception:
+                                pass
+
+                    if match_at != -1 and self._record_wake_event(combined):
                         self._awakened = True
-                        buf_len = len(self._wake_buf_norm)
-                        self._wake_buf_norm = ""
+                        self._wake_prev_norm = ""
+                        self._awaken_deadline_ms = now_ms + int(wake_active_ms)
                         emit({"type": "wake", "wake_word": self._wake_word})
 
                         match_end = match_at + len(self._wake_word_norm)
@@ -350,20 +417,29 @@ def _ws_asr_impl(ws, deps) -> None:  # pragma: no cover (WS integration)
                                 final_emitted.set()
                         return
 
-                    max_keep = max(len(self._wake_word_norm) * 4, 32)
-                    self._wake_buf_norm = combined[-max_keep:]
+                    max_keep = max(len(self._wake_word_norm) * 2, 32)
+                    self._wake_prev_norm = combined[-max_keep:]
                 if is_final:
-                    self._wake_buf_norm = ""
+                    self._wake_prev_norm = ""
                 return
+
+            # Awakened: only forward output while the flag is alive.
+            now_ms = int(time.time() * 1000)
+            if self._awaken_deadline_ms and now_ms > self._awaken_deadline_ms:
+                self._reset_wake()
+                return
+            # Sliding window: any valid ASR output keeps the session awake.
+            if self._awaken_deadline_ms:
+                self._awaken_deadline_ms = now_ms + int(wake_active_ms)
 
             emit({"type": "final" if is_final else "partial", "text": str(text)})
             self._last_awake_text = str(text)
             if is_final:
                 self._final_sent = True
                 if continuous:
-                    self._reset_wake()
-                    if self._wake_word_norm:
-                        emit({"type": "info", "message": f"请先说唤醒词：{self._wake_word}"})
+                    # In continuous wake-word mode, keep awakened until idle timeout instead of
+                    # forcing the user to say wake word for every sentence.
+                    pass
                 else:
                     final_emitted.set()
 
@@ -407,6 +483,18 @@ def _ws_asr_impl(ws, deps) -> None:  # pragma: no cover (WS integration)
         while True:
             if stop_flag.is_set() or cancel_event.is_set():
                 break
+            # If the client keeps sending audio (including silence), ensure we can drop back
+            # to "waiting for wake word" after the awake TTL elapses.
+            if continuous:
+                try:
+                    now_ms = int(time.time() * 1000)
+                    if getattr(callback, "_awaken_deadline_ms", 0) and now_ms > int(getattr(callback, "_awaken_deadline_ms", 0)):
+                        callback._reset_wake()
+                        # Don't spam UI: only tell clients in debug/when prewake is enabled.
+                        if wake_debug or emit_prewake:
+                            emit({"type": "info", "message": f"请先说唤醒词：{wake_word}"})
+                except Exception:
+                    pass
             try:
                 data = ws.receive()
             except Exception:
@@ -446,7 +534,19 @@ def _ws_asr_impl(ws, deps) -> None:  # pragma: no cover (WS integration)
             pass
 
         if not continuous:
-            final_emitted.wait(timeout=10.0)
+            # Don't block shutdown too long: DashScope may delay "sentence_end" / on_complete.
+            # For interactive UX, emit a best-effort final from the last partial after a short wait.
+            got_final = final_emitted.wait(timeout=asr_final_wait_s)
+            if (not got_final) and asr_force_final_on_stop and (not cancel_event.is_set()):
+                try:
+                    if not getattr(callback, "_final_sent", False):
+                        t = str(getattr(callback, "_last_awake_text", "") or "").strip()
+                        if t:
+                            emit({"type": "final", "text": t})
+                            setattr(callback, "_final_sent", True)
+                            final_emitted.set()
+                except Exception:
+                    pass
 
         stop_flag.set()
         try:

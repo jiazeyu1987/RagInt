@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { VoiceInputManager } from '../managers/VoiceInputManager';
-import { VOICE_DEBUG, WAKE_WORD_FEATURE_ENABLED } from '../config/features';
+import { VOICE_DEBUG, WAKE_HOLD_MS, WAKE_WORD_FEATURE_ENABLED } from '../config/features';
 
 export function useVoiceInputManager({
   baseUrl,
@@ -64,8 +64,8 @@ export function useVoiceInputManager({
   }, [manager]);
 
   const callbacksRef = useRef({
-    askQuestion,
-    submitText,
+    setInputText,
+    getInputText,
     onFeedback: onWakeWordFeedback,
   });
 
@@ -75,11 +75,11 @@ export function useVoiceInputManager({
 
   useEffect(() => {
     callbacksRef.current = {
-      askQuestion,
-      submitText,
+      setInputText,
+      getInputText,
       onFeedback: onWakeWordFeedback,
     };
-  }, [askQuestion, submitText, onWakeWordFeedback]);
+  }, [getInputText, onWakeWordFeedback, setInputText]);
 
   useEffect(() => {
     manager.setWakeWordBusyChecker(() => !!isLoading);
@@ -98,6 +98,12 @@ export function useVoiceInputManager({
       unlockAudio,
       ttsEnabledRef,
       audioContextRef,
+      wsRequireWake: !!WAKE_WORD_FEATURE_ENABLED && !!wakeWordEnabled,
+      wakeWord,
+      wakeWordStrict,
+      wakeWordCooldownMs,
+      onWakeWordFeedback,
+      wakeHoldMs: WAKE_HOLD_MS,
       onRecordingChange: (value) => setIsRecording(!!value),
     };
     manager.setRecordingDeps(deps);
@@ -110,10 +116,17 @@ export function useVoiceInputManager({
     getInputText,
     minRecordMs,
     manager,
+    onWakeWordFeedback,
     setInputText,
     setIsLoading,
     ttsEnabledRef,
     unlockAudio,
+    wakeWord,
+    wakeWordCooldownMs,
+    wakeWordEnabled,
+    wakeWordStrict,
+    WAKE_HOLD_MS,
+    WAKE_WORD_FEATURE_ENABLED,
   ]);
 
   const resolvedClientId = clientIdRef ? clientIdRef.current : '';
@@ -134,8 +147,9 @@ export function useVoiceInputManager({
       }
     }
     manager.setWakeWordOptions({
-      // Avoid concurrent mic usage: pause wake-word listener while manual recording is active.
-      enabled: !!WAKE_WORD_FEATURE_ENABLED && !!wakeWordEnabled && !!hasUserGesture && !isManualHold && !isRecording,
+      // UX design: wake word gates manual press-to-talk output.
+      // Do not keep a background always-listening WS to avoid mic lock.
+      enabled: false,
       baseUrl,
       clientId: resolvedClientId,
       wakeWord,

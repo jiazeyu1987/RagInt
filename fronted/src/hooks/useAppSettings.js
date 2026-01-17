@@ -144,7 +144,8 @@ export function useAppSettings() {
     },
   });
 
-  const [wakeWordStrict, setWakeWordStrict] = useLocalStorageState('wakeWordStrict', true, {
+  // Default to non-strict to better match real ASR behavior (often includes leading filler like "嗯/啊").
+  const [wakeWordStrict, setWakeWordStrict] = useLocalStorageState('wakeWordStrict', false, {
     serialize: (v) => (v ? '1' : '0'),
     deserialize: (raw) => String(raw) === '1',
   });

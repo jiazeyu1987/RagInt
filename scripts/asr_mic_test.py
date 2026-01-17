@@ -68,15 +68,15 @@ def _ws_send_frame(sock: socket.socket, opcode: int, payload: bytes) -> None:
 
 
 def _ws_recv_frame(sock: socket.socket, timeout_s: float) -> tuple[int, bytes] | None:
-    sock.settimeout(timeout_s)
     try:
+        sock.settimeout(timeout_s)
         b1 = sock.recv(1)
         if not b1:
             return None
         b2 = sock.recv(1)
         if not b2:
             return None
-    except socket.timeout:
+    except (socket.timeout, OSError):
         return None
 
     first = b1[0]
@@ -146,6 +146,11 @@ def main() -> int:
     ap.add_argument("--device-index", type=int, default=-1, help="PyAudio input device index (-1 = default)")
     ap.add_argument("--chunk-ms", type=int, default=20, help="audio chunk size ms (20ms recommended)")
     ap.add_argument("--timeout", type=float, default=5.0, help="socket recv timeout seconds")
+    ap.add_argument("--wake-word", default="", help="Enable wake-word mode with this wake word (e.g. 你好小R)")
+    ap.add_argument("--wake-match-mode", default="contains", choices=["contains", "prefix"], help="Wake word match mode")
+    ap.add_argument("--wake-cooldown-ms", type=int, default=0, help="Wake cooldown per client_id (ms)")
+    ap.add_argument("--emit-prewake", action="store_true", help="Emit prewake partials (debug)")
+    ap.add_argument("--continuous", action="store_true", help="Keep session open after final (for wake-word continuous mode)")
     args = ap.parse_args()
 
     try:
@@ -158,14 +163,21 @@ def main() -> int:
     request_id = str(args.request_id).strip() or f"mic_{uuid.uuid4().hex}"
     ws = _connect_ws(str(args.url), timeout_s=float(args.timeout))
 
+    wake_word = str(args.wake_word or "").strip()
+    wake_enabled = bool(wake_word)
+
     start_msg = {
         "type": "start",
         "request_id": request_id,
         "client_id": str(args.client_id),
         "sample_rate": 16000,
         "encoding": "pcm_s16le",
-        "continuous": False,
-        "wake_word_enabled": False,
+        "continuous": bool(args.continuous),
+        "wake_word_enabled": wake_enabled,
+        "wake_word": wake_word,
+        "wake_match_mode": str(args.wake_match_mode),
+        "wake_cooldown_ms": max(0, int(args.wake_cooldown_ms)),
+        "emit_prewake": bool(args.emit_prewake),
     }
     _ws_send_frame(ws, 0x1, json.dumps(start_msg, ensure_ascii=False).encode("utf-8"))
 
@@ -173,40 +185,48 @@ def main() -> int:
     final_text = {"value": ""}
 
     def recv_loop() -> None:
-        while not stop.is_set():
-            frame = _ws_recv_frame(ws, timeout_s=float(args.timeout))
-            if frame is None:
-                continue
-            opcode, payload = frame
-            if opcode == 0x8:
-                stop.set()
-                return
-            if opcode != 0x1:
-                continue
-            try:
-                msg = json.loads(payload.decode("utf-8", errors="replace"))
-            except Exception:
-                continue
-            t = str(msg.get("type") or "").lower()
-            if t == "partial":
-                txt = str(msg.get("text") or "").strip()
-                if txt:
-                    print(f"[partial] {txt}")
-            elif t == "final":
-                txt = str(msg.get("text") or "").strip()
-                final_text["value"] = txt
-                if txt:
-                    print(f"[final] {txt}")
-                stop.set()
-                return
-            elif t == "error":
-                print(f"[error] {msg.get('error')}", file=sys.stderr)
-                stop.set()
-                return
-            elif t == "info":
-                m = str(msg.get("message") or "").strip()
-                if m:
-                    print(f"[info] {m}")
+        try:
+            while not stop.is_set():
+                frame = _ws_recv_frame(ws, timeout_s=float(args.timeout))
+                if frame is None:
+                    continue
+                opcode, payload = frame
+                if opcode == 0x8:
+                    stop.set()
+                    return
+                if opcode != 0x1:
+                    continue
+                try:
+                    msg = json.loads(payload.decode("utf-8", errors="replace"))
+                except Exception:
+                    continue
+                t = str(msg.get("type") or "").lower()
+                if t == "partial":
+                    txt = str(msg.get("text") or "").strip()
+                    if txt:
+                        print(f"[partial] {txt}")
+                elif t == "final":
+                    txt = str(msg.get("text") or "").strip()
+                    final_text["value"] = txt
+                    if txt:
+                        print(f"[final] {txt}")
+                    if not bool(args.continuous):
+                        stop.set()
+                        return
+                elif t == "wake":
+                    ww = str(msg.get("wake_word") or "").strip()
+                    print(f"[wake] {ww}" if ww else "[wake]")
+                elif t == "error":
+                    print(f"[error] {msg.get('error')}", file=sys.stderr)
+                    stop.set()
+                    return
+                elif t == "info":
+                    m = str(msg.get("message") or "").strip()
+                    if m:
+                        print(f"[info] {m}")
+        except Exception as e:
+            print(f"recv_loop_failed: {e}", file=sys.stderr)
+            stop.set()
 
     t_recv = threading.Thread(target=recv_loop, daemon=True)
     t_recv.start()
@@ -262,6 +282,7 @@ def main() -> int:
     # Give the server a brief moment to finalize.
     with threading.Lock():
         pass
+    stop.set()
     t_recv.join(timeout=2.0)
     try:
         _ws_send_frame(ws, 0x8, b"")
@@ -279,4 +300,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

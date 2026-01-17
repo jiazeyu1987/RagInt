@@ -14,6 +14,12 @@ export class RecordingWorkflowManager {
     this._recordPointerId = null;
     this._asrAbort = null;
     this._wsBaseText = '';
+    this._wsRequireWake = false;
+    this._wsAwakened = true;
+    this._wsConfigSig = '';
+    this._wsRequireWakeActive = false;
+    this._wakeHoldMs = 8000;
+    this._wakeHoldUntilMs = 0;
 
     this._recorder = null;
     this._asrMode = 'http';
@@ -22,8 +28,31 @@ export class RecordingWorkflowManager {
   }
 
   setDeps(next = {}) {
+    const prevSig = this._wsConfigSig;
     this._deps = { ...(this._deps || {}), ...(next || {}) };
     this._asrMode = String(this._deps.asrMode || 'http');
+    this._wsRequireWake = !!this._deps.wsRequireWake;
+
+    // Recreate ws_pcm recorder if wake config changed (PcmWsRecorderManager captures startPayload at construction).
+    const sig = JSON.stringify({
+      asrMode: this._asrMode,
+      wsRequireWake: !!this._wsRequireWake,
+      wakeWord: safeTrim(this._deps.wakeWord),
+      wakeWordStrict: !!this._deps.wakeWordStrict,
+      wakeWordCooldownMs: Number(this._deps.wakeWordCooldownMs) || 0,
+      wakeHoldMs: Number(this._deps.wakeHoldMs) || 0,
+      baseUrl: safeTrim(this._deps.baseUrl),
+      clientId: safeTrim(this._deps.clientId),
+    });
+    this._wsConfigSig = sig;
+    if (prevSig && sig !== prevSig && this._recorder && this._asrMode === 'ws_pcm') {
+      try {
+        this._recorder.cancel();
+      } catch (_) {
+        // ignore
+      }
+      this._recorder = null;
+    }
   }
 
   get isRecording() {
@@ -181,33 +210,95 @@ export class RecordingWorkflowManager {
     const baseUrl = this._deps.baseUrl;
     const clientId = safeTrim(this._deps.clientId);
     const minRecordMs = Number(this._deps.minRecordMs) || 900;
+    const wakeWord = safeTrim(this._deps.wakeWord);
+    const strict = !!this._deps.wakeWordStrict;
+    const wakeMatchMode = strict ? 'prefix' : 'contains';
+    const wakeCooldownMs = Number(this._deps.wakeWordCooldownMs) || 0;
 
     if (this._recorder) return;
 
     if (this._asrMode === 'ws_pcm') {
+      const holdActive = Date.now() < (Number(this._wakeHoldUntilMs) || 0);
+      const requireWake = !!this._wsRequireWake && !!wakeWord && !holdActive;
       this._recorder = new PcmWsRecorderManager({
         wsUrl: buildAsrWsUrl(baseUrl, { role: 'rec' }),
         label: 'rec',
         clientId,
         requestId: `asrws_${Date.now()}_${Math.random().toString(16).slice(2)}`,
         sampleRate: 16000,
+        startPayload: requireWake
+          ? {
+              wake_word_enabled: true,
+              wake_word: wakeWord,
+              wake_match_mode: wakeMatchMode,
+              wake_cooldown_ms: wakeCooldownMs,
+              // Non-strict mode: allow a little leading filler like "嗯" before wake word.
+              // Strict mode: require wake word at the beginning.
+              wake_max_pos: strict ? 0 : 2,
+              emit_prewake: false,
+            }
+          : null,
+        onEvent: (evt) => {
+          const t = safeTrim(evt && evt.type).toLowerCase();
+          if (requireWake && t === 'wake') {
+            this._wsAwakened = true;
+            this._wakeHoldUntilMs = Date.now() + this._wakeHoldMs;
+            if (this._log) this._log('[REC] wake', { wakeWord });
+            const onWakeWordFeedback = this._deps.onWakeWordFeedback;
+            if (typeof onWakeWordFeedback === 'function') {
+              try {
+                onWakeWordFeedback({ message: '已唤醒' });
+              } catch (_) {
+                // ignore
+              }
+            }
+            return;
+          }
+          if (requireWake && t === 'info') {
+            const m = safeTrim(evt && evt.message);
+            const onWakeWordFeedback = this._deps.onWakeWordFeedback;
+            if (m && typeof onWakeWordFeedback === 'function') {
+              try {
+                onWakeWordFeedback({ message: m });
+              } catch (_) {
+                // ignore
+              }
+            }
+          }
+        },
         onStateChange: (v) => this._setRecording(!!v),
         onPartialText: (text) => {
+          if (requireWake && !this._wsAwakened) return;
           const t = safeTrim(text);
           if (!t) return;
+          if (this._wsRequireWake && wakeWord) this._wakeHoldUntilMs = Date.now() + this._wakeHoldMs;
           const base = safeTrim(this._wsBaseText);
           this._appendOrReplaceInputText(base ? `${base} ${t}` : t);
         },
         onFinalText: (text) => {
+          if (requireWake && !this._wsAwakened) {
+            this._setLoading(false);
+            this._emitFinalText('');
+            return;
+          }
           const t = safeTrim(text);
           const base = safeTrim(this._wsBaseText);
           if (t) this._appendOrReplaceInputText(base ? `${base} ${t}` : t);
+          if (t && this._wsRequireWake && wakeWord) this._wakeHoldUntilMs = Date.now() + this._wakeHoldMs;
           this._setLoading(false);
           this._emitFinalText(t);
         },
         onError: (msg) => {
           this._setLoading(false);
           if (this._log) this._log('[REC] ws error', msg);
+          const onWakeWordFeedback = this._deps.onWakeWordFeedback;
+          if (requireWake && typeof onWakeWordFeedback === 'function') {
+            try {
+              onWakeWordFeedback({ message: `ASR 错误：${safeTrim(msg)}` });
+            } catch (_) {
+              // ignore
+            }
+          }
           this._emitFinalText('');
         },
         onLog: (...args) => (this._log ? this._log(...args) : null),
@@ -226,6 +317,17 @@ export class RecordingWorkflowManager {
   }
 
   async start() {
+    // For ws_pcm, startPayload/gating decisions are captured at construction time.
+    // Recreate per session so wake-hold state is applied immediately on the next press.
+    if (this._asrMode === 'ws_pcm' && this._recorder) {
+      try {
+        this._recorder.cancel();
+      } catch (_) {
+        // ignore
+      }
+      this._recorder = null;
+    }
+
     this._ensureRecorder();
     if (!this._recorder) return;
 
@@ -238,6 +340,10 @@ export class RecordingWorkflowManager {
 
     this._snapshotBaseText();
     this._setLoading(true);
+    this._wsRequireWakeActive = !!this._wsRequireWake && !!safeTrim(this._deps.wakeWord);
+    const holdActive = Date.now() < (Number(this._wakeHoldUntilMs) || 0);
+    this._wsAwakened = holdActive ? true : !this._wsRequireWakeActive;
+    this._wakeHoldMs = Math.max(500, Math.min(120000, Math.round(Number(this._deps.wakeHoldMs) || 8000)));
 
     try {
       await this._recorder.start();
@@ -253,6 +359,7 @@ export class RecordingWorkflowManager {
     const ttsEnabledRef = this._deps.ttsEnabledRef;
     const audioContextRef = this._deps.audioContextRef;
     const unlockAudio = this._deps.unlockAudio;
+    const onWakeWordFeedback = this._deps.onWakeWordFeedback;
 
     if (ttsEnabledRef && ttsEnabledRef.current) {
       if (audioContextRef && audioContextRef.current) {
@@ -274,6 +381,14 @@ export class RecordingWorkflowManager {
       this._recorder.stop();
     } catch (_) {
       // ignore
+    }
+
+    if (this._wsRequireWakeActive && !this._wsAwakened && typeof onWakeWordFeedback === 'function') {
+      try {
+        onWakeWordFeedback({ message: '未检测到唤醒词' });
+      } catch (_) {
+        // ignore
+      }
     }
   }
 

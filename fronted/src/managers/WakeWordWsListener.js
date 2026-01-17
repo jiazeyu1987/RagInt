@@ -1,5 +1,6 @@
 import { PcmWsRecorderManager } from './PcmWsRecorderManager';
 import { buildAsrWsUrl } from '../config/voiceEndpoints';
+import { VOICE_DEBUG } from '../config/features';
 
 function safeTrim(v) {
   if (v == null) return '';
@@ -15,6 +16,8 @@ export class WakeWordWsListener {
     this._stateListener = null;
     this._busyChecker = null;
     this._paused = false;
+    this._awakened = false;
+    this._baseText = '';
     this._restart = { timer: null, backoffMs: 500 };
     this._resume = { timer: null };
   }
@@ -69,6 +72,8 @@ export class WakeWordWsListener {
       }
       this._mgr = null;
     }
+    this._awakened = false;
+    this._baseText = '';
     this._notifyState(false);
     this._clearRestart();
     this._clearResume();
@@ -118,6 +123,8 @@ export class WakeWordWsListener {
 
     const cfg = this._cfg || {};
     this._resetBackoff();
+    this._awakened = false;
+    this._baseText = '';
     this._mgr = new PcmWsRecorderManager({
       wsUrl: buildAsrWsUrl(cfg.baseUrl, { role: 'wake' }),
       label: 'wake',
@@ -130,9 +137,11 @@ export class WakeWordWsListener {
         wake_word: cfg.wakeWord,
         wake_match_mode: cfg.strictMode ? 'prefix' : 'contains',
         wake_cooldown_ms: Number(cfg.cooldownMs) || 0,
-        emit_prewake: true,
+        // Don't surface non-awakened partials to the UI/input; only act after wake word.
+        emit_prewake: false,
       },
       onEvent: (evt) => this._onWakeEvent(evt),
+      onPartialText: (text) => this._onWakePartialText(text),
       onFinalText: (text) => this._onWakeFinalText(text),
       onError: (msg) => this._onWakeError(msg),
       onLog: (...args) => (this._log ? this._log('[WAKE-WS]', ...args) : null),
@@ -149,18 +158,39 @@ export class WakeWordWsListener {
     if (!type) return;
     const cb = this._callbacksRef ? this._callbacksRef.current : null;
     const onFeedback = cb && typeof cb.onFeedback === 'function' ? cb.onFeedback : null;
+    const getInputText = cb && typeof cb.getInputText === 'function' ? cb.getInputText : null;
     if (type === 'wake') {
+      this._awakened = true;
+      this._baseText = '';
+      try {
+        const base = safeTrim(getInputText ? getInputText() : '');
+        this._baseText = base;
+      } catch (_) {
+        this._baseText = '';
+      }
       if (onFeedback) onFeedback({ kind: 'wake_word', level: 'info', message: `已唤醒：${safeTrim(this._cfg && this._cfg.wakeWord)}` });
       return;
     }
-    if (type === 'info') {
+    // In wake-word mode, avoid spamming the UI with "prewake" partials or server info like
+    // "请先说唤醒词...". Only surface those when debugging.
+    if (VOICE_DEBUG && type === 'info') {
       const m = safeTrim(evt && evt.message);
       if (m && onFeedback) onFeedback({ kind: 'wake_word', level: 'info', message: m });
-      return;
     }
-    if (type === 'partial' && evt && evt.prewake) {
-      const m = safeTrim(evt && evt.text);
-      if (m && onFeedback) onFeedback({ kind: 'wake_word', level: 'info', message: m });
+  }
+
+  _onWakePartialText(text) {
+    const t = safeTrim(text);
+    if (!t) return;
+    if (!this._awakened) return;
+    const cb = this._callbacksRef ? this._callbacksRef.current : null;
+    const setInputText = cb && typeof cb.setInputText === 'function' ? cb.setInputText : null;
+    if (!setInputText) return;
+    const base = safeTrim(this._baseText);
+    try {
+      setInputText(base ? `${base} ${t}` : t);
+    } catch (_) {
+      // ignore
     }
   }
 
@@ -168,22 +198,25 @@ export class WakeWordWsListener {
     const q = safeTrim(text);
     if (!q) return;
     if (this._busy()) return;
+    // Safety net: only act on `final` after backend explicitly emits a wake event.
+    if (!this._awakened) return;
     const cb = this._callbacksRef ? this._callbacksRef.current : null;
     if (!cb) return;
-    const submitText = typeof cb.submitText === 'function' ? cb.submitText : null;
-    const askQuestion = typeof cb.askQuestion === 'function' ? cb.askQuestion : null;
+    const setInputText = typeof cb.setInputText === 'function' ? cb.setInputText : null;
+    const getInputText = typeof cb.getInputText === 'function' ? cb.getInputText : null;
     const onFeedback = typeof cb.onFeedback === 'function' ? cb.onFeedback : null;
 
-    Promise.resolve()
-      .then(async () => {
-        if (submitText) return await submitText(q, { source: 'wake_word' });
-        if (askQuestion) return await askQuestion(q, { source: 'wake_word' });
-        return null;
-      })
-      .catch((e) => {
+    // Design goal: with wake-word enabled, only after waking should text appear in the input box.
+    // Don't auto-submit; let user edit/confirm.
+    if (setInputText) {
+      try {
+        const base = safeTrim(this._baseText || (getInputText ? getInputText() : ''));
+        setInputText(base ? `${base} ${q}` : q);
+      } catch (e) {
         const m = safeTrim((e && e.message) || e);
         if (m && onFeedback) onFeedback({ kind: 'wake_word', level: 'error', message: m });
-      });
+      }
+    }
   }
 
   _onWakeError(msg) {
