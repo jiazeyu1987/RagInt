@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { VoiceInputManager } from '../managers/VoiceInputManager';
-import { VOICE_DEBUG, WAKE_HOLD_MS, WAKE_WORD_FEATURE_ENABLED } from '../config/features';
+import { VOICE_DEBUG, WAKE_HOLD_MS } from '../config/features';
 
 export function useVoiceInputManager({
   baseUrl,
@@ -13,7 +13,6 @@ export function useVoiceInputManager({
   unlockAudio,
   ttsEnabledRef,
   audioContextRef,
-  asrMode = 'ws_pcm',
   wakeWordEnabled,
   wakeWord,
   wakeWordStrict,
@@ -24,7 +23,6 @@ export function useVoiceInputManager({
   isLoading,
 } = {}) {
   const [isRecording, setIsRecording] = useState(false);
-  const [isWakeWordRunning, setIsWakeWordRunning] = useState(false);
   const [hasUserGesture, setHasUserGesture] = useState(false);
   const [isManualHold, setIsManualHold] = useState(false);
   const managerRef = useRef(null);
@@ -57,21 +55,11 @@ export function useVoiceInputManager({
     };
   }, [manager]);
 
-  useEffect(() => {
-    manager.setWakeWordStateListener((active) => {
-      setIsWakeWordRunning(!!active);
-    });
-  }, [manager]);
-
   const callbacksRef = useRef({
     setInputText,
     getInputText,
     onFeedback: onWakeWordFeedback,
   });
-
-  useEffect(() => {
-    manager.setWakeWordCallbacks(callbacksRef);
-  }, [manager]);
 
   useEffect(() => {
     callbacksRef.current = {
@@ -82,14 +70,9 @@ export function useVoiceInputManager({
   }, [getInputText, onWakeWordFeedback, setInputText]);
 
   useEffect(() => {
-    manager.setWakeWordBusyChecker(() => !!isLoading);
-  }, [manager, isLoading]);
-
-  useEffect(() => {
     const deps = {
       baseUrl,
       minRecordMs,
-      asrMode,
       clientId: clientIdRef ? clientIdRef.current : '',
       setInputText,
       getInputText,
@@ -98,7 +81,7 @@ export function useVoiceInputManager({
       unlockAudio,
       ttsEnabledRef,
       audioContextRef,
-      wsRequireWake: !!WAKE_WORD_FEATURE_ENABLED && !!wakeWordEnabled,
+      wsRequireWake: !!wakeWordEnabled,
       wakeWord,
       wakeWordStrict,
       wakeWordCooldownMs,
@@ -108,7 +91,6 @@ export function useVoiceInputManager({
     };
     manager.setRecordingDeps(deps);
   }, [
-    asrMode,
     audioContextRef,
     baseUrl,
     clientIdRef,
@@ -125,8 +107,6 @@ export function useVoiceInputManager({
     wakeWordCooldownMs,
     wakeWordEnabled,
     wakeWordStrict,
-    WAKE_HOLD_MS,
-    WAKE_WORD_FEATURE_ENABLED,
   ]);
 
   const resolvedClientId = clientIdRef ? clientIdRef.current : '';
@@ -136,27 +116,15 @@ export function useVoiceInputManager({
         // eslint-disable-next-line no-console
         console.log('[VOICE] wake_opts', {
           wakeWordEnabled: !!wakeWordEnabled,
-          wakeFeatureEnabled: !!WAKE_WORD_FEATURE_ENABLED,
           hasUserGesture: !!hasUserGesture,
           isManualHold: !!isManualHold,
           isRecording: !!isRecording,
-          enabled: !!WAKE_WORD_FEATURE_ENABLED && !!wakeWordEnabled && !!hasUserGesture && !isManualHold && !isRecording,
+          enabled: !!wakeWordEnabled && !!hasUserGesture && !isManualHold && !isRecording,
         });
       } catch (_) {
         // ignore
       }
     }
-    manager.setWakeWordOptions({
-      // UX design: wake word gates manual press-to-talk output.
-      // Do not keep a background always-listening WS to avoid mic lock.
-      enabled: false,
-      baseUrl,
-      clientId: resolvedClientId,
-      wakeWord,
-      strictMode: !!wakeWordStrict,
-      cooldownMs: Number(wakeWordCooldownMs) || 0,
-      continuous: true,
-    });
   }, [
     baseUrl,
     hasUserGesture,
@@ -169,12 +137,11 @@ export function useVoiceInputManager({
     wakeWordEnabled,
     wakeWordStrict,
     // `process.env` is compile-time in CRA, keep it as a dep for clarity.
-    WAKE_WORD_FEATURE_ENABLED,
   ]);
 
   return {
     isRecording,
-    isWakeWordRunning,
+    isWakeWordRunning: false,
     startRecording: () => manager.startRecording(),
     stopRecording: () => manager.stopRecording(),
     recordOnce: (opts) => manager.recordOnce(opts),

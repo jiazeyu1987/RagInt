@@ -290,52 +290,8 @@
         "responses": { "200": { "description": "OK" } }
       }
     },
-    "/api/wake_word/detect": {
-      "post": {
-        "summary": "Detect wake word (helper)",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["text"],
-                "properties": {
-                  "text": { "type": "string" },
-                  "wake_words": { "type": "array", "items": { "type": "string" } },
-                  "cooldown_ms": { "type": "integer" },
-                  "match_mode": { "type": "string", "enum": ["contains", "prefix"] }
-                }
-              }
-            }
-          }
-        },
-        "responses": { "200": { "description": "OK" } }
-      }
-    },
-    "/api/speech_to_text": {
-      "post": {
-        "summary": "ASR (audio file upload)",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "audio": { "type": "string", "format": "binary" },
-                  "request_id": { "type": "string" },
-                  "client_id": { "type": "string" }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": { "description": "OK" }
-        }
-      }
-    },
+
+
     "/api/text_to_speech": {
       "post": {
         "summary": "TTS (stream audio bytes)",

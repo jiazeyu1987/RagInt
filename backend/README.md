@@ -5,17 +5,16 @@
 From repo root:
 
 - `python -m backend`
-  - `/ws/asr` is implemented via Flask-Sock (simple-websocket) and is intended for local/dev runs.
+  - ASR WS runs via VoiceKit at `/voicekit/ws/asr`
+  - 依赖：需安装 `asr-voicekit`（例如安装已构建的 wheel）
 
 Key endpoints:
 
 - `GET /health`
 - `GET /api/openapi.json`
 - `POST /api/ask` (SSE)
-- `POST /api/speech_to_text`
 - `POST /api/text_to_speech`
 - `GET|POST|DELETE /api/breakpoint` (client breakpoint persistence)
-- `POST /api/wake_word/detect` (wake-word detection helper)
 - `GET|POST /api/tour/control` (on-site control panel command bus)
 - `GET /api/tour/templates` (basic tour templates)
 - `POST /api/tour/plan` (tour plan; supports `stops_override`)

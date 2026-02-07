@@ -13,7 +13,6 @@ export function useRecorderWorkflow({
   unlockAudio,
   ttsEnabledRef,
   audioContextRef,
-  asrMode = 'ws_pcm', // 'http' | 'ws_pcm'
 } = {}) {
   const [isRecording, setIsRecording] = useState(false);
   const mgrRef = useRef(null);
@@ -26,7 +25,6 @@ export function useRecorderWorkflow({
     mgrRef.current.setDeps({
       baseUrl,
       minRecordMs,
-      asrMode,
       clientId,
       setInputText,
       getInputText,
@@ -39,7 +37,6 @@ export function useRecorderWorkflow({
     });
   }, [
     audioContextRef,
-    asrMode,
     baseUrl,
     clientIdRef,
     decodeAndConvertToWav16kMono,

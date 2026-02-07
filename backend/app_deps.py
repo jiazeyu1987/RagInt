@@ -14,7 +14,6 @@ class AppDeps:
     ragflow_service: Any
     ragflow_agent_service: Any
     history_store: Any
-    asr_service: Any
     tts_service: Any
     intent_service: Any
     tour_planner: Any
@@ -23,7 +22,6 @@ class AppDeps:
     recording_store: Any
     ask_timings: Any
     breakpoint_store: Any
-    wake_word_service: Any
     tour_control_store: Any
     tour_command_service: Any
     selling_points_store: Any

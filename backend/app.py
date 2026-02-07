@@ -27,13 +27,10 @@ from backend.api.recordings import create_blueprint as create_recordings_bluepri
 from backend.api.speech import create_blueprint as create_speech_blueprint
 from backend.api.system import create_blueprint as create_system_blueprint
 from backend.api.tts import create_blueprint as create_tts_blueprint
-from backend.api.wake_word import create_blueprint as create_wake_word_blueprint
 from backend.api.tour_control import create_blueprint as create_tour_control_blueprint
 from backend.api.tour_command import create_blueprint as create_tour_command_blueprint
 from backend.api.selling_points import create_blueprint as create_selling_points_blueprint
 from backend.api.ops import create_blueprint as create_ops_blueprint
-
-from backend.ws.asr_ws import register_asr_ws
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -133,7 +130,6 @@ def create_app() -> Flask:
 
     from backend.infra.cancellation import CancellationRegistry
     from backend.infra.event_store import EventStore, RedisEventStore
-    from backend.services.asr_service import ASRService
     from backend.services.breakpoint_store import BreakpointStore
     from backend.services.history_store import HistoryStore
     from backend.services.intent_service import IntentService
@@ -142,7 +138,6 @@ def create_app() -> Flask:
     from backend.services.recording_store import RecordingStore
     from backend.services.tour_planner import TourPlanner
     from backend.services.tts_service import TTSSvc
-    from backend.services.wake_word_service import WakeWordService
     from backend.services.tour_control_store import TourControlStore
     from backend.services.tour_command_service import TourCommandService
     from backend.services.selling_points_store import SellingPointsStore
@@ -167,7 +162,6 @@ def create_app() -> Flask:
     history_store = HistoryStore(Path(__file__).parent / "data" / "qa_history.db", logger=logger)
     breakpoint_db_path = Path(os.environ.get("RAGINT_BREAKPOINT_DB_PATH") or (Path(__file__).parent / "data" / "breakpoints.db"))
     breakpoint_store = BreakpointStore(breakpoint_db_path, logger=logger)
-    asr_service = ASRService(logger=logger)
     tts_service = TTSSvc(logger=logger)
     intent_service = IntentService()
     tour_planner = TourPlanner()
@@ -178,7 +172,6 @@ def create_app() -> Flask:
         event_store = EventStore()
     recording_store = RecordingStore(Path(__file__).parent / "data" / "recordings", logger=logger)
     ask_timings = AskTimings()
-    wake_word_service = WakeWordService()
     tour_control_db_path = Path(os.environ.get("RAGINT_TOUR_CONTROL_DB_PATH") or (Path(__file__).parent / "data" / "tour_control.db"))
     tour_control_store = TourControlStore(tour_control_db_path, logger=logger)
     tour_command_service = TourCommandService()
@@ -195,7 +188,6 @@ def create_app() -> Flask:
         ragflow_service=ragflow_service,
         ragflow_agent_service=ragflow_agent_service,
         history_store=history_store,
-        asr_service=asr_service,
         tts_service=tts_service,
         intent_service=intent_service,
         tour_planner=tour_planner,
@@ -204,7 +196,6 @@ def create_app() -> Flask:
         recording_store=recording_store,
         ask_timings=ask_timings,
         breakpoint_store=breakpoint_store,
-        wake_word_service=wake_word_service,
         tour_control_store=tour_control_store,
         tour_command_service=tour_command_service,
         selling_points_store=selling_points_store,
@@ -212,6 +203,92 @@ def create_app() -> Flask:
     )
     # Expose deps for ASGI wrapper / WS endpoints.
     app.config["deps"] = deps
+
+    def _register_voicekit() -> None:
+        """
+        RagInt ASR is fully implemented via VoiceKit.
+        Required dependency: `pip install asr-voicekit`.
+        """
+
+        try:
+            from asr_voicekit import register_voicekit
+            from asr_voicekit.deps import VoiceKitDeps
+            from asr_voicekit.providers.dashscope_provider import DashScopeProvider
+            from asr_voicekit.wake_window import WakeWindowService
+        except Exception as e:
+            raise RuntimeError(
+                "VoiceKit backend package is required but not installed. "
+                "Install it with: pip install asr-voicekit (or install the built wheel). "
+                f"Original error: {e}"
+            ) from e
+
+        app_cfg = {}
+        try:
+            app_cfg = deps.ragflow_service.load_config() or {}
+        except Exception:
+            app_cfg = {}
+
+        asr_cfg = (app_cfg.get("asr") or {}).get("dashscope") if isinstance(app_cfg.get("asr"), dict) else {}
+        tts_cfg = (app_cfg.get("tts") or {}).get("bailian") if isinstance(app_cfg.get("tts"), dict) else {}
+        if not isinstance(asr_cfg, dict):
+            asr_cfg = {}
+        if not isinstance(tts_cfg, dict):
+            tts_cfg = {}
+
+        api_key = str(asr_cfg.get("api_key") or "").strip() or str(tts_cfg.get("api_key") or "").strip()
+        model = str(asr_cfg.get("model") or "paraformer-realtime-v2").strip() or "paraformer-realtime-v2"
+        ws_url = str(asr_cfg.get("ws_url") or asr_cfg.get("dashscope_ws_url") or "").strip()
+
+        def _safe_int(v, d: int) -> int:
+            try:
+                return int(v)
+            except Exception:
+                return int(d)
+
+        def _safe_float(v, d: float) -> float:
+            try:
+                return float(v)
+            except Exception:
+                return float(d)
+
+        def _safe_bool(v, d: bool) -> bool:
+            if v is None:
+                return bool(d)
+            if isinstance(v, bool):
+                return bool(v)
+            s = str(v).strip().lower()
+            if s in ("1", "true", "yes", "y", "on"):
+                return True
+            if s in ("0", "false", "no", "n", "off"):
+                return False
+            return bool(d)
+
+        voicekit_cfg = {
+            "asr": {"dashscope": {"api_key": api_key, "model": model, "ws_url": ws_url}},
+            "wake": {
+                "active_ms": max(500, _safe_int(os.environ.get("RAGINT_WAKE_ACTIVE_MS"), 8000)),
+                "max_pos_default": max(0, _safe_int(os.environ.get("RAGINT_WAKE_CONTAINS_MAX_POS"), 2)),
+                "cooldown_ms_default": max(0, _safe_int(os.environ.get("RAGINT_WAKE_COOLDOWN_MS"), 0)),
+                "store": "memory",
+                "redis_url": "",
+            },
+            "asr_final": {
+                "wait_s": max(0.0, min(10.0, _safe_float(os.environ.get("RAGINT_ASR_FINAL_WAIT_S"), 1.2))),
+                "force_on_stop": _safe_bool(os.environ.get("RAGINT_ASR_FORCE_FINAL_ON_STOP"), True),
+            },
+            "auth": {"require_token": False, "secret": "", "token_ttl_s": 3600},
+        }
+
+        vk_deps = VoiceKitDeps(
+            provider=DashScopeProvider(cfg=voicekit_cfg, logger=logger),
+            logger=logger,
+            wake_word_service=WakeWindowService(),
+            config=voicekit_cfg,
+        )
+        app.config["voicekit_deps"] = vk_deps
+        register_voicekit(app, vk_deps, url_prefix="/voicekit")
+
+        logger.info("VoiceKit registered: /voicekit/ws/asr")
 
     def _init_ragflow() -> bool:
         try:
@@ -229,7 +306,6 @@ def create_app() -> Flask:
     app.register_blueprint(create_offline_blueprint(deps))
     app.register_blueprint(create_system_blueprint(deps))
     app.register_blueprint(create_breakpoint_blueprint(deps))
-    app.register_blueprint(create_wake_word_blueprint(deps))
     app.register_blueprint(create_tour_control_blueprint(deps))
     app.register_blueprint(create_tour_command_blueprint(deps))
     app.register_blueprint(create_selling_points_blueprint(deps))
@@ -239,7 +315,7 @@ def create_app() -> Flask:
     app.register_blueprint(create_tts_blueprint(deps))
 
     # WebSocket endpoints (Flask-Sock).
-    register_asr_ws(app, deps)
+    _register_voicekit()
     return app
 
 
@@ -255,7 +331,7 @@ def main() -> None:
     logger.info("启动语音问答后端服务")
     # Note: Flask-Sock uses `simple-websocket`, which starts a background thread to read frames.
     # Using gevent sockets here can trigger `greenlet.error: Cannot switch to a different thread`.
-    # For local/dev, run with werkzeug (Flask built-in server) so `/ws/asr` works reliably.
+    # For local/dev, run with werkzeug (Flask built-in server) so websocket works reliably.
     app.run(host=host, port=port, debug=debug, threaded=True)
 
 

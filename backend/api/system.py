@@ -218,9 +218,10 @@ def create_blueprint(deps):
         key = str(get_nested(cfg, ["asr", "dashscope", "api_key"], "") or "").strip()
         if not key:
             key = str(get_nested(cfg, ["tts", "bailian", "api_key"], "") or "").strip()
+        provider = "voicekit"
         return jsonify(
             {
-                "asr_provider": getattr(deps.asr_service, "provider", "dashscope"),
+                "asr_provider": provider,
                 "asr_api_key_configured": bool(key),
                 "ragflow_connected": deps.session is not None,
             }

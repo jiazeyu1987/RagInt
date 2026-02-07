@@ -11,6 +11,9 @@ export function TextInputControls({
   onRecordPointerCancel,
   startRecording,
   stopRecording,
+  conversationEnabled,
+  conversationBusy,
+  onToggleConversation,
   inputElRef,
   inputText,
   onChangeInputText,
@@ -20,8 +23,22 @@ export function TextInputControls({
 }) {
   if (children) return <TextInputBar onSubmit={onSubmit}>{children}</TextInputBar>;
 
+  const conversationDisabled = !!conversationBusy || (!conversationEnabled && !!isRecording);
+  const pttDisabled = !!conversationEnabled || !!conversationBusy;
+
   return (
     <TextInputBar onSubmit={onSubmit}>
+      <button
+        type="button"
+        className={conversationEnabled ? 'stop-btn' : ''}
+        onClick={onToggleConversation}
+        disabled={conversationDisabled}
+        title={conversationEnabled ? '结束对话并释放麦克风' : '开始对话并保持麦克风权限'}
+        aria-label={conversationEnabled ? '结束对话' : '开始对话'}
+      >
+        {conversationEnabled ? '结束对话' : '开始对话'}
+      </button>
+
       <button
         className={`record-btn ${isRecording ? 'recording' : ''}`}
         onPointerDown={onRecordPointerDown}
@@ -29,15 +46,17 @@ export function TextInputControls({
         onPointerCancel={onRecordPointerCancel}
         onPointerLeave={onRecordPointerCancel}
         onClick={() => {
+          if (pttDisabled) return;
           if (POINTER_SUPPORTED) return;
           if (isRecording) stopRecording();
           else startRecording();
         }}
         type="button"
-        title="按住说话，松开后识别并填入输入框"
+        disabled={pttDisabled}
+        title={conversationEnabled ? '对话模式中不可用' : '按住说话，松开后识别并填入输入框'}
         aria-label={isRecording ? '录音中' : '语音输入'}
       >
-        {isRecording ? '■' : '??'}
+        {isRecording ? '■' : '🎙'}
       </button>
 
       <input
@@ -54,7 +73,7 @@ export function TextInputControls({
       </button>
 
       <button type="button" className="settings-btn" onClick={onOpenSettings} title="设置" aria-label="设置">
-        ?
+        ⚙
       </button>
     </TextInputBar>
   );

@@ -97,6 +97,8 @@ function AppShell() {
   const [historySort, setHistorySort] = useState('time'); // 'time' | 'count'
   const [historyItems, setHistoryItems] = useState([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [conversationEnabled, setConversationEnabled] = useState(false);
+  const [conversationBusy, setConversationBusy] = useState(false);
   const { options: tourRecordingOptions, refresh: refreshTourRecordingOptions } = useTourRecordingOptions({
     enabled: settingsOpen || playTourRecordingEnabled,
     limit: 50,
@@ -753,6 +755,27 @@ function AppShell() {
     submitText: wakeWordSubmitText,
   });
 
+  const onToggleConversation = async () => {
+    if (conversationBusy) return;
+
+    if (conversationEnabled) {
+      setConversationEnabled(false);
+      stopRecording();
+      return;
+    }
+
+    // Mutually exclusive with press-to-talk.
+    if (isRecording) return;
+
+    setConversationBusy(true);
+    try {
+      await startRecording();
+      setConversationEnabled(true);
+    } finally {
+      setConversationBusy(false);
+    }
+  };
+
   const handleTextSubmit = async (e) => {
     e.preventDefault();
     const text = String(inputText || '').trim();
@@ -1037,20 +1060,15 @@ function AppShell() {
     onRecordPointerCancel,
     startRecording,
     stopRecording,
+    conversationEnabled,
+    conversationBusy,
+    onToggleConversation,
     inputElRef,
     inputText,
     onChangeInputText: setInputText,
     sendBtnClassName,
     submitDisabled,
     onOpenSettings,
-  };
-
-  // Back-compat for the inlined input markup (until it's removed).
-  const onInputChange = (e) => setInputText(e.target.value);
-  const onRecordBtnClick = () => {
-    if (POINTER_SUPPORTED) return;
-    if (isRecording) stopRecording();
-    else startRecording();
   };
 
   return (
@@ -1088,38 +1106,7 @@ function AppShell() {
           onContinueTour={continueTour}
           onSubmit={handleTextSubmit}
           textInputProps={textInputProps}
-        >
-            <button
-              className={`record-btn ${isRecording ? 'recording' : ''}`}
-              onPointerDown={onRecordPointerDown}
-              onPointerUp={onRecordPointerUp}
-              onPointerCancel={onRecordPointerCancel}
-              onPointerLeave={onRecordPointerCancel}
-              onClick={onRecordBtnClick}
-              type="button"
-              title="按住说话，松开后识别并填入输入框"
-              aria-label={isRecording ? '录音中' : '语音输入'}
-            >
-              {isRecording ? '■' : '🎙'}
-            </button>
-
-            <input
-              type="text"
-              ref={inputElRef}
-              value={inputText}
-              onChange={onInputChange}
-              placeholder="输入问题…"
-              disabled={false}
-            />
-
-            <button type="submit" className={sendBtnClassName} disabled={submitDisabled} title="提交">
-              发送
-            </button>
-
-            <button type="button" className="settings-btn" onClick={onOpenSettings} title="设置" aria-label="设置">
-              ⚙
-            </button>
-        </InputSection>
+        />
 
         <SettingsPanel
           open={settingsOpen}

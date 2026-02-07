@@ -195,11 +195,11 @@ def _ws_recv_frame(sock: socket.socket, timeout_s: float) -> tuple[int, bytes] |
 
 
 def ws_test_asr(base_url: str, wav_path: str, client_id: str, timeout_s: float) -> int:
-    ws_url = _base_to_ws(base_url, "/ws/asr")
+    ws_url = _base_to_ws(base_url, "/voicekit/ws/asr")
     u = urllib.parse.urlparse(ws_url)
     host = u.hostname or "localhost"
     port = int(u.port or (443 if u.scheme == "wss" else 80))
-    path = u.path or "/ws/asr"
+    path = u.path or "/voicekit/ws/asr"
 
     raw_sock = socket.create_connection((host, port), timeout=timeout_s)
     if u.scheme == "wss":

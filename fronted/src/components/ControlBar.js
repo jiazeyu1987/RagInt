@@ -1,6 +1,4 @@
 import React from 'react';
-import { WAKE_WORD_FEATURE_ENABLED } from '../config/features';
-
 export function ControlBar({
   useAgentMode,
   onChangeUseAgentMode,
@@ -224,9 +222,8 @@ export function ControlBar({
         </div>
       ) : null}
 
-      {WAKE_WORD_FEATURE_ENABLED ? (
-        <>
-          <label className="tts-toggle" title="Wake word via backend streaming ASR (WebSocket PCM).">
+      <>
+        <label className="tts-toggle" title="Wake word via backend streaming ASR (VoiceKit WebSocket).">
         <input type="checkbox" checked={!!wakeWordEnabled} onChange={(e) => onChangeWakeWordEnabled && onChangeWakeWordEnabled(e.target.checked)} />
         <span>Wake Word</span>
       </label>
@@ -255,8 +252,7 @@ export function ControlBar({
           <span>Strict</span>
         </label>
       ) : null}
-        </>
-      ) : null}
+      </>
     </div>
   );
 }

@@ -138,8 +138,8 @@ def _connect_ws(url: str, timeout_s: float) -> socket.socket:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Mic -> /ws/asr realtime ASR test (simulates frontend).")
-    ap.add_argument("--url", default="ws://localhost:8000/ws/asr", help="WebSocket URL, e.g. ws://localhost:8000/ws/asr")
+    ap = argparse.ArgumentParser(description="Mic -> VoiceKit WS realtime ASR test (simulates frontend).")
+    ap.add_argument("--url", default="ws://localhost:8000/voicekit/ws/asr", help="WebSocket URL, e.g. ws://localhost:8000/voicekit/ws/asr")
     ap.add_argument("--client-id", default="mic_test", help="client_id sent to backend")
     ap.add_argument("--request-id", default="", help="request_id (auto if empty)")
     ap.add_argument("--seconds", type=float, default=8.0, help="record duration seconds (Ctrl+C to stop)")

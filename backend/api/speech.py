@@ -44,79 +44,8 @@ def create_blueprint(deps):
             )
         return jsonify({"ok": True, "cancelled": cancelled, "request_id": cancelled_id, "client_id": client_id})
 
-    @bp.route("/api/speech_to_text", methods=["POST"])
-    def speech_to_text():
-        if "audio" not in request.files:
-            return jsonify({"error": "No audio file"}), 400
-
-        audio_file = request.files["audio"]
-        raw_bytes = audio_file.read()
-
-        request_id = get_request_id(request, form=request.form, prefix="asr")
-        client_id = get_client_id(request, form=request.form, default="-")
-        deps.event_store.emit(
-            request_id=request_id,
-            client_id=client_id,
-            kind="asr",
-            name="asr_received",
-            bytes=len(raw_bytes),
-            filename=getattr(audio_file, "filename", None),
-            mimetype=getattr(audio_file, "mimetype", None),
-        )
-
-        if not deps.request_registry.rate_allow(client_id, "asr", limit=6, window_s=3.0):
-            deps.logger.warning(f"[{request_id}] asr_rate_limited client_id={client_id}")
-            deps.event_store.emit(request_id=request_id, client_id=client_id, kind="asr", name="asr_rate_limited", level="warn")
-            return jsonify({"text": ""})
-
-        cancel_event = deps.request_registry.register(
-            client_id=client_id,
-            request_id=request_id,
-            kind="asr",
-            cancel_previous=True,
-            cancel_reason="asr_replaced_by_new",
-        )
-        if cancel_event.is_set():
-            deps.logger.info(f"[{request_id}] asr_cancelled_before_start client_id={client_id}")
-            deps.event_store.emit(request_id=request_id, client_id=client_id, kind="asr", name="asr_cancelled_before_start", level="info")
-            deps.request_registry.clear_active(client_id=client_id, kind="asr", request_id=request_id)
-            return jsonify({"text": ""})
-
-        app_config = deps.ragflow_service.load_config() or {}
-        t0 = time.perf_counter()
-        try:
-            deps.event_store.emit(request_id=request_id, client_id=client_id, kind="asr", name="asr_start")
-            text = deps.asr_service.transcribe(
-                raw_bytes,
-                app_config,
-                cancel_event=cancel_event,
-                src_filename=getattr(audio_file, "filename", None),
-                src_mime=getattr(audio_file, "mimetype", None),
-            )
-            dt_s = time.perf_counter() - t0
-            deps.logger.info(f"asr_done dt={dt_s:.3f}s chars={len(text)}")
-            deps.event_store.emit(
-                request_id=request_id,
-                client_id=client_id,
-                kind="asr",
-                name="asr_done",
-                dt_ms=int(dt_s * 1000.0),
-                chars=len(text or ""),
-            )
-            return jsonify({"text": text})
-        except Exception as e:
-            deps.logger.error(f"asr_failed err={e}", exc_info=True)
-            deps.event_store.emit(
-                request_id=request_id,
-                client_id=client_id,
-                kind="asr",
-                name="asr_failed",
-                level="error",
-                err=str(e),
-            )
-            return jsonify({"text": ""})
-        finally:
-            deps.request_registry.clear_active(client_id=client_id, kind="asr", request_id=request_id)
+    # NOTE: `/api/speech_to_text` (upload ASR) has been removed.
+    # All realtime ASR is handled via VoiceKit WebSocket: `/voicekit/ws/asr`.
 
     @bp.route("/api/ask", methods=["POST"])
     def ask_question():
