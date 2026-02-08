@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import contextlib
-import json
 import time
-import uuid
 
 from flask import Blueprint, Response, jsonify, request
 
 from backend.orchestrators.conversation_orchestrator import AskInput, ConversationOrchestrator
-from backend.api.request_context import get_client_id, get_request_id
+from backend.api.request_context import get_client_id
+from backend.api.sse_utils import SSEEncoder
+from backend.api.speech_request import parse_ask_request
+from backend.orchestrators.stream_payloads import get_chunk, get_segment, has_nonempty_chunk, has_nonempty_segment, is_done
 
 
 def create_blueprint(deps):
@@ -54,37 +55,24 @@ def create_blueprint(deps):
         data = request.get_json()
         deps.logger.info(f"请求数据: {data}")
 
-        if not data or not data.get("question"):
+        parsed, err = parse_ask_request(deps=deps, data=data if isinstance(data, dict) else None)
+        if err is not None:
             deps.logger.error("没有问题数据")
-            return jsonify({"error": "No question"}), 400
+            return err
 
-        question = data.get("question", "")
-        agent_id = (data.get("agent_id") or "").strip()
-        conversation_name = (data.get("conversation_name") or data.get("chat_name") or deps.ragflow_default_chat_name or "").strip()
-        guide = data.get("guide") or {}
-        if not isinstance(guide, dict):
-            guide = {}
-        client_id = get_client_id(request, data=data, default="-")
-        kind = str((data.get("kind") or "ask")).strip() or "ask"
-        save_history = kind not in ("ask_prefetch", "prefetch", "prefetch_ask")
-        request_id = get_request_id(request, data=data, prefix="ask")
-
-        recording_id = str((data.get("recording_id") or request.headers.get("X-Recording-ID") or "")).strip() or None
-        stop_name = str((guide.get("stop_name") or "")).strip() or None
-        stop_index = guide.get("stop_index", None)
-        try:
-            stop_index = int(stop_index) if stop_index is not None and str(stop_index).strip() != "" else None
-        except Exception:
-            stop_index = None
-        tour_action = str((guide.get("tour_action") or "")).strip() or None
-        action_type = str((guide.get("action_type") or "")).strip() or None
-        if not action_type:
-            if tour_action in ("next", "prev", "jump"):
-                action_type = "切站"
-            elif tour_action:
-                action_type = "讲解"
-            else:
-                action_type = "问答"
+        question = parsed.question
+        agent_id = parsed.agent_id
+        conversation_name = parsed.conversation_name
+        guide = parsed.guide
+        client_id = parsed.client_id
+        kind = parsed.kind
+        save_history = parsed.save_history
+        request_id = parsed.request_id
+        recording_id = parsed.recording_id
+        stop_name = parsed.stop_name
+        stop_index = parsed.stop_index
+        tour_action = parsed.tour_action
+        action_type = parsed.action_type
 
         deps.event_store.emit(
             request_id=request_id,
@@ -121,8 +109,9 @@ def create_blueprint(deps):
             )
 
             def _rl():
+                enc = SSEEncoder(request_id=request_id, t_submit=t_submit)
                 payload = {"chunk": "请求过于频繁，请稍等 1-2 秒再提问。", "done": True, "request_id": request_id}
-                return Response(f"data: {json.dumps(payload, ensure_ascii=False)}\n\n", mimetype="text/event-stream")
+                return Response(enc.event(payload), mimetype="text/event-stream")
 
             return _rl()
 
@@ -168,10 +157,7 @@ def create_blueprint(deps):
         )
 
         def generate_response():
-            def sse_event(payload: dict) -> str:
-                payload.setdefault("request_id", request_id)
-                payload.setdefault("t_ms", int((time.perf_counter() - t_submit) * 1000))
-                return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            enc = SSEEncoder(request_id=request_id, t_submit=t_submit)
 
             try:
                 deps.event_store.emit(request_id=request_id, client_id=client_id, kind="ask", name="ask_stream_start")
@@ -185,7 +171,7 @@ def create_blueprint(deps):
                 ):
                     try:
                         if recording_id and stop_index is not None and tour_action:
-                            if isinstance(payload, dict) and payload.get("done"):
+                            if isinstance(payload, dict) and is_done(payload):
                                 deps.recording_store.add_ask_event(
                                     recording_id=recording_id,
                                     stop_index=int(stop_index),
@@ -193,27 +179,27 @@ def create_blueprint(deps):
                                     kind="done",
                                     text=None,
                                 )
-                            elif isinstance(payload, dict) and payload.get("segment") and not payload.get("done"):
+                            elif isinstance(payload, dict) and has_nonempty_segment(payload) and not is_done(payload):
                                 deps.recording_store.add_ask_event(
                                     recording_id=recording_id,
                                     stop_index=int(stop_index),
                                     request_id=request_id,
                                     kind="segment",
-                                    text=str(payload.get("segment") or ""),
+                                    text=str(get_segment(payload) or ""),
                                 )
-                            elif isinstance(payload, dict) and payload.get("chunk") and not payload.get("done"):
+                            elif isinstance(payload, dict) and has_nonempty_chunk(payload) and not is_done(payload):
                                 deps.recording_store.add_ask_event(
                                     recording_id=recording_id,
                                     stop_index=int(stop_index),
                                     request_id=request_id,
                                     kind="chunk",
-                                    text=str(payload.get("chunk") or ""),
+                                    text=str(get_chunk(payload) or ""),
                                 )
                     except Exception:
                         pass
 
                     try:
-                        if not seen_first_text and isinstance(payload, dict) and (payload.get("chunk") or "").strip():
+                        if not seen_first_text and isinstance(payload, dict) and has_nonempty_chunk(payload):
                             seen_first_text = True
                             with contextlib.suppress(Exception):
                                 deps.ask_timings.set(request_id, t_ragflow_first_text=time.perf_counter())
@@ -222,11 +208,11 @@ def create_blueprint(deps):
                                 client_id=client_id,
                                 kind="ask",
                                 name="rag_first_text",
-                                chars=len(str(payload.get("chunk") or "")),
+                                chars=len(str(get_chunk(payload) or "")),
                             )
-                        if not seen_first_segment and isinstance(payload, dict) and (payload.get("segment") or "").strip():
+                        if not seen_first_segment and isinstance(payload, dict) and has_nonempty_segment(payload):
                             seen_first_segment = True
-                            seg = str(payload.get("segment") or "")
+                            seg = str(get_segment(payload) or "")
                             deps.event_store.emit(
                                 request_id=request_id,
                                 client_id=client_id,
@@ -237,7 +223,7 @@ def create_blueprint(deps):
                             )
                     except Exception:
                         pass
-                    yield sse_event(payload)
+                    yield enc.event(payload)
                 deps.event_store.emit(request_id=request_id, client_id=client_id, kind="ask", name="ask_done")
                 return
             except GeneratorExit:
@@ -266,9 +252,9 @@ def create_blueprint(deps):
                         f"智能体接口暂时不可用（RAGFlow /api/v1/agents/{agent_id}/completions 无输出）。\n"
                         f"请检查RAGFlow 服务日志/版本或接口权限。"
                     )
-                    yield sse_event({"chunk": msg, "done": True})
+                    yield enc.event({"chunk": msg, "done": True})
                 else:
-                    yield sse_event({"chunk": f"错误: {str(e)}", "done": True})
+                    yield enc.event({"chunk": f"错误: {str(e)}", "done": True})
             finally:
                 deps.request_registry.clear_active(client_id=client_id, kind=kind, request_id=request_id)
 

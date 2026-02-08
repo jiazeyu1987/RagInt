@@ -14,6 +14,9 @@ def _ops_tokens() -> tuple[str, str]:
 
 
 def _ops_auth_disabled() -> bool:
+    # When device auth is required, do NOT implicitly open ops endpoints even if ops tokens are unset.
+    if _device_auth_required():
+        return False
     admin, view = _ops_tokens()
     return not admin and not view
 
