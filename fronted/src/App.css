@@ -739,6 +739,39 @@ h1 {
   padding: 12px 14px 18px;
 }
 
+.settings-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.settings-tab-btn {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-tab-btn:hover {
+  background: rgba(7, 193, 96, 0.08);
+}
+
+.settings-tab-btn.is-active {
+  border-color: rgba(7, 193, 96, 0.45);
+  background: rgba(7, 193, 96, 0.16);
+  color: #0f5132;
+}
+
+.settings-tab-panel .settings-group + .settings-group {
+  margin-top: 12px;
+}
+
 .settings-group {
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 16px;
