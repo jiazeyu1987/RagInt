@@ -7,6 +7,13 @@
 import { playWavBytesViaDecodeAudioData, playWavStreamViaWebAudio, playWavViaDecodeAudioData } from '../audio/ttsAudio';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const ALLOWED_FETCH_CONCURRENCY = new Set([2, 4, 6, 8, 10]);
+
+function normalizeFetchConcurrency(value) {
+  const n = Number(value);
+  if (ALLOWED_FETCH_CONCURRENCY.has(n)) return n;
+  return 4;
+}
 
 function safeStopCurrentAudio(currentAudioRef) {
   try {
@@ -61,6 +68,8 @@ export class TtsQueueManager {
     this._ttsSpeed = Number.isFinite(Number(options.ttsSpeed)) ? Number(options.ttsSpeed) : 1.0;
     this._recordingId = String(options.recordingId || '').trim();
     this._maxPreGenerateCount = Math.max(0, Number(options.maxPreGenerateCount || 2) || 2);
+    this._fetchConcurrency = normalizeFetchConcurrency(options.fetchConcurrency);
+    this._prefetchTimeoutMs = Math.max(3000, Number(options.prefetchTimeoutMs || 20000) || 20000);
 
     this._onStopIndexChange = typeof options.onStopIndexChange === 'function' ? options.onStopIndexChange : null;
     this._onDebug = typeof options.onDebug === 'function' ? options.onDebug : null;
@@ -80,6 +89,8 @@ export class TtsQueueManager {
     this._generatorPromise = null;
     this._playerPromise = null;
     this._currentItem = null;
+    this._activeFetches = 0;
+    this._fetchControllers = new Set();
   }
 
   _emit(name, fields, kind) {
@@ -99,6 +110,90 @@ export class TtsQueueManager {
     }
   }
 
+  _abortAllFetches() {
+    const ctrls = Array.from(this._fetchControllers || []);
+    this._fetchControllers.clear();
+    for (const c of ctrls) {
+      try {
+        c.abort();
+      } catch (_) {
+        // ignore
+      }
+    }
+  }
+
+  _canPrefetch(item) {
+    if (!item || !item.url) return false;
+    if (item.recorded) return false;
+    if (this._useSavedTts) return false;
+    if (item.wavBytes) return false;
+    return true;
+  }
+
+  _isItemReadyForPlayback(item) {
+    if (!item) return false;
+    if (item.wavBytes) return true;
+    if (item.recorded) return true;
+    if (this._useSavedTts) return true;
+    if (item.prefetchState === 'failed') return true;
+    return false;
+  }
+
+  _drainPrefetchQueue(token) {
+    if (this._token !== token) return;
+    while (this._activeFetches < this._fetchConcurrency) {
+      const item = (this._audioQueue || []).find(
+        (x) => this._canPrefetch(x) && x.prefetchState !== 'fetching' && x.prefetchState !== 'ready'
+      );
+      if (!item) break;
+      this._startPrefetch(item, token);
+    }
+  }
+
+  _startPrefetch(item, token) {
+    if (!this._canPrefetch(item)) return;
+    if (this._token !== token) return;
+    if (this._activeFetches >= this._fetchConcurrency) return;
+    item.prefetchState = 'fetching';
+
+    const ctl = new AbortController();
+    this._fetchControllers.add(ctl);
+    this._activeFetches += 1;
+    const timeout = setTimeout(() => {
+      try {
+        ctl.abort();
+      } catch (_) {
+        // ignore
+      }
+    }, this._prefetchTimeoutMs);
+
+    fetch(item.url, { signal: ctl.signal })
+      .then(async (resp) => {
+        if (!resp.ok) throw new Error(`tts_prefetch_http_${resp.status}`);
+        const buf = new Uint8Array(await resp.arrayBuffer());
+        if (this._token !== token) return;
+        item.wavBytes = buf;
+        item.prefetchState = 'ready';
+      })
+      .catch((err) => {
+        if (this._token !== token) return;
+        if (ctl.signal.aborted) {
+          item.prefetchState = 'failed';
+          return;
+        }
+        item.prefetchState = 'failed';
+        this._warn('[TTSQ] prefetch_failed_fallback_to_stream', err);
+      })
+      .finally(() => {
+        clearTimeout(timeout);
+        this._fetchControllers.delete(ctl);
+        if (this._token === token) {
+          this._activeFetches = Math.max(0, this._activeFetches - 1);
+          this._drainPrefetchQueue(token);
+        }
+      });
+  }
+
   resetForRun({ requestId } = {}) {
     this.stop('reset_for_run');
     this._resetStateForRun(requestId || null);
@@ -114,6 +209,8 @@ export class TtsQueueManager {
     this._metaQueue = [];
     this._audioQueue = [];
     this._seenText = new Set();
+    this._activeFetches = 0;
+    this._abortAllFetches();
   }
 
   stop(reason) {
@@ -125,6 +222,8 @@ export class TtsQueueManager {
     this._generatorPromise = null;
     this._playerPromise = null;
     this._currentItem = null;
+    this._activeFetches = 0;
+    this._abortAllFetches();
     safeStopCurrentAudio(this._currentAudioRef);
     if (reason) this._log('[TTSQ] stopped', reason);
     this._emit('play_cancelled', { reason: String(reason || 'stop') }, 'client');
@@ -229,7 +328,14 @@ export class TtsQueueManager {
     if (!wavBytes) return null;
     const seq = meta && typeof meta.seq === 'number' ? meta.seq : this._seq++;
     const stopIndex = meta && Number.isFinite(meta.stopIndex) ? Number(meta.stopIndex) : null;
-    this._audioQueue.push({ seq, stopIndex, wavBytes, url: null, text: meta && meta.text ? String(meta.text) : '' });
+    this._audioQueue.push({
+      seq,
+      stopIndex,
+      wavBytes,
+      url: null,
+      text: meta && meta.text ? String(meta.text) : '',
+      prefetchState: 'ready',
+    });
     this.ensureRunning();
     return { seq, stopIndex };
   }
@@ -240,18 +346,20 @@ export class TtsQueueManager {
       audioCount: this._audioQueue.length,
       generatorRunning: !!this._generatorPromise,
       playerRunning: !!this._playerPromise,
+      prefetchActive: this._activeFetches,
       ragDone: !!this._ragDone,
     };
   }
 
   isBusy() {
     const s = this.getStats();
-    return s.generatorRunning || s.playerRunning || s.textCount > 0 || s.audioCount > 0;
+    return s.generatorRunning || s.playerRunning || s.prefetchActive > 0 || s.textCount > 0 || s.audioCount > 0;
   }
 
   ensureRunning() {
     if (!this._requestId) return;
     if (!this._generatorPromise) this._startGenerator();
+    this._drainPrefetchQueue(this._token);
     if (!this._playerPromise && this._audioQueue.length > 0) this._startPlayer();
   }
 
@@ -260,7 +368,7 @@ export class TtsQueueManager {
     while (this._token === token) {
       const gen = this._generatorPromise;
       const player = this._playerPromise;
-      const hasQueues = this._textQueue.length > 0 || this._audioQueue.length > 0;
+      const hasQueues = this._textQueue.length > 0 || this._audioQueue.length > 0 || this._activeFetches > 0;
       if (!gen && !player && !hasQueues) return;
       await Promise.allSettled([gen, player].filter(Boolean));
     }
@@ -312,6 +420,7 @@ export class TtsQueueManager {
       text,
       url: u,
       recorded: true,
+      prefetchState: 'ready',
     });
 
     if (!this._playerPromise && this._audioQueue.length > 0) this._startPlayer();
@@ -350,13 +459,23 @@ export class TtsQueueManager {
     if (rid) this._resetStateForRun(rid);
   }
 
+  setFetchConcurrency(next, reason) {
+    const val = normalizeFetchConcurrency(next);
+    if (val === this._fetchConcurrency) return;
+    this._fetchConcurrency = val;
+    if (reason) this._log('[TTSQ] fetch_concurrency_changed', val, reason);
+    this._drainPrefetchQueue(this._token);
+  }
+
   _startGenerator() {
     if (this._generatorPromise) return;
     const token = this._token;
 
     this._generatorPromise = (async () => {
       while (this._token === token) {
-        if (this._audioQueue.length >= this._maxPreGenerateCount) {
+        // Keep a hard safety cap only; otherwise enqueue segments immediately so TTS
+        // requests can run ahead of playback.
+        if (this._audioQueue.length >= 128) {
           await sleep(50);
           continue;
         }
@@ -377,7 +496,9 @@ export class TtsQueueManager {
             stopIndex: meta && Number.isFinite(meta.stopIndex) ? meta.stopIndex : null,
             text: nextSegment,
             url: audioUrl,
+            prefetchState: 'new',
           });
+          this._drainPrefetchQueue(token);
         }
 
         if (!this._playerPromise && this._audioQueue.length > 0) this._startPlayer();
@@ -397,12 +518,20 @@ export class TtsQueueManager {
 
     this._playerPromise = (async () => {
       while (this._token === token) {
-        const audioItem = this._audioQueue.shift();
+        const audioItem = this._audioQueue.length ? this._audioQueue[0] : null;
         if (!audioItem) {
-          if (this._ragDone && !this._generatorPromise) break;
+          if (this._ragDone && !this._generatorPromise && this._activeFetches <= 0) break;
           await sleep(50);
           continue;
         }
+
+        if (!this._isItemReadyForPlayback(audioItem)) {
+          this._drainPrefetchQueue(token);
+          await sleep(20);
+          continue;
+        }
+
+        this._audioQueue.shift();
 
         this._currentItem = audioItem;
 
@@ -429,6 +558,17 @@ export class TtsQueueManager {
 
         try {
           if (audioItem && audioItem.wavBytes) {
+            if (this._onDebug) {
+              try {
+                this._onDebug({
+                  type: 'tts_first_audio',
+                  t: this._nowMs(),
+                  seq: typeof audioItem.seq === 'number' ? audioItem.seq : null,
+                });
+              } catch (_) {
+                // ignore
+              }
+            }
             try {
               await playWavBytesViaDecodeAudioData(audioItem.wavBytes, this._audioContextRef, this._currentAudioRef);
             } catch (err) {

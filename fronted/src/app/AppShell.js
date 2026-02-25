@@ -72,6 +72,8 @@ function AppShell() {
     setModelscopeVoice,
     ttsSpeed,
     setTtsSpeed,
+    ttsFetchConcurrency,
+    setTtsFetchConcurrency,
     guideEnabled,
     setGuideEnabled,
     continuousTour,
@@ -283,6 +285,7 @@ function AppShell() {
       baseUrl: backendBase,
       useSavedTts: USE_SAVED_TTS,
       maxPreGenerateCount: MAX_PRE_GENERATE_COUNT,
+      fetchConcurrency: ttsFetchConcurrency,
       ttsMode,
       ttsVoice: ttsMode === 'modelscope' ? modelscopeVoice : '',
       ttsSpeed,
@@ -364,6 +367,7 @@ function AppShell() {
     ttsMode,
     modelscopeVoice,
     ttsSpeed,
+    ttsFetchConcurrency,
   });
 
   useStateRefsSync({
@@ -947,6 +951,8 @@ function AppShell() {
           ttsMode={ttsMode}
           modelscopeVoice={modelscopeVoice}
           onChangeModelscopeVoice={setModelscopeVoice}
+          ttsFetchConcurrency={ttsFetchConcurrency}
+          onChangeTtsFetchConcurrency={setTtsFetchConcurrency}
           groupMode={groupMode}
           speakerName={speakerName}
           onChangeSpeakerName={setSpeakerName}

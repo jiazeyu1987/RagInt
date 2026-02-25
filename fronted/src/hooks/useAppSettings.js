@@ -1,5 +1,13 @@
 import { useLocalStorageState } from './useLocalStorageState';
 
+const ALLOWED_TTS_FETCH_CONCURRENCY = new Set([2, 4, 6, 8, 10]);
+
+function normalizeTtsFetchConcurrency(value) {
+  const n = Number(value);
+  if (ALLOWED_TTS_FETCH_CONCURRENCY.has(n)) return n;
+  return 4;
+}
+
 export function useAppSettings() {
   const [ttsMode, setTtsMode] = useLocalStorageState('ttsMode', 'modelscope', {
     serialize: (v) => String(v || 'modelscope'),
@@ -25,6 +33,11 @@ export function useAppSettings() {
       const n = Number(raw);
       return Number.isFinite(n) ? n : 1.0;
     },
+  });
+
+  const [ttsFetchConcurrency, setTtsFetchConcurrency] = useLocalStorageState('ttsFetchConcurrency', 4, {
+    serialize: (v) => String(normalizeTtsFetchConcurrency(v)),
+    deserialize: (raw) => normalizeTtsFetchConcurrency(raw),
   });
 
   const [guideEnabled, setGuideEnabled] = useLocalStorageState('guideEnabled', true, {
@@ -157,6 +170,8 @@ export function useAppSettings() {
     setModelscopeVoice,
     ttsSpeed,
     setTtsSpeed,
+    ttsFetchConcurrency,
+    setTtsFetchConcurrency,
     guideEnabled,
     setGuideEnabled,
     continuousTour,

@@ -9,6 +9,7 @@ export function useTtsUiSync({
   ttsMode,
   modelscopeVoice,
   ttsSpeed,
+  ttsFetchConcurrency,
 } = {}) {
   useEffect(() => {
     ttsEnabledRef.current = !!ttsEnabled;
@@ -62,4 +63,13 @@ export function useTtsUiSync({
       // ignore
     }
   }, [ttsSpeed, ttsManagerRef]);
+
+  useEffect(() => {
+    try {
+      const mgr = ttsManagerRef.current;
+      if (mgr && typeof mgr.setFetchConcurrency === 'function') mgr.setFetchConcurrency(ttsFetchConcurrency, 'ui_change');
+    } catch (_) {
+      // ignore
+    }
+  }, [ttsFetchConcurrency, ttsManagerRef]);
 }

@@ -29,6 +29,8 @@ export function SettingsPanel({
   ttsMode,
   modelscopeVoice,
   onChangeModelscopeVoice,
+  ttsFetchConcurrency,
+  onChangeTtsFetchConcurrency,
   groupMode,
   speakerName,
   onChangeSpeakerName,
@@ -69,9 +71,23 @@ export function SettingsPanel({
         <SellingPointsPanel stopName={sellingPointsStopName} hideTitle />
       </SettingsGroup>
 
-      {ttsMode === 'modelscope' ? (
-        <SettingsGroup title="语音">
-          <div className="settings-form">
+      <SettingsGroup title="语音">
+        <div className="settings-form">
+          <label className="settings-field">
+            <span>TTS并发数</span>
+            <select
+              value={String(ttsFetchConcurrency || 4)}
+              onChange={(e) => onChangeTtsFetchConcurrency && onChangeTtsFetchConcurrency(Number(e.target.value) || 4)}
+            >
+              <option value="2">2</option>
+              <option value="4">4</option>
+              <option value="6">6</option>
+              <option value="8">8</option>
+              <option value="10">10</option>
+            </select>
+          </label>
+
+          {ttsMode === 'modelscope' ? (
             <label className="settings-field">
               <span>ModelScope 音色(voice id)</span>
               <input
@@ -80,9 +96,9 @@ export function SettingsPanel({
                 placeholder="例如：cosyvoice-v3-plus-xxxx / cosyvoice-v3-plus-myvoice-..."
               />
             </label>
-          </div>
-        </SettingsGroup>
-      ) : null}
+          ) : null}
+        </div>
+      </SettingsGroup>
 
       <SettingsGroup title="快捷操作">
         <div className="settings-actions">
@@ -100,4 +116,3 @@ export function SettingsPanel({
     </SettingsDrawer>
   );
 }
-
