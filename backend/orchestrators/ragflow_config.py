@@ -19,6 +19,14 @@ class QaConstraintsCfg:
 
 
 @dataclass(frozen=True)
+class QaAudioCacheCfg:
+    enabled: bool
+    recall_top_k: int
+    classifier_threshold: float
+    classifier_chat_name: str
+
+
+@dataclass(frozen=True)
 class RagflowRuntimeConfig:
     """
     Typed view over ragflow_config JSON.
@@ -30,6 +38,7 @@ class RagflowRuntimeConfig:
     kb_version: str
     qa_cache: QaCacheCfg
     qa_constraints: QaConstraintsCfg
+    qa_audio_cache: QaAudioCacheCfg
     text_cleaning: TextCleaningCfg
 
     @staticmethod
@@ -38,12 +47,14 @@ class RagflowRuntimeConfig:
         kb_version = _get_kb_version(raw)
         qa_cache = _parse_qa_cache_cfg(raw)
         qa_constraints = _parse_qa_constraints_cfg(raw)
+        qa_audio_cache = _parse_qa_audio_cache_cfg(raw)
         text_cleaning = _parse_text_cleaning_cfg(raw)
         return RagflowRuntimeConfig(
             raw=raw,
             kb_version=kb_version,
             qa_cache=qa_cache,
             qa_constraints=qa_constraints,
+            qa_audio_cache=qa_audio_cache,
             text_cleaning=text_cleaning,
         )
 
@@ -80,4 +91,28 @@ def _parse_qa_constraints_cfg(ragflow_config: dict) -> QaConstraintsCfg:
     except Exception:
         max_answer_chars = 150
     return QaConstraintsCfg(enabled=enabled, no_self_intro=no_self_intro, max_answer_chars=max(0, max_answer_chars))
+
+
+def _parse_qa_audio_cache_cfg(ragflow_config: dict) -> QaAudioCacheCfg:
+    cfg = ragflow_config.get("qa_audio_cache", {}) if isinstance(ragflow_config, dict) else {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    enabled = bool(cfg.get("enabled", True))
+    try:
+        recall_top_k = int(cfg.get("recall_top_k") or 20)
+    except Exception:
+        recall_top_k = 20
+    try:
+        classifier_threshold = float(cfg.get("classifier_threshold") or 0.85)
+    except Exception:
+        classifier_threshold = 0.85
+    classifier_chat_name = str(cfg.get("classifier_chat_name") or "__qa_audio_classifier__").strip() or "__qa_audio_classifier__"
+    recall_top_k = max(1, min(recall_top_k, 50))
+    classifier_threshold = max(0.0, min(classifier_threshold, 1.0))
+    return QaAudioCacheCfg(
+        enabled=enabled,
+        recall_top_k=recall_top_k,
+        classifier_threshold=classifier_threshold,
+        classifier_chat_name=classifier_chat_name,
+    )
 

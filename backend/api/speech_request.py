@@ -24,6 +24,9 @@ class AskRequest:
     stop_index: int | None
     tour_action: str | None
     action_type: str
+    tts_provider: str | None
+    tts_voice: str | None
+    tts_speed: float | None
 
 
 def _normalize_guide(guide) -> dict:
@@ -33,6 +36,13 @@ def _normalize_guide(guide) -> dict:
 def _as_int_or_none(value):
     try:
         return int(value) if value is not None and str(value).strip() != "" else None
+    except Exception:
+        return None
+
+
+def _as_float_or_none(value):
+    try:
+        return float(value) if value is not None and str(value).strip() != "" else None
     except Exception:
         return None
 
@@ -72,6 +82,11 @@ def parse_ask_request(*, deps, data: dict | None) -> tuple[AskRequest | None, Re
     stop_index = _as_int_or_none(guide.get("stop_index", None))
     tour_action = str((guide.get("tour_action") or "")).strip() or None
     action_type = _compute_action_type(guide=guide)
+    tts_provider = str((data.get("tts_provider") or flask_request.headers.get("X-TTS-Provider") or "")).strip() or None
+    tts_voice = str((data.get("tts_voice") or flask_request.headers.get("X-TTS-Voice") or "")).strip() or None
+    tts_speed = _as_float_or_none(data.get("tts_speed"))
+    if tts_speed is None:
+        tts_speed = _as_float_or_none(flask_request.headers.get("X-TTS-Speed"))
 
     return (
         AskRequest(
@@ -88,6 +103,9 @@ def parse_ask_request(*, deps, data: dict | None) -> tuple[AskRequest | None, Re
             stop_index=stop_index,
             tour_action=tour_action,
             action_type=action_type,
+            tts_provider=tts_provider,
+            tts_voice=tts_voice,
+            tts_speed=tts_speed,
         ),
         None,
     )

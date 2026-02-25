@@ -39,6 +39,67 @@ def _maybe_stream_cache_hit(
     return AskStreamOutcome(answer=str(cached_answer or ""), done_sent=True, save_allowed=True)
 
 
+def _maybe_stream_audio_cache_hit(
+    *,
+    request_id: str,
+    question: str,
+    qa_audio_matcher,
+    qa_audio_cache_enabled: bool,
+    qa_audio_recall_top_k: int,
+    qa_audio_classifier_threshold: float,
+    qa_audio_classifier_chat_name: str,
+    tts_provider: str,
+    tts_voice: str,
+    tts_speed: float,
+    safety_filter: SensitiveWordsFilter,
+    logger,
+    base_url: str = "",
+):
+    if not qa_audio_cache_enabled:
+        return None
+    if qa_audio_matcher is None:
+        return None
+    if not str(tts_provider or "").strip():
+        return None
+
+    hit = None
+    with contextlib.suppress(Exception):
+        from backend.services.qa_audio_matcher import TtsProfile
+
+        hit = qa_audio_matcher.find_match(
+            question=question,
+            tts_profile=TtsProfile(provider=str(tts_provider or ""), voice=str(tts_voice or ""), speed=float(tts_speed or 1.0)),
+            top_k=max(1, int(qa_audio_recall_top_k or 20)),
+            threshold=float(qa_audio_classifier_threshold or 0.85),
+            classifier_chat_name=str(qa_audio_classifier_chat_name or "__qa_audio_classifier__"),
+            base_url=str(base_url or ""),
+        )
+
+    if not hit:
+        return None
+
+    answer = str((hit or {}).get("answer_text") or "").strip()
+    audio_url = str((hit or {}).get("audio_url") or "").strip()
+    if not answer or not audio_url:
+        return None
+
+    if getattr(safety_filter, "enabled", False) and safety_filter.match_text(answer):
+        logger.warning(f"[{request_id}] safety_skip_audio_cache_hit")
+        return None
+
+    payload = {
+        "pair_id": int((hit or {}).get("pair_id") or 0),
+        "audio_url": audio_url,
+        "answer_text": answer,
+        "confidence": float((hit or {}).get("confidence") or 0.0),
+        "recall_score": float((hit or {}).get("recall_score") or 0.0),
+        "reason": str((hit or {}).get("reason") or ""),
+    }
+    yield make_chunk(answer, audio_hit=payload, cache={"hit": True, "type": "qa_audio"})
+    yield make_done(cache={"hit": True, "type": "qa_audio"})
+    return AskStreamOutcome(answer=answer, done_sent=True, save_allowed=True)
+
+
 def _maybe_stream_fast_intent(
     *,
     request_id: str,

@@ -274,6 +274,13 @@ export class AskWorkflowManager {
     if (receivedSegmentsRef) receivedSegmentsRef.current = false;
     const ttsMgr = typeof getTtsManager === 'function' ? getTtsManager() : null;
     if (ttsMgr) ttsMgr.resetForRun({ requestId });
+    const ttsProfile =
+      ttsMgr && typeof ttsMgr.getTtsProfile === 'function'
+        ? ttsMgr.getTtsProfile()
+        : { provider: '', voice: '', speed: 1.0 };
+    const askTtsProvider = String((ttsProfile && ttsProfile.provider) || '').trim();
+    const askTtsVoice = String((ttsProfile && ttsProfile.voice) || '').trim();
+    const askTtsSpeed = Number.isFinite(Number(ttsProfile && ttsProfile.speed)) ? Number(ttsProfile.speed) : 1.0;
     try {
       if (typeof abortPrefetch === 'function') abortPrefetch('ask_start');
     } catch (_) {
@@ -515,6 +522,9 @@ export class AskWorkflowManager {
           request_id: requestId,
           client_id: clientIdRef ? clientIdRef.current : '',
           recording_id: recordingIdForThisAsk || null,
+          tts_provider: askTtsProvider || null,
+          tts_voice: askTtsVoice || null,
+          tts_speed: askTtsSpeed,
           conversation_name: useAgentModeRef && useAgentModeRef.current ? null : selectedChatRef ? selectedChatRef.current : null,
           agent_id: useAgentModeRef && useAgentModeRef.current ? (selectedAgentIdRef ? (selectedAgentIdRef.current || null) : null) : null,
           guide: {
@@ -541,6 +551,7 @@ export class AskWorkflowManager {
       const decoder = new TextDecoder();
       let sseBuffer = '';
       let sawDone = false;
+      let hasAudioHit = false;
 
       while (true) {
         if (!allow()) {
@@ -590,10 +601,37 @@ export class AskWorkflowManager {
               }
             }
 
+            if (data && data.audio_hit && !data.done) {
+              const hit = data.audio_hit && typeof data.audio_hit === 'object' ? data.audio_hit : null;
+              const audioUrl = hit && hit.audio_url ? String(hit.audio_url).trim() : '';
+              const hitText = hit && hit.answer_text ? String(hit.answer_text) : '';
+              if (audioUrl && ttsEnabledRef && ttsEnabledRef.current && ttsMgr && typeof ttsMgr.enqueueAudioUrl === 'function') {
+                if (!options.tourAction || allow()) {
+                  ttsMgr.enqueueAudioUrl(audioUrl, {
+                    stopIndex: ttsStopIndexForAsk,
+                    text: hitText,
+                    source: 'qa_audio_hit',
+                  });
+                }
+                hasAudioHit = true;
+                if (receivedSegmentsRef) receivedSegmentsRef.current = true;
+                if (!options.tourAction || allow()) ttsMgr.ensureRunning();
+              }
+            }
+
             if (data.done) {
               sawDone = true;
               if (typeof debugMark === 'function') debugMark('ragflowDoneAt');
-              if (ttsEnabledRef && ttsEnabledRef.current && receivedSegmentsRef && !receivedSegmentsRef.current && ttsMgr && !ttsMgr.hasAnySegment() && fullAnswer.trim()) {
+              if (
+                ttsEnabledRef &&
+                ttsEnabledRef.current &&
+                !hasAudioHit &&
+                receivedSegmentsRef &&
+                !receivedSegmentsRef.current &&
+                ttsMgr &&
+                !ttsMgr.hasAnySegment() &&
+                fullAnswer.trim()
+              ) {
                 if (!options.tourAction || allow()) {
                   ttsMgr.enqueueText(fullAnswer.trim(), { stopIndex: ttsStopIndexForAsk, source: 'ask_done' });
                 }
@@ -677,7 +715,7 @@ export class AskWorkflowManager {
           if (ttsMgr) {
             if (ttsEnabledRef && ttsEnabledRef.current) {
               try {
-                if (receivedSegmentsRef && !receivedSegmentsRef.current && !ttsMgr.hasAnySegment() && fullAnswer.trim()) {
+                if (receivedSegmentsRef && !receivedSegmentsRef.current && !hasAudioHit && !ttsMgr.hasAnySegment() && fullAnswer.trim()) {
                   ttsMgr.enqueueText(fullAnswer.trim(), {
                     stopIndex: ttsStopIndexForAsk,
                     source: 'ask_eof',

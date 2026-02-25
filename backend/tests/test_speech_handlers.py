@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from backend.api.speech_handlers import (
     build_ask_input,
+    build_orchestrator,
     emit_ask_received_event,
     resolve_conversation_name,
     stream_sse_response,
@@ -21,6 +22,9 @@ class _Parsed:
     save_history: bool = True
     request_id: str = "r1"
     recording_id: str | None = None
+    tts_provider: str | None = "modelscope"
+    tts_voice: str | None = "voice-1"
+    tts_speed: float | None = 1.25
     stop_name: str | None = "A"
     stop_index: int | None = 1
     tour_action: str | None = "next"
@@ -55,6 +59,16 @@ class _Orchestrator:
         yield {"chunk": "b", "done": True}
 
 
+class _AskTimings:
+    @staticmethod
+    def set(*args, **kwargs):  # noqa: ANN002, ANN003
+        return None
+
+    @staticmethod
+    def get(*args, **kwargs):  # noqa: ANN002, ANN003
+        return None
+
+
 def test_emit_ask_received_event_contains_stop_id():
     deps = _Deps()
     p = _Parsed(guide={})
@@ -77,6 +91,10 @@ def test_build_ask_input_uses_resolved_conversation_name():
     inp = build_ask_input(parsed=p, conversation_name="x")
     assert inp.conversation_name == "x"
     assert inp.request_id == "r1"
+    assert inp.recording_id is None
+    assert inp.tts_provider == "modelscope"
+    assert inp.tts_voice == "voice-1"
+    assert abs(float(inp.tts_speed) - 1.25) < 1e-6
 
 
 def test_stream_sse_response_encodes_payload_lines():
@@ -94,3 +112,18 @@ def test_stream_sse_response_encodes_payload_lines():
     assert len(out) == 2
     assert out[0].startswith("data: ")
     assert '"request_id": "r1"' in out[0]
+
+
+def test_build_orchestrator_passes_qa_audio_matcher():
+    deps = _Deps()
+    deps.ragflow_service = object()
+    deps.ragflow_agent_service = object()
+    deps.intent_service = object()
+    deps.history_store = object()
+    deps.selling_points_store = object()
+    deps.ask_timings = _AskTimings()
+    deps.session = object()
+    deps.qa_audio_matcher = object()
+
+    orchestrator = build_orchestrator(deps=deps)
+    assert getattr(orchestrator, "_qa_audio_matcher", None) is deps.qa_audio_matcher

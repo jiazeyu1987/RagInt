@@ -104,10 +104,48 @@ class _EventStore:
         return None
 
 
+class _QaAudioCacheStore:
+    def __init__(self):
+        self.items = [
+            {
+                "id": 1,
+                "question_text": "q1",
+                "answer_text": "a1",
+                "audio_rel_path": "audio/1.wav",
+                "tts_provider": "edge",
+                "tts_voice": "v1",
+                "tts_speed": 1.0,
+                "source_request_id": "ask_1",
+                "created_at_ms": 1,
+                "updated_at_ms": 1,
+            }
+        ]
+
+    def list_pairs(self, *, limit=100, offset=0, tts_provider="", tts_voice="", tts_speed=None):
+        out = list(self.items)
+        if tts_provider:
+            out = [x for x in out if str(x.get("tts_provider") or "") == str(tts_provider)]
+        if tts_voice:
+            out = [x for x in out if str(x.get("tts_voice") or "") == str(tts_voice)]
+        if tts_speed is not None:
+            out = [x for x in out if float(x.get("tts_speed") or 0.0) == float(tts_speed)]
+        return out[offset : offset + limit]
+
+    def audio_url_for_pair(self, *, base_url, pair_id):  # noqa: ANN001
+        base = str(base_url or "").rstrip("/")
+        return f"{base}/api/qa_audio_cache/audio/{int(pair_id)}" if base else f"/api/qa_audio_cache/audio/{int(pair_id)}"
+
+    def delete_pair_hard(self, *, pair_id):
+        before = len(self.items)
+        self.items = [x for x in self.items if int(x.get("id") or 0) != int(pair_id)]
+        return len(self.items) != before
+
+
 class _Deps:
     def __init__(self):
         self.ops_store = _OpsStore()
         self.event_store = _EventStore()
+        self.qa_audio_cache_store = _QaAudioCacheStore()
 
 
 def _app():
@@ -142,3 +180,27 @@ def test_ops_blueprint_token_guard():
     assert c.get("/api/ops/devices", headers={"X-Ops-Token": "v1"}).status_code == 200
     assert c.post("/api/ops/config", headers={"X-Ops-Token": "v1"}, json={"device_id": "d1", "config": {"a": 1}}).status_code == 401
     assert c.post("/api/ops/config", headers={"X-Ops-Token": "a1"}, json={"device_id": "d1", "config": {"a": 1}}).status_code == 200
+
+
+def test_ops_blueprint_qa_audio_pairs_routes():
+    os.environ.pop("RAGINT_OPS_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_ADMIN_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_VIEW_TOKEN", None)
+
+    c = _app().test_client()
+
+    r1 = c.get("/api/ops/qa_audio_pairs")
+    assert r1.status_code == 200
+    body = r1.get_json()
+    assert body["ok"] is True
+    assert len(body["items"]) == 1
+    audio_url = str(body["items"][0]["audio_url"])
+    assert audio_url.startswith("http://localhost/api/qa_audio_cache/audio/1")
+    assert "?v=1" in audio_url
+
+    r2 = c.delete("/api/ops/qa_audio_pairs/1")
+    assert r2.status_code == 200
+    assert r2.get_json()["deleted"] is True
+
+    r3 = c.delete("/api/ops/qa_audio_pairs/1")
+    assert r3.status_code == 404

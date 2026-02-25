@@ -26,6 +26,8 @@ class AppDeps:
     tour_command_service: Any
     selling_points_store: Any
     ops_store: Any
+    qa_audio_cache_store: Any
+    qa_audio_matcher: Any
 
     session: Any = None
     ragflow_default_chat_name: str = ""

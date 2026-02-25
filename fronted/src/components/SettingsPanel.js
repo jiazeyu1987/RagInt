@@ -4,6 +4,7 @@ import { SettingsToggles } from './SettingsToggles';
 import { StagePanel } from './StagePanel';
 import { TourModePanel } from './TourModePanel';
 import { SellingPointsPanel } from './SellingPointsPanel';
+import { QaAudioCachePanel } from './QaAudioCachePanel';
 
 const TABS = [
   { key: 'tts', label: 'TTS设置' },
@@ -201,6 +202,10 @@ function OpsTab({ controlBarProps, stagePanelProps, onQuickSummary, onPrevStop, 
 
       <SettingsGroup title={`卖点库：${String(sellingPointsStopName || '').trim() || '当前站点'}`}>
         <SellingPointsPanel stopName={sellingPointsStopName} hideTitle />
+      </SettingsGroup>
+
+      <SettingsGroup title="问答语音缓存管理">
+        <QaAudioCachePanel />
       </SettingsGroup>
     </>
   );
@@ -485,4 +490,3 @@ export function SettingsPanel({
     </SettingsDrawer>
   );
 }
-

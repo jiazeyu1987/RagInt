@@ -9,6 +9,18 @@ from backend.api.request_context import get_client_id
 from backend.api.request_validators import json_body_dict, parse_int_or_default
 
 
+def _parse_float_or_none(value):
+    try:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        return float(text)
+    except Exception:
+        return None
+
+
 def create_blueprint(deps):
     bp = Blueprint("ops_api", __name__)
 
@@ -175,5 +187,59 @@ def create_blueprint(deps):
                 ],
             }
         )
+
+    @bp.route("/api/ops/qa_audio_pairs", methods=["GET"])
+    def api_ops_qa_audio_pairs():
+        if not OpsAuth.require_view(request):
+            return unauthorized_json()
+        host_base = str((request.host_url or "")).rstrip("/")
+        limit = parse_int_or_default(request.args.get("limit"), default=100, min_value=1, max_value=500)
+        offset = parse_int_or_default(request.args.get("offset"), default=0, min_value=0, max_value=10_000_000)
+        provider = str((request.args.get("provider") or "")).strip()
+        voice = str((request.args.get("voice") or "")).strip()
+        speed = _parse_float_or_none(request.args.get("speed"))
+        items = deps.qa_audio_cache_store.list_pairs(
+            limit=limit,
+            offset=offset,
+            tts_provider=provider,
+            tts_voice=voice,
+            tts_speed=speed,
+        )
+        for item in items:
+            try:
+                pair_id = int(item.get("id") or 0)
+            except Exception:
+                pair_id = 0
+            try:
+                ver = int(item.get("updated_at_ms") or 0)
+            except Exception:
+                ver = 0
+            if pair_id > 0:
+                base = deps.qa_audio_cache_store.audio_url_for_pair(base_url=host_base, pair_id=pair_id)
+                item["audio_url"] = f"{base}?v={ver}" if ver > 0 else base
+            else:
+                item["audio_url"] = ""
+        return jsonify({"ok": True, "limit": limit, "offset": offset, "items": items})
+
+    @bp.route("/api/ops/qa_audio_pairs/<int:pair_id>", methods=["DELETE"])
+    def api_ops_qa_audio_pairs_delete(pair_id: int):
+        if not OpsAuth.require_admin(request):
+            return unauthorized_json()
+        deleted = deps.qa_audio_cache_store.delete_pair_hard(pair_id=int(pair_id))
+        if not deleted:
+            return jsonify({"ok": False, "error": "not_found"}), 404
+        client_id = get_client_id(request, data=None, default="-")
+        try:
+            deps.ops_store.audit(
+                actor_kind="ops",
+                actor_id=str(client_id or "-"),
+                action="qa_audio_pair_delete",
+                target_kind="qa_audio_pair",
+                target_id=str(pair_id),
+                payload={},
+            )
+        except Exception:
+            pass
+        return ok_json(id=int(pair_id), deleted=True)
 
     return bp

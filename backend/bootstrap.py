@@ -42,11 +42,17 @@ def _build_stores(*, data_dir: Path, logger):
     from backend.services.breakpoint_store import BreakpointStore
     from backend.services.history_store import HistoryStore
     from backend.services.ops_store import OpsStore
+    from backend.services.qa_audio_cache_store import QaAudioCacheStore
     from backend.services.recording_store import RecordingStore
     from backend.services.selling_points_store import SellingPointsStore
     from backend.services.tour_control_store import TourControlStore
 
     history_store = HistoryStore(data_dir / "qa_history.db", logger=logger)
+    qa_audio_cache_store = QaAudioCacheStore(
+        root_dir=data_dir / "qa_audio_cache",
+        db_path=_env_path("RAGINT_QA_AUDIO_CACHE_DB_PATH", data_dir / "qa_audio_cache.db"),
+        logger=logger,
+    )
     breakpoint_store = BreakpointStore(_env_path("RAGINT_BREAKPOINT_DB_PATH", data_dir / "breakpoints.db"), logger=logger)
     recording_store = RecordingStore(data_dir / "recordings", logger=logger)
     tour_control_store = TourControlStore(_env_path("RAGINT_TOUR_CONTROL_DB_PATH", data_dir / "tour_control.db"), logger=logger)
@@ -54,7 +60,7 @@ def _build_stores(*, data_dir: Path, logger):
         _env_path("RAGINT_SELLING_POINTS_DB_PATH", data_dir / "selling_points.db"), logger=logger
     )
     ops_store = OpsStore(_env_path("RAGINT_OPS_DB_PATH", data_dir / "ops.db"), logger=logger)
-    return history_store, breakpoint_store, recording_store, tour_control_store, selling_points_store, ops_store
+    return history_store, qa_audio_cache_store, breakpoint_store, recording_store, tour_control_store, selling_points_store, ops_store
 
 
 def _build_services(*, logger):
@@ -89,11 +95,27 @@ def build_deps(*, base_dir: Path, config_path: Path, logger) -> AppDeps:
     data_dir.mkdir(parents=True, exist_ok=True)
 
     ragflow_service, ragflow_agent_service = _build_ragflow(config_path=config_path, logger=logger)
-    history_store, breakpoint_store, recording_store, tour_control_store, selling_points_store, ops_store = _build_stores(
+    (
+        history_store,
+        qa_audio_cache_store,
+        breakpoint_store,
+        recording_store,
+        tour_control_store,
+        selling_points_store,
+        ops_store,
+    ) = _build_stores(
         data_dir=data_dir, logger=logger
     )
     tts_service, intent_service, tour_planner, tour_command_service, request_registry, ask_timings = _build_services(
         logger=logger
+    )
+    from backend.services.qa_audio_matcher import QaAudioMatcher
+
+    qa_audio_matcher = QaAudioMatcher(
+        store=qa_audio_cache_store,
+        ragflow_service=ragflow_service,
+        tts_service=tts_service,
+        logger=logger,
     )
     event_store = _build_state_backend()
 
@@ -115,6 +137,8 @@ def build_deps(*, base_dir: Path, config_path: Path, logger) -> AppDeps:
         tour_command_service=tour_command_service,
         selling_points_store=selling_points_store,
         ops_store=ops_store,
+        qa_audio_cache_store=qa_audio_cache_store,
+        qa_audio_matcher=qa_audio_matcher,
     )
 
 
@@ -133,6 +157,7 @@ def register_blueprints(*, app: Flask, deps: AppDeps) -> None:
     from backend.api.breakpoint import create_blueprint as create_breakpoint_blueprint
     from backend.api.offline import create_blueprint as create_offline_blueprint
     from backend.api.ops import create_blueprint as create_ops_blueprint
+    from backend.api.qa_audio_cache import create_blueprint as create_qa_audio_cache_blueprint
     from backend.api.ragflow_tour_history import create_blueprint as create_ragflow_tour_history_blueprint
     from backend.api.recordings import create_blueprint as create_recordings_blueprint
     from backend.api.selling_points import create_blueprint as create_selling_points_blueprint
@@ -150,6 +175,7 @@ def register_blueprints(*, app: Flask, deps: AppDeps) -> None:
     app.register_blueprint(create_tour_command_blueprint(deps))
     app.register_blueprint(create_selling_points_blueprint(deps))
     app.register_blueprint(create_ops_blueprint(deps))
+    app.register_blueprint(create_qa_audio_cache_blueprint(deps))
     app.register_blueprint(create_speech_blueprint(deps))
     app.register_blueprint(create_recordings_blueprint(deps))
     app.register_blueprint(create_tts_blueprint(deps))

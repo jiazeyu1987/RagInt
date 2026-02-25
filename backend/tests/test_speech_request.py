@@ -38,3 +38,25 @@ def test_parse_ask_request_parses_stop_index_and_action_type_defaults():
         assert parsed is not None
         assert parsed.stop_index == 2
         assert parsed.action_type == "切站"
+
+
+def test_parse_ask_request_parses_tts_profile_fields():
+    app = Flask(__name__)
+    data = {"question": "hi", "tts_provider": "modelscope", "tts_voice": "voice-x", "tts_speed": 1.5}
+    with app.test_request_context("/api/ask", method="POST", json=data):
+        parsed, err = parse_ask_request(deps=_Deps(), data=data)
+        assert err is None
+        assert parsed is not None
+        assert parsed.tts_provider == "modelscope"
+        assert parsed.tts_voice == "voice-x"
+        assert abs(float(parsed.tts_speed) - 1.5) < 1e-6
+
+
+def test_parse_ask_request_supports_tts_speed_header_fallback():
+    app = Flask(__name__)
+    data = {"question": "hi", "tts_provider": "modelscope"}
+    with app.test_request_context("/api/ask", method="POST", json=data, headers={"X-TTS-Speed": "1.25"}):
+        parsed, err = parse_ask_request(deps=_Deps(), data=data)
+        assert err is None
+        assert parsed is not None
+        assert abs(float(parsed.tts_speed) - 1.25) < 1e-6

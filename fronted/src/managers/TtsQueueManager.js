@@ -467,6 +467,14 @@ export class TtsQueueManager {
     this._drainPrefetchQueue(this._token);
   }
 
+  getTtsProfile() {
+    return {
+      provider: String(this._ttsProvider || '').trim(),
+      voice: String(this._ttsVoice || '').trim(),
+      speed: Number.isFinite(Number(this._ttsSpeed)) ? Number(this._ttsSpeed) : 1.0,
+    };
+  }
+
   _startGenerator() {
     if (this._generatorPromise) return;
     const token = this._token;

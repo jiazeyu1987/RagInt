@@ -42,6 +42,7 @@ def build_orchestrator(*, deps) -> ConversationOrchestrator:
         timings_set=deps.ask_timings.set,
         timings_get=deps.ask_timings.get,
         default_session=deps.session,
+        qa_audio_matcher=getattr(deps, "qa_audio_matcher", None),
     )
 
 
@@ -55,6 +56,10 @@ def build_ask_input(*, parsed, conversation_name: str) -> AskInput:
         conversation_name=conversation_name,
         guide=parsed.guide,
         save_history=parsed.save_history,
+        recording_id=parsed.recording_id,
+        tts_provider=parsed.tts_provider,
+        tts_voice=parsed.tts_voice,
+        tts_speed=parsed.tts_speed,
     )
 
 

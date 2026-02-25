@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from backend.orchestrators.ask_shortcuts import _maybe_stream_cache_hit, _maybe_stream_fast_intent
+from backend.orchestrators.ask_shortcuts import _maybe_stream_audio_cache_hit, _maybe_stream_cache_hit, _maybe_stream_fast_intent
 
 
 def _maybe_stream_cache_shortcut(
@@ -22,6 +22,41 @@ def _maybe_stream_cache_shortcut(
             safety_filter=safety_filter,
             history_store=history_store,
             logger=logger,
+        )
+    )
+
+
+def _maybe_stream_audio_cache_shortcut(
+    *,
+    request_id: str,
+    question: str,
+    qa_audio_matcher,
+    qa_audio_cache_enabled: bool,
+    qa_audio_recall_top_k: int,
+    qa_audio_classifier_threshold: float,
+    qa_audio_classifier_chat_name: str,
+    tts_provider: str,
+    tts_voice: str,
+    tts_speed: float,
+    safety_filter,
+    logger,
+    base_url: str = "",
+):
+    return (
+        yield from _maybe_stream_audio_cache_hit(
+            request_id=request_id,
+            question=question,
+            qa_audio_matcher=qa_audio_matcher,
+            qa_audio_cache_enabled=qa_audio_cache_enabled,
+            qa_audio_recall_top_k=qa_audio_recall_top_k,
+            qa_audio_classifier_threshold=qa_audio_classifier_threshold,
+            qa_audio_classifier_chat_name=qa_audio_classifier_chat_name,
+            tts_provider=tts_provider,
+            tts_voice=tts_voice,
+            tts_speed=tts_speed,
+            safety_filter=safety_filter,
+            logger=logger,
+            base_url=base_url,
         )
     )
 

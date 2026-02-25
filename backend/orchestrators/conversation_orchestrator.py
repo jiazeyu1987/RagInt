@@ -3,10 +3,15 @@ from __future__ import annotations
 import contextlib
 from dataclasses import dataclass
 
-from backend.orchestrators.conversation_intent import detect_intent_and_meta
-from backend.orchestrators.conversation_shortcuts import _maybe_stream_cache_shortcut, _maybe_stream_fast_intent_shortcut
-from backend.orchestrators.guide_prompt import apply_guide_prompt
 from backend.orchestrators.ask_policies import apply_qa_requirements, apply_selling_points_topn_hint
+from backend.orchestrators.conversation_intent import detect_intent_and_meta
+from backend.orchestrators.conversation_shortcuts import (
+    _maybe_stream_audio_cache_shortcut,
+    _maybe_stream_cache_shortcut,
+    _maybe_stream_fast_intent_shortcut,
+)
+from backend.orchestrators.guide_prompt import apply_guide_prompt
+from backend.orchestrators.question_prompting import apply_explanation_script_requirements, extract_base_question
 from backend.orchestrators.ragflow_config import RagflowRuntimeConfig
 from backend.orchestrators.ragflow_streaming import (
     AskStreamOutcome,
@@ -29,6 +34,10 @@ class AskInput:
     conversation_name: str = ""
     guide: dict | None = None
     save_history: bool = True
+    recording_id: str | None = None
+    tts_provider: str | None = None
+    tts_voice: str | None = None
+    tts_speed: float | None = None
 
 
 @dataclass(frozen=True)
@@ -39,6 +48,10 @@ class AskRuntime:
     kb_version: str
     cache_enabled: bool
     cache_ttl_s: float
+    qa_audio_cache_enabled: bool
+    qa_audio_recall_top_k: int
+    qa_audio_classifier_threshold: float
+    qa_audio_classifier_chat_name: str
 
 
 class ConversationOrchestrator:
@@ -54,6 +67,7 @@ class ConversationOrchestrator:
         timings_set,
         timings_get,
         default_session=None,
+        qa_audio_matcher=None,
     ):
         self._ragflow_service = ragflow_service
         self._ragflow_agent_service = ragflow_agent_service
@@ -64,6 +78,7 @@ class ConversationOrchestrator:
         self._timings_set = timings_set
         self._timings_get = timings_get
         self._default_session = default_session
+        self._qa_audio_matcher = qa_audio_matcher
 
     def _finalize(
         self,
@@ -77,11 +92,14 @@ class ConversationOrchestrator:
         cache_enabled: bool,
         kb_version: str,
         cache_ttl_s: float,
+        app_config: dict,
+        qa_audio_cache_enabled: bool,
     ) -> None:
         if not inp.save_history:
             return
         if not outcome.save_allowed or outcome.blocked:
             return
+
         with contextlib.suppress(Exception):
             self._history_store.add_entry(
                 request_id=request_id,
@@ -91,6 +109,7 @@ class ConversationOrchestrator:
                 chat_name=conversation_name,
                 agent_id=agent_id,
             )
+
             if outcome.cache_put_allowed and cache_enabled and kb_version and hasattr(self._history_store, "cache_put"):
                 with contextlib.suppress(Exception):
                     self._history_store.cache_put(
@@ -98,6 +117,28 @@ class ConversationOrchestrator:
                         answer=outcome.answer,
                         kb_version=kb_version,
                         ttl_s=cache_ttl_s,
+                    )
+
+            if (
+                outcome.cache_put_allowed
+                and qa_audio_cache_enabled
+                and self._qa_audio_matcher is not None
+                and not str(inp.recording_id or "").strip()
+                and str(inp.tts_provider or "").strip()
+            ):
+                with contextlib.suppress(Exception):
+                    from backend.services.qa_audio_matcher import TtsProfile
+
+                    self._qa_audio_matcher.schedule_upsert_from_answer(
+                        question=question,
+                        answer=outcome.answer,
+                        request_id=request_id,
+                        tts_profile=TtsProfile(
+                            provider=str(inp.tts_provider or "").strip(),
+                            voice=str(inp.tts_voice or "").strip(),
+                            speed=float(inp.tts_speed if inp.tts_speed is not None else 1.0),
+                        ),
+                        app_config=app_config if isinstance(app_config, dict) else {},
                     )
 
     def _resolve_rag_session(self, *, agent_id: str, conversation_name: str):
@@ -116,6 +157,8 @@ class ConversationOrchestrator:
         cache_enabled: bool,
         kb_version: str,
         cache_ttl_s: float,
+        app_config: dict,
+        qa_audio_cache_enabled: bool,
     ) -> None:
         self._finalize(
             inp=inp,
@@ -127,6 +170,8 @@ class ConversationOrchestrator:
             cache_enabled=cache_enabled,
             kb_version=kb_version,
             cache_ttl_s=cache_ttl_s,
+            app_config=app_config,
+            qa_audio_cache_enabled=qa_audio_cache_enabled,
         )
 
     def _build_stream_settings(
@@ -180,6 +225,7 @@ class ConversationOrchestrator:
             selling_points_store=self._selling_points_store,
             logger=self._logger,
         )
+        question_for_rag = apply_explanation_script_requirements(question_for_rag, enabled=True)
         return question_for_rag, apply_qa_constraints, qa_no_self_intro, qa_max_answer_chars
 
     def _build_runtime(self, *, ragflow_config: dict | None) -> AskRuntime:
@@ -190,6 +236,10 @@ class ConversationOrchestrator:
         kb_version = cfg.kb_version
         cache_enabled = bool(cfg.qa_cache.enabled)
         cache_ttl_s = float(cfg.qa_cache.ttl_s)
+        qa_audio_cache_enabled = bool(cfg.qa_audio_cache.enabled)
+        qa_audio_recall_top_k = int(cfg.qa_audio_cache.recall_top_k)
+        qa_audio_classifier_threshold = float(cfg.qa_audio_cache.classifier_threshold)
+        qa_audio_classifier_chat_name = str(cfg.qa_audio_cache.classifier_chat_name or "__qa_audio_classifier__").strip()
         return AskRuntime(
             cfg=cfg,
             safety_filter=safety_filter,
@@ -197,6 +247,10 @@ class ConversationOrchestrator:
             kb_version=kb_version,
             cache_enabled=cache_enabled,
             cache_ttl_s=cache_ttl_s,
+            qa_audio_cache_enabled=qa_audio_cache_enabled,
+            qa_audio_recall_top_k=qa_audio_recall_top_k,
+            qa_audio_classifier_threshold=qa_audio_classifier_threshold,
+            qa_audio_classifier_chat_name=qa_audio_classifier_chat_name or "__qa_audio_classifier__",
         )
 
     def _maybe_block_input(self, *, request_id: str, question: str, safety_filter: SensitiveWordsFilter, safety_block_msg: str):
@@ -261,7 +315,8 @@ class ConversationOrchestrator:
         )
 
     def stream_ask(self, *, inp: AskInput, ragflow_config: dict | None, cancel_event, t_submit: float):
-        question = (inp.question or "").strip()
+        question_raw = (inp.question or "").strip()
+        question = extract_base_question(question_raw) or question_raw
         request_id = inp.request_id
         client_id = inp.client_id
         kind = inp.kind
@@ -275,7 +330,7 @@ class ConversationOrchestrator:
 
         intent, meta = detect_intent_and_meta(
             intent_service=self._intent_service,
-            question=question,
+            question=question_raw,
             request_id=request_id,
             client_id=client_id,
             kind=kind,
@@ -290,7 +345,7 @@ class ConversationOrchestrator:
 
         blocked_input = yield from self._maybe_block_input(
             request_id=request_id,
-            question=question,
+            question=question_raw,
             safety_filter=safety_filter,
             safety_block_msg=safety_block_msg,
         )
@@ -299,6 +354,38 @@ class ConversationOrchestrator:
 
         cache_enabled = runtime.cache_enabled
         cache_ttl_s = runtime.cache_ttl_s
+
+        audio_cache_outcome = None
+        if not str(inp.recording_id or "").strip():
+            audio_cache_outcome = yield from _maybe_stream_audio_cache_shortcut(
+                request_id=request_id,
+                question=question,
+                qa_audio_matcher=self._qa_audio_matcher,
+                qa_audio_cache_enabled=runtime.qa_audio_cache_enabled,
+                qa_audio_recall_top_k=runtime.qa_audio_recall_top_k,
+                qa_audio_classifier_threshold=runtime.qa_audio_classifier_threshold,
+                qa_audio_classifier_chat_name=runtime.qa_audio_classifier_chat_name,
+                tts_provider=str(inp.tts_provider or ""),
+                tts_voice=str(inp.tts_voice or ""),
+                tts_speed=float(inp.tts_speed if inp.tts_speed is not None else 1.0),
+                safety_filter=safety_filter,
+                logger=self._logger,
+                base_url="",
+            )
+        if audio_cache_outcome is not None:
+            self._finalize_for_request(
+                inp=inp,
+                outcome=audio_cache_outcome,
+                question=question,
+                agent_id=agent_id,
+                conversation_name=conversation_name,
+                cache_enabled=cache_enabled,
+                kb_version=runtime.kb_version,
+                cache_ttl_s=cache_ttl_s,
+                app_config=cfg.raw,
+                qa_audio_cache_enabled=runtime.qa_audio_cache_enabled,
+            )
+            return
 
         cache_outcome = yield from _maybe_stream_cache_shortcut(
             request_id=request_id,
@@ -319,12 +406,14 @@ class ConversationOrchestrator:
                 cache_enabled=cache_enabled,
                 kb_version=runtime.kb_version,
                 cache_ttl_s=cache_ttl_s,
+                app_config=cfg.raw,
+                qa_audio_cache_enabled=runtime.qa_audio_cache_enabled,
             )
             return
 
         question_for_rag, apply_qa_constraints, qa_no_self_intro, qa_max_answer_chars = self._build_qa_inputs(
             cfg=cfg,
-            question=question,
+            question=question_raw,
             guide=guide,
         )
         text_cleaning_cfg = cfg.text_cleaning
@@ -348,6 +437,8 @@ class ConversationOrchestrator:
                 cache_enabled=cache_enabled,
                 kb_version=runtime.kb_version,
                 cache_ttl_s=cache_ttl_s,
+                app_config=cfg.raw,
+                qa_audio_cache_enabled=runtime.qa_audio_cache_enabled,
             )
             return
 
@@ -364,7 +455,7 @@ class ConversationOrchestrator:
         stream_outcome = yield from self._stream_with_session(
             request_id=request_id,
             client_id=client_id,
-            question=question,
+            question=question_raw,
             agent_id=agent_id,
             question_for_rag=question_for_rag,
             rag_session=rag_session,
@@ -385,5 +476,7 @@ class ConversationOrchestrator:
             cache_enabled=cache_enabled,
             kb_version=runtime.kb_version,
             cache_ttl_s=cache_ttl_s,
+            app_config=cfg.raw,
+            qa_audio_cache_enabled=runtime.qa_audio_cache_enabled,
         )
         return
