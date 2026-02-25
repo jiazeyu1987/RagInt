@@ -31,7 +31,7 @@ export function useTourPipelineManager({
     if (tourPipelineRef.current) return tourPipelineRef.current;
 
     tourPipelineRef.current = new TourPipelineManager({
-      baseUrl: String(baseUrl || 'http://localhost:8000'),
+      baseUrl: String(baseUrl || ''),
       getClientId: () => (clientIdRef ? clientIdRef.current : ''),
       getStops: () => (tourStopsRef ? tourStopsRef.current || [] : []),
       getLastAnswerTail: () => String((tourStateRef && tourStateRef.current && tourStateRef.current.lastAnswerTail) || ''),

@@ -61,10 +61,14 @@ export async function emitClientEvent({ requestId, clientId, kind, name, level, 
     fields: fields && typeof fields === 'object' ? fields : {},
   };
   if (!payload.name) return { ok: false, error: 'name_required' };
-  return fetchJson('/api/client_events', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Client-ID': payload.client_id },
-    body: JSON.stringify(payload),
-  });
+  try {
+    return await fetchJson('/api/client_events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Client-ID': payload.client_id },
+      body: JSON.stringify(payload),
+    });
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e || 'emit_failed') };
+  }
 }
 

@@ -193,7 +193,9 @@ export async function playWavBytesViaDecodeAudioData(wavBytes, audioContextRef, 
   });
 }
 
-export async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, fallbackPlay, onFirstAudioChunk) {
+export async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, fallbackPlay, onFirstAudioChunk, opts) {
+  const options = opts && typeof opts === 'object' ? opts : {};
+  const allowRefetchFallback = options.allowRefetchFallback !== false;
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) {
     if (fallbackPlay) return fallbackPlay();
@@ -213,6 +215,7 @@ export async function playWavStreamViaWebAudio(url, audioContextRef, currentAudi
   let nextStartTime = 0;
   let drainedResolver = null;
   let drainedPromise = new Promise((resolve) => (drainedResolver = resolve));
+  let streamStarted = false;
 
   const sources = [];
   const stopAllSources = () => {
@@ -283,6 +286,7 @@ export async function playWavStreamViaWebAudio(url, audioContextRef, currentAudi
   try {
     const response = await fetch(url, { signal: abortController.signal });
     if (!response.ok || !response.body) throw new Error(`TTS stream HTTP error: ${response.status}`);
+    streamStarted = true;
 
     const reader = response.body.getReader();
     let headerBuffer = new Uint8Array(0);
@@ -623,6 +627,10 @@ export async function playWavStreamViaWebAudio(url, audioContextRef, currentAudi
   } catch (err) {
     stopAllSources();
     if (abortController.signal.aborted) return;
+    if (!allowRefetchFallback && streamStarted) {
+      console.warn('[TTS] WebAudio streaming failed; skip refetch fallback to avoid duplicate segment requests:', err);
+      return;
+    }
     console.warn('[TTS] WebAudio streaming failed, trying decodeAudioData fallback:', err);
     try {
       await playWavViaDecodeAudioData(url, audioContextRef, currentAudioRef);

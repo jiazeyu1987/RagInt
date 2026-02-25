@@ -6,6 +6,8 @@ from flask import Response, jsonify, request as flask_request
 
 from backend.api.request_context import get_client_id, get_request_id
 
+PREFETCH_KINDS = {"ask_prefetch", "prefetch", "prefetch_ask"}
+
 
 @dataclass(frozen=True)
 class AskRequest:
@@ -22,6 +24,17 @@ class AskRequest:
     stop_index: int | None
     tour_action: str | None
     action_type: str
+
+
+def _normalize_guide(guide) -> dict:
+    return guide if isinstance(guide, dict) else {}
+
+
+def _as_int_or_none(value):
+    try:
+        return int(value) if value is not None and str(value).strip() != "" else None
+    except Exception:
+        return None
 
 
 def _compute_action_type(*, guide: dict) -> str:
@@ -47,25 +60,16 @@ def parse_ask_request(*, deps, data: dict | None) -> tuple[AskRequest | None, Re
     conversation_name = str(
         (data.get("conversation_name") or data.get("chat_name") or getattr(deps, "ragflow_default_chat_name", "") or "")
     ).strip()
-
-    guide = data.get("guide") or {}
-    if not isinstance(guide, dict):
-        guide = {}
+    guide = _normalize_guide(data.get("guide") or {})
 
     client_id = get_client_id(flask_request, data=data, default="-")
     kind = str((data.get("kind") or "ask")).strip() or "ask"
-    save_history = kind not in ("ask_prefetch", "prefetch", "prefetch_ask")
+    save_history = kind not in PREFETCH_KINDS
     request_id = get_request_id(flask_request, data=data, prefix="ask")
 
     recording_id = str((data.get("recording_id") or flask_request.headers.get("X-Recording-ID") or "")).strip() or None
     stop_name = str((guide.get("stop_name") or "")).strip() or None
-
-    stop_index = guide.get("stop_index", None)
-    try:
-        stop_index = int(stop_index) if stop_index is not None and str(stop_index).strip() != "" else None
-    except Exception:
-        stop_index = None
-
+    stop_index = _as_int_or_none(guide.get("stop_index", None))
     tour_action = str((guide.get("tour_action") or "")).strip() or None
     action_type = _compute_action_type(guide=guide)
 

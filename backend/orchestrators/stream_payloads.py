@@ -39,6 +39,24 @@ def is_done(payload: dict) -> bool:
     return bool(payload.get("done"))
 
 
+def classify_text_event(payload: dict) -> tuple[str | None, str | None]:
+    """
+    Normalize stream payload consumption for upper layers.
+    Returns (kind, text):
+      - ("done", None)
+      - ("segment", "<text>")
+      - ("chunk", "<text>")
+      - (None, None) for non-text payloads
+    """
+    if is_done(payload):
+        return "done", None
+    if has_nonempty_segment(payload):
+        return "segment", str(get_segment(payload) or "")
+    if has_nonempty_chunk(payload):
+        return "chunk", str(get_chunk(payload) or "")
+    return None, None
+
+
 def has_nonempty_chunk(payload: dict) -> bool:
     c = get_chunk(payload)
     return bool(c and c.strip())

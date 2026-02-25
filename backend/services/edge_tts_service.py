@@ -6,6 +6,7 @@ import queue
 import threading
 
 from .config_utils import get_nested
+from backend.config.ragflow_app_config import TtsEdgeConfig
 
 
 def _coerce_edge_percent(val, *, default="0%") -> str:
@@ -32,18 +33,18 @@ def stream_edge_tts(
     logger: logging.Logger,
     cancel_event: threading.Event | None = None,
 ):
-    cfg = get_nested(config, ["tts", "edge"], {}) or {}
-    if cfg.get("enabled") is False:
+    cfg = TtsEdgeConfig.from_any(get_nested(config, ["tts", "edge"], {}) or {})
+    if cfg.enabled is False:
         raise ValueError("tts.edge.enabled=false")
 
-    voice = str(cfg.get("voice", "zh-CN-XiaoxiaoNeural")).strip() or "zh-CN-XiaoxiaoNeural"
-    output_format = str(cfg.get("output_format", "riff-16khz-16bit-mono-pcm")).strip() or "riff-16khz-16bit-mono-pcm"
-    rate = _coerce_edge_percent(cfg.get("rate", "0%"), default="0%")
-    volume = _coerce_edge_percent(cfg.get("volume", "0%"), default="0%")
+    voice = cfg.voice
+    output_format = cfg.output_format
+    rate = _coerce_edge_percent(cfg.rate, default="0%")
+    volume = _coerce_edge_percent(cfg.volume, default="0%")
 
-    timeout_s = float(cfg.get("timeout_s", 30) or 30)
-    first_audio_timeout_s = float(cfg.get("first_audio_timeout_s", 12) or 12)
-    queue_max_chunks = int(cfg.get("queue_max_chunks", 256) or 256)
+    timeout_s = float(cfg.timeout_s or 30.0)
+    first_audio_timeout_s = float(cfg.first_audio_timeout_s or 12.0)
+    queue_max_chunks = int(cfg.queue_max_chunks or 256)
 
     cancel_event = cancel_event or threading.Event()
     if cancel_event.is_set():

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import contextlib
 
-from backend.orchestrators.ragflow_streaming import AskStreamOutcome, _trim_answer_for_constraints
+from backend.orchestrators.ragflow_streaming_helpers import _trim_answer_for_constraints
+from backend.orchestrators.ragflow_streaming_models import AskStreamOutcome
 from backend.orchestrators.stream_payloads import make_chunk, make_done
 from backend.services.safety_filter import SensitiveWordsFilter
 

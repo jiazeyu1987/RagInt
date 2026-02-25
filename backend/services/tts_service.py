@@ -12,6 +12,8 @@ class TTSSvc:
         self._logger = logger or logging.getLogger(__name__)
         self._tts_state = {}
         self._tts_state_lock = threading.Lock()
+        self._provider_failures = {}
+        self._provider_failures_lock = threading.Lock()
 
     def _tts_state_prune(self, now_perf: float, ttl_s: float = 600.0, max_items: int = 500):
         with self._tts_state_lock:
@@ -27,6 +29,46 @@ class TTSSvc:
                 )
                 for key, _ in ordered[: max(0, len(self._tts_state) - max_items)]:
                     self._tts_state.pop(key, None)
+
+    def _provider_failures_prune(self, now_perf: float, ttl_s: float = 600.0, max_items: int = 1000):
+        with self._provider_failures_lock:
+            for rid, data in list(self._provider_failures.items()):
+                t_last = (data or {}).get("t_last")
+                if isinstance(t_last, (int, float)) and (now_perf - float(t_last)) > ttl_s:
+                    self._provider_failures.pop(rid, None)
+            if len(self._provider_failures) > max_items:
+                ordered = sorted(self._provider_failures.items(), key=lambda kv: float((kv[1] or {}).get("t_last", now_perf)))
+                for rid, _ in ordered[: max(0, len(self._provider_failures) - max_items)]:
+                    self._provider_failures.pop(rid, None)
+
+    def mark_provider_failed(self, request_id: str, provider: str):
+        rid = str(request_id or "").strip()
+        p = str(provider or "").strip().lower()
+        if not rid or not p:
+            return
+        now = time.perf_counter()
+        self._provider_failures_prune(now)
+        with self._provider_failures_lock:
+            state = self._provider_failures.get(rid) or {"t_last": now, "providers": set()}
+            state["t_last"] = now
+            providers = state.get("providers")
+            if not isinstance(providers, set):
+                providers = set()
+                state["providers"] = providers
+            providers.add(p)
+            self._provider_failures[rid] = state
+
+    def should_skip_provider(self, request_id: str, provider: str) -> bool:
+        rid = str(request_id or "").strip()
+        p = str(provider or "").strip().lower()
+        if not rid or not p:
+            return False
+        now = time.perf_counter()
+        self._provider_failures_prune(now)
+        with self._provider_failures_lock:
+            state = self._provider_failures.get(rid) or {}
+            providers = state.get("providers")
+            return isinstance(providers, set) and p in providers
 
     def tts_state_update(self, request_id: str, segment_index, provider: str, endpoint: str):
         now_perf = time.perf_counter()
@@ -104,4 +146,3 @@ class TTSSvc:
             segment_index=segment_index,
             endpoint=endpoint,
         )
-

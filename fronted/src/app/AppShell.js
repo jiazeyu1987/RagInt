@@ -5,9 +5,7 @@ import {
   unlockAudio as unlockAudioExt,
 } from '../audio/ttsAudio';
 import { cancelRequest as cancelBackendRequestExt, emitClientEvent as emitClientEventExt, fetchJson } from '../api/backendClient';
-import { TourController } from '../managers/TourController';
 import { InterruptManager } from '../managers/InterruptManager';
-import { RunCoordinator } from '../managers/RunCoordinator';
 import { createTtsOnStopIndexChange } from '../managers/createTtsOnStopIndexChange';
 import { createOrGetTtsManager } from '../managers/createTtsManager';
 import { InputSection } from '../components/InputSection';
@@ -23,20 +21,49 @@ import { useTourState } from '../hooks/useTourState';
 import { useBreakpointSync } from '../hooks/useBreakpointSync';
 import { useTourTemplates } from '../hooks/useTourTemplates';
 import { useTourPipelineManager } from '../hooks/useTourPipelineManager';
-import { useVoiceInputManager } from '../hooks/useVoiceInputManager';
 import { useAskWorkflowManager } from '../hooks/useAskWorkflowManager';
+import { useHistoryPanel } from '../hooks/useHistoryPanel';
+import { useDebugRun } from '../hooks/useDebugRun';
+import { useQueueStatusMonitor } from '../hooks/useQueueStatusMonitor';
+import { useVoiceConversationControls } from '../hooks/useVoiceConversationControls';
+import { useRunOrchestration } from '../hooks/useRunOrchestration';
+import { useStagePanelProps } from '../hooks/useStagePanelProps';
+import { useControlBarProps } from '../hooks/useControlBarProps';
+import { useTourModePanelProps } from '../hooks/useTourModePanelProps';
+import { useTextInputProps } from '../hooks/useTextInputProps';
+import { useTtsUiSync } from '../hooks/useTtsUiSync';
+import { useStateRefsSync } from '../hooks/useStateRefsSync';
+import { useUiActions } from '../hooks/useUiActions';
 import { useTourRecordingOptions } from '../hooks/useTourRecordingOptions';
 import { useTourRecordings } from '../hooks/useTourRecordings';
 import { getBackendBase } from '../config/backend';
-import { sendTourControl } from '../api/tourControl';
 import { parseTourCommand } from '../api/tourCommand';
 
+const TOUR_BTN_MODE = {
+  START: 'start',
+  INTERRUPT: 'interrupt',
+  CONTINUE: 'continue',
+};
+
+function reduceTourButtonState(state, event) {
+  const type = String((event && event.type) || '').trim();
+  if (type === 'RESET') return { started: false, mode: TOUR_BTN_MODE.START };
+  if (type === 'START_CLICK') return { started: true, mode: TOUR_BTN_MODE.INTERRUPT };
+  if (type === 'INTERRUPT_CLICK') return state.started ? { ...state, mode: TOUR_BTN_MODE.CONTINUE } : state;
+  if (type === 'CONTINUE_CLICK') return state.started ? { ...state, mode: TOUR_BTN_MODE.INTERRUPT } : state;
+  if (type === 'PLAYBACK_STARTED') return state.started ? { ...state, mode: TOUR_BTN_MODE.INTERRUPT } : state;
+  if (type === 'PLAYBACK_STOPPED') return state.started ? { ...state, mode: TOUR_BTN_MODE.CONTINUE } : state;
+  return state;
+}
+
 function AppShell() {
+  const backendBase = getBackendBase();
   const [inputText, setInputText] = useState('');
   const [lastQuestion, setLastQuestion] = useState('');
   const [answer, setAnswer] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [queueStatus, setQueueStatus] = useState('');
+  const [tourButtonState, setTourButtonState] = useState({ started: false, mode: TOUR_BTN_MODE.START });
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const {
     ttsMode,
@@ -88,21 +115,18 @@ function AppShell() {
     wakeWordStrict,
     setWakeWordStrict,
   } = useAppSettings();
-  const [debugInfo, setDebugInfo] = useState(null);
   const [chatOptions, setChatOptions] = useState([]);
   const [selectedChat, setSelectedChat] = useState('展厅聊天');
   const [agentOptions, setAgentOptions] = useState([]);
   const [selectedAgentId, setSelectedAgentId] = useState('');
   const [useAgentMode, setUseAgentMode] = useState(false);
-  const [historySort, setHistorySort] = useState('time'); // 'time' | 'count'
-  const [historyItems, setHistoryItems] = useState([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [conversationEnabled, setConversationEnabled] = useState(false);
-  const [conversationBusy, setConversationBusy] = useState(false);
   const { options: tourRecordingOptions, refresh: refreshTourRecordingOptions } = useTourRecordingOptions({
     enabled: settingsOpen || playTourRecordingEnabled,
     limit: 50,
   });
+  const { historySort, setHistorySort, historyItems, fetchHistory } = useHistoryPanel({ enabled: showHistoryPanel });
+  const { debugInfo, debugRef, beginDebugRun, debugMark, debugRefresh } = useDebugRun();
   const clientId = useClientId();
   const [tourStops, setTourStops] = useState([]);
   const [tourStopDurations, setTourStopDurations] = useState([]); // aligned with tourStops
@@ -195,7 +219,6 @@ function AppShell() {
   const selectedChatRef = useRef(selectedChat);
   const selectedAgentIdRef = useRef(selectedAgentId);
   const tourMetaRef = useRef(tourMeta);
-  const debugRef = useRef(null);
   const askAbortRef = useRef(null);
   const tourStateRef = useRef(tourState);
   const tourResumeRef = useRef({});
@@ -213,7 +236,7 @@ function AppShell() {
 
   const ttsManagerRef = useRef(null);
   const { tourPipelineRef, getTourPipeline, abortPrefetch } = useTourPipelineManager({
-    baseUrl: 'http://localhost:8000',
+    baseUrl: backendBase,
     clientIdRef,
     tourStopsRef,
     tourStateRef,
@@ -245,7 +268,6 @@ function AppShell() {
   const inputElRef = useRef(null);
   const tourControllerRef = useRef(null);
   const runCoordinatorRef = useRef(null);
-  if (!runCoordinatorRef.current) runCoordinatorRef.current = new RunCoordinator();
 
   const POINTER_SUPPORTED = typeof window !== 'undefined' && 'PointerEvent' in window;
   const MIN_RECORD_MS = 900;
@@ -258,7 +280,7 @@ function AppShell() {
       runIdRef: requestSeqRef,
       clientIdRef,
       nowMs,
-      baseUrl: 'http://localhost:8000',
+      baseUrl: backendBase,
       useSavedTts: USE_SAVED_TTS,
       maxPreGenerateCount: MAX_PRE_GENERATE_COUNT,
       ttsMode,
@@ -333,137 +355,63 @@ function AppShell() {
     unlockAudioExt(audioContextRef, PREFERRED_TTS_SAMPLE_RATE);
   };
 
-  useEffect(() => {
-    ttsEnabledRef.current = !!ttsEnabled;
+  useTtsUiSync({
+    ttsEnabled,
+    ttsEnabledRef,
+    currentAudioRef,
+    ttsManagerRef,
+    setQueueStatus,
+    ttsMode,
+    modelscopeVoice,
+    ttsSpeed,
+  });
 
-    if (!ttsEnabled) {
-      try {
-        if (currentAudioRef.current) {
-          if (typeof currentAudioRef.current.stop === 'function') {
-            currentAudioRef.current.stop();
-          } else if (typeof currentAudioRef.current.pause === 'function') {
-            currentAudioRef.current.pause();
-            currentAudioRef.current.src = '';
-          }
-        }
-      } catch (_) {
-        // ignore
-      } finally {
-      currentAudioRef.current = null;
-      }
-
-      if (ttsManagerRef.current) {
-        ttsManagerRef.current.stop('tts_disabled');
-      }
-      setQueueStatus('');
-    }
-  }, [ttsEnabled]);
-
-  useEffect(() => {
-    try {
-      const mgr = ttsManagerRef.current;
-      if (mgr && typeof mgr.setTtsProvider === 'function') mgr.setTtsProvider(ttsMode, 'ui_change');
-    } catch (_) {
-      // ignore
-    }
-  }, [ttsMode]);
-
-  useEffect(() => {
-    try {
-      const mgr = ttsManagerRef.current;
-      if (mgr && typeof mgr.setTtsVoice === 'function') mgr.setTtsVoice(ttsMode === 'modelscope' ? modelscopeVoice : '', 'ui_change');
-    } catch (_) {
-      // ignore
-    }
-  }, [ttsMode, modelscopeVoice]);
-
-  useEffect(() => {
-    try {
-      const mgr = ttsManagerRef.current;
-      if (mgr && typeof mgr.setTtsSpeed === 'function') mgr.setTtsSpeed(ttsSpeed, 'ui_change');
-    } catch (_) {
-      // ignore
-    }
-  }, [ttsSpeed]);
-
-  useEffect(() => {
-    continuousTourRef.current = !!continuousTour;
-  }, [continuousTour]);
-
-  useEffect(() => {
-    tourRecordingEnabledRef.current = !!tourRecordingEnabled;
-  }, [tourRecordingEnabled]);
-
-  useEffect(() => {
-    playTourRecordingEnabledRef.current = !!playTourRecordingEnabled;
-  }, [playTourRecordingEnabled]);
-
-  useEffect(() => {
-    selectedTourRecordingIdRef.current = String(selectedTourRecordingId || '').trim();
-  }, [selectedTourRecordingId]);
-
-  useEffect(() => {
-    guideEnabledRef.current = !!guideEnabled;
-  }, [guideEnabled]);
-
-  useEffect(() => {
-    tourStateRef.current = tourState;
-  }, [tourState]);
-
-  useEffect(() => {
-    tourStopsRef.current = Array.isArray(tourStops) ? tourStops : [];
-  }, [tourStops]);
-
-  useEffect(() => {
-    tourZoneRef.current = String(tourZone || '').trim();
-  }, [tourZone]);
-
-  useEffect(() => {
-    tourStopDurationsRef.current = Array.isArray(tourStopDurations) ? tourStopDurations : [];
-  }, [tourStopDurations]);
-
-  useEffect(() => {
-    tourStopTargetCharsRef.current = Array.isArray(tourStopTargetChars) ? tourStopTargetChars : [];
-  }, [tourStopTargetChars]);
-
-  useEffect(() => {
-    audienceProfileRef.current = String(audienceProfile || '').trim();
-  }, [audienceProfile]);
-
-  useEffect(() => {
-    tourMetaRef.current = tourMeta;
-  }, [tourMeta]);
-
-  useEffect(() => {
-    guideDurationRef.current = guideDuration;
-    guideStyleRef.current = guideStyle;
-  }, [guideDuration, guideStyle]);
-
-  useEffect(() => {
-    tourModeRef.current = String(tourMode || 'basic');
-    tourTemplateIdRef.current = String(tourTemplateId || '');
-    tourStopsOverrideRef.current = Array.isArray(tourStopsOverride) ? tourStopsOverride : [];
-  }, [tourMode, tourTemplateId, tourStopsOverride]);
-
-  useEffect(() => {
-    useAgentModeRef.current = !!useAgentMode;
-  }, [useAgentMode]);
-
-  useEffect(() => {
-    selectedChatRef.current = selectedChat;
-  }, [selectedChat]);
-
-  useEffect(() => {
-    selectedAgentIdRef.current = selectedAgentId;
-  }, [selectedAgentId]);
-
-  useEffect(() => {
-    groupModeRef.current = !!groupMode;
-  }, [groupMode]);
-
-  useEffect(() => {
-    queueRef.current = Array.isArray(questionQueue) ? questionQueue : [];
-  }, [questionQueue]);
+  useStateRefsSync({
+    continuousTour,
+    continuousTourRef,
+    tourRecordingEnabled,
+    tourRecordingEnabledRef,
+    playTourRecordingEnabled,
+    playTourRecordingEnabledRef,
+    selectedTourRecordingId,
+    selectedTourRecordingIdRef,
+    guideEnabled,
+    guideEnabledRef,
+    tourState,
+    tourStateRef,
+    tourStops,
+    tourStopsRef,
+    tourZone,
+    tourZoneRef,
+    tourStopDurations,
+    tourStopDurationsRef,
+    tourStopTargetChars,
+    tourStopTargetCharsRef,
+    audienceProfile,
+    audienceProfileRef,
+    tourMeta,
+    tourMetaRef,
+    guideDuration,
+    guideDurationRef,
+    guideStyle,
+    guideStyleRef,
+    tourMode,
+    tourModeRef,
+    tourTemplateId,
+    tourTemplateIdRef,
+    tourStopsOverride,
+    tourStopsOverrideRef,
+    useAgentMode,
+    useAgentModeRef,
+    selectedChat,
+    selectedChatRef,
+    selectedAgentId,
+    selectedAgentIdRef,
+    groupMode,
+    groupModeRef,
+    questionQueue,
+    queueRef,
+  });
 
   const getTourStopName = (index) => {
     const stops = Array.isArray(tourStops) ? tourStops : [];
@@ -476,89 +424,10 @@ function AppShell() {
     return getTourPipeline().buildTourPrompt(action, stopIndex, tailOverride);
   };
 
-  const fetchHistory = async (sortMode) => {
-    try {
-      const sort = (sortMode || historySort || 'time').trim();
-      const resp = await fetch(`http://localhost:8000/api/history?sort=${encodeURIComponent(sort)}&limit=200`);
-      const data = await resp.json();
-      const items = Array.isArray(data && data.items) ? data.items : [];
-      setHistoryItems(items);
-    } catch (_) {
-      setHistoryItems([]);
-    }
-  };
-
-  useEffect(() => {
-    if (!showHistoryPanel) return;
-    fetchHistory(historySort);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [historySort, showHistoryPanel]);
-
   const nowMs = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
-
-  const beginDebugRun = (trigger) => {
-    const t0 = nowMs();
-    const next = {
-      trigger,
-      requestId: null,
-      submitAt: t0,
-      ragflowFirstChunkAt: null,
-      ragflowFirstSegmentAt: null,
-      ragflowDoneAt: null,
-      ttsFirstRequestAt: null,
-      ttsFirstAudioAt: null,
-      ttsAllDoneAt: null,
-      segments: [],
-    };
-    debugRef.current = next;
-    setDebugInfo(next);
-  };
-
-  const debugMark = (key, t) => {
-    const cur = debugRef.current;
-    if (!cur) return;
-    if (cur[key] != null) return;
-    cur[key] = t != null ? t : nowMs();
-    setDebugInfo({ ...cur, segments: [...cur.segments] });
-  };
-
-  const debugRefresh = () => {
-    const cur = debugRef.current;
-    if (!cur) return;
-    setDebugInfo({ ...cur, segments: [...cur.segments] });
-  };
 
   // TTS预生成配置
   const MAX_PRE_GENERATE_COUNT = 2; // 最多预生成2段音频
-
-  // 更新队列状态显示
-  const updateQueueStatus = () => {
-    const mgr = ttsManagerRef.current;
-    const stats = mgr ? mgr.getStats() : { textCount: 0, audioCount: 0, generatorRunning: false, playerRunning: false };
-    const textCount = stats.textCount || 0;
-    const audioCount = stats.audioCount || 0;
-    const generatorRunning = !!stats.generatorRunning;
-    const playerRunning = !!stats.playerRunning;
-
-    setQueueStatus(
-      `📝待生成: ${textCount} | 🔊预生成: ${audioCount} | ` +
-      `${generatorRunning ? '🎵生成中' : '⏸️生成空闲'} | ` +
-      `${playerRunning ? '🔊播放中' : '⏸️播放空闲'}`
-    );
-  };
-
-  // 启动队列状态监控
-  const startStatusMonitor = (runId) => {
-    const interval = setInterval(() => {
-      const busy = ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false;
-      if (requestSeqRef.current === runId && (isLoading || busy)) {
-        updateQueueStatus();
-      } else {
-        setQueueStatus('');
-        clearInterval(interval);
-      }
-    }, 200); // 每200ms更新一次状态
-  };
 
   const {
     startTourRecordingArchive,
@@ -572,6 +441,12 @@ function AppShell() {
     selectedTourRecordingIdRef,
     setSelectedTourRecordingId,
     refreshTourRecordingOptions,
+  });
+  const { startStatusMonitor } = useQueueStatusMonitor({
+    ttsManagerRef,
+    requestSeqRef,
+    getIsLoading: () => isLoading,
+    setQueueStatus,
   });
 
   /* legacy (kept for reference)
@@ -654,7 +529,7 @@ function AppShell() {
   */
 
   const { interruptCurrentRun, askQuestion } = useAskWorkflowManager({
-    baseUrl: getBackendBase(),
+    baseUrl: backendBase,
     getIsLoading: () => isLoading,
     requestSeqRef,
     interruptManagerRef,
@@ -704,118 +579,22 @@ function AppShell() {
     runCoordinatorRef,
   });
 
-  const wakeWordFeedback = ({ message } = {}) => {
-    const m = String(message || '').trim();
-    if (!m) return;
-    setQueueStatus(m);
-    try {
-      window.clearTimeout(window.__wakeWordStatusTimer);
-    } catch (_) {
-      // ignore
-    }
-    window.__wakeWordStatusTimer = window.setTimeout(() => setQueueStatus(''), 2000);
-  };
-
-  const wakeWordSubmitText = async (q) => {
-    return getRunCoordinator().submitUserText({
-      text: q,
-      trigger: 'wake_word',
-      groupMode: false,
-      speakerName,
-      priority: 'normal',
-      useAgentMode,
-      selectedAgentId,
-    });
-  };
-
   const {
-    isRecording,
-    startRecording,
-    stopRecording,
-    onRecordPointerDown,
-    onRecordPointerUp,
-    onRecordPointerCancel,
-  } = useVoiceInputManager({
-    baseUrl: getBackendBase(),
-    minRecordMs: MIN_RECORD_MS,
-    clientIdRef,
-    setInputText,
-    setIsLoading,
-    decodeAndConvertToWav16kMono,
-    unlockAudio,
-    ttsEnabledRef,
-    audioContextRef,
-    isLoading,
-    wakeWordEnabled,
-    wakeWord,
-    wakeWordStrict,
-    wakeWordCooldownMs,
-    onWakeWordFeedback: wakeWordFeedback,
-    askQuestion,
-    submitText: wakeWordSubmitText,
-  });
-
-  const onToggleConversation = async () => {
-    if (conversationBusy) return;
-
-    if (conversationEnabled) {
-      setConversationEnabled(false);
-      stopRecording();
-      return;
-    }
-
-    // Mutually exclusive with press-to-talk.
-    if (isRecording) return;
-
-    setConversationBusy(true);
-    try {
-      await startRecording();
-      setConversationEnabled(true);
-    } finally {
-      setConversationBusy(false);
-    }
-  };
-
-  const handleTextSubmit = async (e) => {
-    e.preventDefault();
-    const text = String(inputText || '').trim();
-    if (text && (!useAgentMode || !!selectedAgentId)) {
-      await getRunCoordinator().submitUserText({
-        text,
-        trigger: 'text',
-        groupMode,
-        speakerName,
-        priority: questionPriority,
-        useAgentMode,
-        selectedAgentId,
-      });
-      return;
-    } else if (text && useAgentMode && !selectedAgentId) {
-      alert('请先选择智能体再提问');
-    }
-  };
-
-  const submitTextAuto = async (text, trigger) => {
-    const q = String(text || '').trim();
-    if (!q) return;
-    if (useAgentMode && !selectedAgentId) {
-      alert('请先选择智能体再提问');
-      return;
-    }
-    return await getRunCoordinator().submitUserText({
-      text: q,
-      trigger: trigger || 'quick',
-      groupMode: false,
-      speakerName,
-      priority: 'normal',
-      useAgentMode,
-      selectedAgentId,
-    });
-  };
-
-  const getTourController = () => {
-    if (!tourControllerRef.current) tourControllerRef.current = new TourController();
-    tourControllerRef.current.setDeps({
+    getRunCoordinator,
+    submitUserText,
+    startTour,
+    continueTour,
+    prevTourStop,
+    nextTourStop,
+    jumpTourStop,
+    resetTour,
+    onAnswerQueuedNow,
+    onRemoveQueuedQuestion,
+    onInterruptManual,
+  } = useRunOrchestration({
+    tourControllerRef,
+    runCoordinatorRef,
+    tourControllerDeps: {
       ttsEnabledRef,
       audioContextRef,
       preferredTtsSampleRate: PREFERRED_TTS_SAMPLE_RATE,
@@ -853,16 +632,10 @@ function AppShell() {
       setTourState,
       getTourStopName,
       setAnswer,
-    });
-    return tourControllerRef.current;
-  };
-
-  const getRunCoordinator = () => {
-    if (!runCoordinatorRef.current) runCoordinatorRef.current = new RunCoordinator();
-    runCoordinatorRef.current.setDeps({
+    },
+    runCoordinatorDeps: {
       interruptCurrentRun,
       askQuestion,
-      getTourController,
       getIsLoading: () => isLoading,
       ttsEnabledRef,
       audioContextRef,
@@ -878,26 +651,63 @@ function AppShell() {
       groupModeRef,
       tourPipelineRef,
       guideEnabledRef,
+      clientIdRef,
+      setQueueStatus,
       getTourStops: () => (tourStopsRef.current || []),
       parseTourCommand: ({ clientId, text, stops }) => parseTourCommand({ clientId, text, stops }),
-    });
-    return runCoordinatorRef.current;
-  };
+    },
+  });
 
-  const startTour = async () => getRunCoordinator().startTour();
-  const continueTour = async () => getRunCoordinator().continueTour();
-  const prevTourStop = async () => getRunCoordinator().prevTourStop();
-  const nextTourStop = async () => getRunCoordinator().nextTourStop();
-  const jumpTourStop = async (idx) => getRunCoordinator().jumpTourStop(idx);
-  const resetTour = () => getRunCoordinator().resetTour();
+  const {
+    isRecording,
+    startRecording,
+    stopRecording,
+    onRecordPointerDown,
+    onRecordPointerUp,
+    onRecordPointerCancel,
+    conversationEnabled,
+    conversationBusy,
+    onToggleConversation,
+    handleTextSubmit,
+    submitTextAuto,
+  } = useVoiceConversationControls({
+    baseUrl: backendBase,
+    minRecordMs: MIN_RECORD_MS,
+    clientIdRef,
+    setInputText,
+    setIsLoading,
+    decodeAndConvertToWav16kMono,
+    unlockAudio,
+    ttsEnabledRef,
+    audioContextRef,
+    isLoading,
+    wakeWordEnabled,
+    wakeWord,
+    wakeWordStrict,
+    wakeWordCooldownMs,
+    askQuestion,
+    submitUserText,
+    setQueueStatus,
+    inputText,
+    groupMode,
+    speakerName,
+    questionPriority,
+    useAgentMode,
+    selectedAgentId,
+  });
 
-  const sendStageCommand = async (action, payload) => {
-    try {
-      await sendTourControl({ clientId: clientIdRef.current, action, payload: payload || {} });
-    } catch (_) {
-      // ignore
-    }
-  };
+  const stagePanelProps = useStagePanelProps({
+    clientIdRef,
+    stageSpeedMode,
+    setStageSpeedMode,
+    setGuideDuration,
+    setQueueStatus,
+    interruptCurrentRun,
+    continueTour,
+    nextTourStop,
+    resetTour,
+    startTour,
+  });
 
   useEffect(() => {
     if (!messagesEndRef.current) return;
@@ -908,153 +718,167 @@ function AppShell() {
     }
   }, [lastQuestion, answer, isLoading, queueStatus]);
 
+  useEffect(() => {
+    if (!tourRecordingEnabled || !playTourRecordingEnabled) return;
+    setTourRecordingEnabled(false);
+  }, [playTourRecordingEnabled, setTourRecordingEnabled, tourRecordingEnabled]);
+
+  const wasTourActiveRef = useRef(false);
+  useEffect(() => {
+    const active =
+      !!isLoading ||
+      !!(askAbortRef && askAbortRef.current) ||
+      !!(currentAudioRef && currentAudioRef.current) ||
+      !!(ttsManagerRef && ttsManagerRef.current && ttsManagerRef.current.isBusy && ttsManagerRef.current.isBusy()) ||
+      String((tourState && tourState.mode) || '') === 'running';
+    const prev = !!wasTourActiveRef.current;
+    if (!prev && active) {
+      setTourButtonState((s) => reduceTourButtonState(s, { type: 'PLAYBACK_STARTED' }));
+    } else if (prev && !active) {
+      setTourButtonState((s) => reduceTourButtonState(s, { type: 'PLAYBACK_STOPPED' }));
+    }
+    wasTourActiveRef.current = active;
+  }, [isLoading, tourState, askAbortRef, currentAudioRef, ttsManagerRef]);
+
   const submitDisabled = !String(inputText || '').trim() || (useAgentMode && !selectedAgentId);
   const interruptDisabled =
     !isLoading && !((ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false) || currentAudioRef.current);
+  const tourToggleLabel =
+    tourButtonState.mode === TOUR_BTN_MODE.INTERRUPT
+      ? '打断'
+      : tourButtonState.mode === TOUR_BTN_MODE.CONTINUE
+        ? '继续讲解'
+        : '开始讲解';
+  const tourToggleDanger = tourButtonState.mode === TOUR_BTN_MODE.INTERRUPT;
+  const tourToggleDisabled = tourButtonState.mode === TOUR_BTN_MODE.INTERRUPT ? interruptDisabled : false;
   const sendMode = playTourRecordingEnabled ? 'playback' : tourRecordingEnabled ? 'recording' : 'normal';
   const sendBtnClassName = `submit-btn submit-btn-${sendMode}`;
 
-  const onJumpSelectedStop = async () => {
-    try {
-      await jumpTourStop(tourSelectedStopIndex);
-    } catch (e) {
-      console.error('[TOUR] jump failed', e);
+  const onTourToggle = async () => {
+    if (tourButtonState.mode === TOUR_BTN_MODE.INTERRUPT) {
+      onInterruptManual();
+      setTourButtonState((s) => reduceTourButtonState(s, { type: 'INTERRUPT_CLICK' }));
+      return;
     }
+    if (tourButtonState.mode === TOUR_BTN_MODE.CONTINUE) {
+      setTourButtonState((s) => reduceTourButtonState(s, { type: 'CONTINUE_CLICK' }));
+      await continueTour();
+      return;
+    }
+    setTourButtonState((s) => reduceTourButtonState(s, { type: 'START_CLICK' }));
+    await startTour();
   };
 
-  const controlBarProps = {
+  const onResetAll = async () => {
+    try {
+      onInterruptManual();
+    } catch (_) {
+      // ignore
+    }
+    try {
+      await resetTour();
+    } catch (_) {
+      // ignore
+    }
+    if (queueRef) queueRef.current = [];
+    if (activeAskRequestIdRef) activeAskRequestIdRef.current = null;
+    if (askAbortRef) askAbortRef.current = null;
+    try {
+      if (ttsManagerRef && ttsManagerRef.current) ttsManagerRef.current.stop('reset_all');
+    } catch (_) {
+      // ignore
+    }
+    if (currentAudioRef) currentAudioRef.current = null;
+    setTourButtonState((s) => reduceTourButtonState(s, { type: 'RESET' }));
+    wasTourActiveRef.current = false;
+    setInputText('');
+    setLastQuestion('');
+    setAnswer('');
+    setQueueStatus('');
+    setQuestionQueue([]);
+    setCurrentIntent(null);
+    setIsLoading(false);
+    setTourSelectedStopIndex(0);
+  };
+
+  const controlBarProps = useControlBarProps({
     useAgentMode,
-    onChangeUseAgentMode: setUseAgentMode,
+    setUseAgentMode,
     agentOptions,
     selectedAgentId,
-    onChangeSelectedAgentId: setSelectedAgentId,
+    setSelectedAgentId,
     chatOptions,
     selectedChat,
-    onChangeSelectedChat: setSelectedChat,
+    setSelectedChat,
     guideEnabled,
-    onChangeGuideEnabled: setGuideEnabled,
+    setGuideEnabled,
     guideDuration,
-    onChangeGuideDuration: setGuideDuration,
+    setGuideDuration,
     guideStyle,
-    onChangeGuideStyle: setGuideStyle,
+    setGuideStyle,
     tourMeta,
     tourZone,
-    onChangeTourZone: setTourZone,
+    setTourZone,
     audienceProfile,
-    onChangeAudienceProfile: setAudienceProfile,
+    setAudienceProfile,
     groupMode,
-    onChangeGroupMode: setGroupMode,
+    setGroupMode,
     ttsEnabled,
-    onChangeTtsEnabled: setTtsEnabled,
+    setTtsEnabled,
     ttsMode,
-    onChangeTtsMode: setTtsMode,
+    setTtsMode,
     ttsSpeed,
-    onChangeTtsSpeed: setTtsSpeed,
+    setTtsSpeed,
     continuousTour,
-    onChangeContinuousTour: setContinuousTour,
+    setContinuousTour,
     tourRecordingEnabled,
-    onChangeTourRecordingEnabled: setTourRecordingEnabled,
+    setTourRecordingEnabled,
     playTourRecordingEnabled,
-    onChangePlayTourRecordingEnabled: setPlayTourRecordingEnabled,
+    setPlayTourRecordingEnabled,
     tourRecordingOptions,
     selectedTourRecordingId,
-    onChangeSelectedTourRecordingId: setSelectedTourRecordingId,
-    onRenameSelectedTourRecording: renameSelectedTourRecording,
-    onDeleteSelectedTourRecording: deleteSelectedTourRecording,
+    setSelectedTourRecordingId,
+    renameSelectedTourRecording,
+    deleteSelectedTourRecording,
     wakeWordEnabled,
-    onChangeWakeWordEnabled: setWakeWordEnabled,
+    setWakeWordEnabled,
     wakeWord,
-    onChangeWakeWord: setWakeWord,
+    setWakeWord,
     wakeWordCooldownMs,
-    onChangeWakeWordCooldownMs: setWakeWordCooldownMs,
+    setWakeWordCooldownMs,
     wakeWordStrict,
-    onChangeWakeWordStrict: setWakeWordStrict,
+    setWakeWordStrict,
     tourState,
     currentIntent,
     tourStops,
     tourSelectedStopIndex,
-    onChangeTourSelectedStopIndex: setTourSelectedStopIndex,
-    onJump: onJumpSelectedStop,
-    onReset: resetTour,
-  };
+    setTourSelectedStopIndex,
+    jumpTourStop,
+    resetTour,
+  });
 
-  const stagePanelProps = {
-    disabled: false,
-    speedLabel: stageSpeedMode === 'fast' ? '快' : '标准',
-    onPause: async () => {
-      interruptCurrentRun('user_stop');
-      await sendStageCommand('pause');
-      setQueueStatus('已暂停');
-    },
-    onContinue: async () => {
-      await continueTour();
-      await sendStageCommand('resume');
-      setQueueStatus('继续');
-    },
-    onSkip: async () => {
-      await nextTourStop();
-      await sendStageCommand('skip');
-      setQueueStatus('跳过 → 下一站');
-    },
-    onRestart: async () => {
-      resetTour();
-      await startTour();
-      await sendStageCommand('restart');
-      setQueueStatus('重来');
-    },
-    onToggleSpeed: async () => {
-      const next = stageSpeedMode === 'fast' ? 'normal' : 'fast';
-      setStageSpeedMode(next);
-      if (next === 'fast') {
-        setGuideDuration('30');
-        await sendStageCommand('speed', { speed: 2.0 });
-        setQueueStatus('加速：30秒档');
-      } else {
-        setGuideDuration('60');
-        await sendStageCommand('speed', { speed: 1.0 });
-        setQueueStatus('加速：关闭');
-      }
-    },
-  };
-
-  const tourModePanelProps = {
+  const tourModePanelProps = useTourModePanelProps({
     tourMode,
-    onChangeTourMode: setTourMode,
-    templates: tourTemplates,
+    setTourMode,
+    tourTemplates,
     tourTemplateId,
-    onChangeTourTemplateId: setTourTemplateId,
+    setTourTemplateId,
     tourStopsOverride,
-    onChangeTourStopsOverride: setTourStopsOverride,
-    onApplyTemplateZone: (z) => setTourZone(z),
-  };
+    setTourStopsOverride,
+    setTourZone,
+  });
 
-  const focusInputEl = () => {
-    try {
-      setTimeout(() => {
-        if (inputElRef.current && typeof inputElRef.current.focus === 'function') {
-          inputElRef.current.focus();
-        }
-      }, 0);
-    } catch (_) {
-      // ignore
-    }
-  };
+  const { onPickHistoryQuestion, onQuickSummary, onChangeHistorySort } = useUiActions({
+    inputElRef,
+    setInputText,
+    submitTextAuto,
+    setHistorySort,
+    setSettingsOpen,
+  });
 
-  const onPickHistoryQuestion = (q) => {
-    setInputText(q);
-    focusInputEl();
-  };
-
-  const onAnswerQueuedNow = (item) => getRunCoordinator().answerQueuedNow(item);
-  const onRemoveQueuedQuestion = (id) => getRunCoordinator().removeQueuedQuestion(id);
-  const onInterruptManual = () => getRunCoordinator().interruptManual();
-  const onOpenSettings = () => setSettingsOpen(true);
-  const onCloseSettings = () => setSettingsOpen(false);
-  const onQuickSummary = () => submitTextAuto('请用30秒总结刚才的讲解', 'settings_quick');
-  const onChangeHistorySort = setHistorySort;
-  const textInputProps = {
+  const { textInputProps, onCloseSettings } = useTextInputProps({
     isRecording,
-    POINTER_SUPPORTED,
+    pointerSupported: POINTER_SUPPORTED,
     onRecordPointerDown,
     onRecordPointerUp,
     onRecordPointerCancel,
@@ -1065,11 +889,11 @@ function AppShell() {
     onToggleConversation,
     inputElRef,
     inputText,
-    onChangeInputText: setInputText,
+    setInputText,
     sendBtnClassName,
     submitDisabled,
-    onOpenSettings,
-  };
+    setSettingsOpen,
+  });
 
   return (
     <div className="app">
@@ -1100,10 +924,11 @@ function AppShell() {
         />
 
         <InputSection
-          onStartTour={startTour}
-          onInterrupt={onInterruptManual}
-          interruptDisabled={interruptDisabled}
-          onContinueTour={continueTour}
+          onTourToggle={onTourToggle}
+          tourToggleLabel={tourToggleLabel}
+          tourToggleDanger={tourToggleDanger}
+          tourToggleDisabled={tourToggleDisabled}
+          onReset={onResetAll}
           onSubmit={handleTextSubmit}
           textInputProps={textInputProps}
         />

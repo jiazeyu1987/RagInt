@@ -6,6 +6,8 @@ from pathlib import Path
 from flask import Flask
 
 from backend.app_deps import AppDeps
+from backend.config import RagflowAppConfig
+from backend.config.env import env_bool, env_float, env_int
 
 
 def resolve_config_path(*, repo_root: Path) -> Path:
@@ -177,53 +179,23 @@ def register_voicekit(*, app: Flask, deps: AppDeps, logger) -> None:
     except Exception:
         app_cfg = {}
 
-    asr_cfg = (app_cfg.get("asr") or {}).get("dashscope") if isinstance(app_cfg.get("asr"), dict) else {}
-    tts_cfg = (app_cfg.get("tts") or {}).get("bailian") if isinstance(app_cfg.get("tts"), dict) else {}
-    if not isinstance(asr_cfg, dict):
-        asr_cfg = {}
-    if not isinstance(tts_cfg, dict):
-        tts_cfg = {}
-
-    api_key = str(asr_cfg.get("api_key") or "").strip() or str(tts_cfg.get("api_key") or "").strip()
-    model = str(asr_cfg.get("model") or "paraformer-realtime-v2").strip() or "paraformer-realtime-v2"
-    ws_url = str(asr_cfg.get("ws_url") or asr_cfg.get("dashscope_ws_url") or "").strip()
-
-    def _safe_int(v, d: int) -> int:
-        try:
-            return int(v)
-        except Exception:
-            return int(d)
-
-    def _safe_float(v, d: float) -> float:
-        try:
-            return float(v)
-        except Exception:
-            return float(d)
-
-    def _safe_bool(v, d: bool) -> bool:
-        if v is None:
-            return bool(d)
-        if isinstance(v, bool):
-            return bool(v)
-        s = str(v).strip().lower()
-        if s in ("1", "true", "yes", "y", "on"):
-            return True
-        if s in ("0", "false", "no", "n", "off"):
-            return False
-        return bool(d)
+    cfg = RagflowAppConfig.from_any(app_cfg if isinstance(app_cfg, dict) else {})
+    api_key = cfg.dashscope_api_key()
+    model = cfg.asr_dashscope.model
+    ws_url = cfg.asr_dashscope.ws_url
 
     voicekit_cfg = {
         "asr": {"dashscope": {"api_key": api_key, "model": model, "ws_url": ws_url}},
         "wake": {
-            "active_ms": max(500, _safe_int(os.environ.get("RAGINT_WAKE_ACTIVE_MS"), 8000)),
-            "max_pos_default": max(0, _safe_int(os.environ.get("RAGINT_WAKE_CONTAINS_MAX_POS"), 2)),
-            "cooldown_ms_default": max(0, _safe_int(os.environ.get("RAGINT_WAKE_COOLDOWN_MS"), 0)),
+            "active_ms": max(500, env_int("RAGINT_WAKE_ACTIVE_MS", 8000)),
+            "max_pos_default": max(0, env_int("RAGINT_WAKE_CONTAINS_MAX_POS", 2)),
+            "cooldown_ms_default": max(0, env_int("RAGINT_WAKE_COOLDOWN_MS", 0)),
             "store": "memory",
             "redis_url": "",
         },
         "asr_final": {
-            "wait_s": max(0.0, min(10.0, _safe_float(os.environ.get("RAGINT_ASR_FINAL_WAIT_S"), 1.2))),
-            "force_on_stop": _safe_bool(os.environ.get("RAGINT_ASR_FORCE_FINAL_ON_STOP"), True),
+            "wait_s": max(0.0, min(10.0, env_float("RAGINT_ASR_FINAL_WAIT_S", 1.2))),
+            "force_on_stop": env_bool("RAGINT_ASR_FORCE_FINAL_ON_STOP", True),
         },
         "auth": {"require_token": False, "secret": "", "token_ttl_s": 3600},
     }

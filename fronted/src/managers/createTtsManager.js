@@ -33,7 +33,7 @@ export function createOrGetTtsManager({
     getRunId: () => (runIdRef ? runIdRef.current : 0),
     getClientId: () => (clientIdRef ? clientIdRef.current : ''),
     nowMs: now,
-    baseUrl: String(baseUrl || 'http://localhost:8000'),
+    baseUrl: String(baseUrl || ''),
     useSavedTts: !!useSavedTts,
     maxPreGenerateCount,
     ttsProvider: String(ttsMode || ''),

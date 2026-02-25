@@ -27,7 +27,7 @@ export class VoiceKitWsRecorderManager {
     onError,
     onLog,
   } = {}) {
-    this._baseUrl = safeTrim(baseUrl || 'http://localhost:8000');
+    this._baseUrl = safeTrim(baseUrl || '');
     this._label = safeTrim(label);
     this._clientId = safeTrim(clientId);
     this._requestId = safeTrim(requestId);

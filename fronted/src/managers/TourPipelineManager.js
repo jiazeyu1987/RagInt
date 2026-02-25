@@ -8,7 +8,7 @@
 export class TourPipelineManager {
   constructor(opts) {
     const options = opts && typeof opts === 'object' ? opts : {};
-    this._baseUrl = String(options.baseUrl || 'http://localhost:8000');
+    this._baseUrl = String(options.baseUrl || '');
     this._getClientId = typeof options.getClientId === 'function' ? options.getClientId : () => '';
     this._getStops = typeof options.getStops === 'function' ? options.getStops : () => [];
     this._getLastAnswerTail = typeof options.getLastAnswerTail === 'function' ? options.getLastAnswerTail : () => '';

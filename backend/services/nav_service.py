@@ -4,10 +4,10 @@ import threading
 import time
 from dataclasses import dataclass
 
-from .config_utils import get_nested
 from backend.infra.cancellation import CancellationRegistry
 from backend.infra.event_store import EventStore
 from adapters.nav_provider import build_nav_provider
+from backend.config.ragflow_app_config import NavConfig
 
 
 @dataclass
@@ -113,14 +113,14 @@ class NavService:
         if not sid:
             raise ValueError("stop_id_required")
 
-        nav_cfg = get_nested(config, ["nav"], {}) or {}
-        provider = str((nav_cfg.get("provider") or "disabled")).strip().lower() if isinstance(nav_cfg, dict) else "disabled"
+        nav_cfg = NavConfig.from_any((config or {}).get("nav") if isinstance(config, dict) else None)
+        provider = str((nav_cfg.provider or "disabled")).strip().lower()
         # validate provider early for clearer error codes
         if provider not in ("mock", "http"):
             raise ValueError("nav_disabled")
 
         if timeout_s is None:
-            timeout_s = float(nav_cfg.get("timeout_s") or 30.0)
+            timeout_s = float(nav_cfg.timeout_s or 30.0)
         timeout_s = max(5.0, min(float(timeout_s), 600.0))
 
         cancel_ev = self._req.register(client_id=cid, request_id=rid, kind="nav", cancel_previous=True, cancel_reason="replaced_by_new_nav")

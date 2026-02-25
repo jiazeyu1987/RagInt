@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import requests
 
 from backend.services.config_utils import get_nested
+from backend.config.ragflow_app_config import NavConfig
 
 
 @dataclass(frozen=True)
@@ -46,12 +47,8 @@ class MockNavProvider(NavProvider):
         cancel_ev: threading.Event,
         timeout_s: float,
     ) -> NavProviderResult:
-        nav_cfg = get_nested(config, ["nav"], {}) or {}
-        mock_cfg = nav_cfg.get("mock") if isinstance(nav_cfg, dict) else {}
-        try:
-            arrive_ms = int(get_nested(mock_cfg if isinstance(mock_cfg, dict) else {}, ["arrive_delay_ms"], 1500) or 1500)
-        except Exception:
-            arrive_ms = 1500
+        nav_cfg = NavConfig.from_any(get_nested(config, ["nav"], {}) or {})
+        arrive_ms = int(nav_cfg.mock.arrive_delay_ms or 1500)
         arrive_ms = max(0, min(arrive_ms, int(timeout_s * 1000)))
         deadline = time.time() + float(timeout_s)
         end = time.time() + (arrive_ms / 1000.0)
@@ -78,19 +75,16 @@ class HttpNavProvider(NavProvider):
         cancel_ev: threading.Event,
         timeout_s: float,
     ) -> NavProviderResult:
-        nav_cfg = get_nested(config, ["nav"], {}) or {}
-        http_cfg = nav_cfg.get("http") if isinstance(nav_cfg, dict) else {}
-        if not isinstance(http_cfg, dict):
-            http_cfg = {}
-
-        base_url = str(http_cfg.get("base_url") or "").strip().rstrip("/")
+        nav_cfg = NavConfig.from_any(get_nested(config, ["nav"], {}) or {})
+        http_cfg = nav_cfg.http
+        base_url = str(http_cfg.base_url or "").strip().rstrip("/")
         if not base_url:
             return NavProviderResult(state="failed", reason="nav_http_base_url_missing")
 
-        go_to_path = str(http_cfg.get("go_to_path") or "/go_to").strip() or "/go_to"
-        cancel_path = str(http_cfg.get("cancel_path") or "/cancel").strip() or "/cancel"
-        state_path = str(http_cfg.get("state_path") or "/state").strip() or "/state"
-        poll_ms = int(http_cfg.get("poll_interval_ms") or 400)
+        go_to_path = str(http_cfg.go_to_path or "/go_to").strip() or "/go_to"
+        cancel_path = str(http_cfg.cancel_path or "/cancel").strip() or "/cancel"
+        state_path = str(http_cfg.state_path or "/state").strip() or "/state"
+        poll_ms = int(http_cfg.poll_interval_ms or 400)
         poll_ms = max(100, min(poll_ms, 2000))
 
         headers = {"Content-Type": "application/json", "X-Client-ID": client_id, "X-Request-ID": request_id}
@@ -140,8 +134,8 @@ class HttpNavProvider(NavProvider):
 
 
 def build_nav_provider(config: dict) -> NavProvider:
-    nav_cfg = get_nested(config, ["nav"], {}) or {}
-    provider = str((nav_cfg.get("provider") or "disabled")).strip().lower() if isinstance(nav_cfg, dict) else "disabled"
+    nav_cfg = NavConfig.from_any(get_nested(config, ["nav"], {}) or {})
+    provider = str((nav_cfg.provider or "disabled")).strip().lower()
     if provider == "mock":
         return MockNavProvider()
     if provider == "http":

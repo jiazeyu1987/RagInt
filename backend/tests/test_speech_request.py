@@ -28,3 +28,13 @@ def test_parse_ask_request_parses_kind_and_save_history():
         assert parsed.save_history is False
         assert parsed.conversation_name == "default"
 
+
+def test_parse_ask_request_parses_stop_index_and_action_type_defaults():
+    app = Flask(__name__)
+    data = {"question": "hi", "guide": {"tour_action": "next", "stop_index": "2"}}
+    with app.test_request_context("/api/ask", method="POST", json=data):
+        parsed, err = parse_ask_request(deps=_Deps(), data=data)
+        assert err is None
+        assert parsed is not None
+        assert parsed.stop_index == 2
+        assert parsed.action_type == "切站"

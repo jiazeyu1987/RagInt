@@ -54,7 +54,7 @@ export class TtsQueueManager {
     this._warn = typeof options.onWarn === 'function' ? options.onWarn : () => {};
     this._error = typeof options.onError === 'function' ? options.onError : () => {};
 
-    this._baseUrl = String(options.baseUrl || 'http://localhost:8000');
+    this._baseUrl = String(options.baseUrl || '');
     this._useSavedTts = !!options.useSavedTts;
     this._ttsProvider = String(options.ttsProvider || '').trim();
     this._ttsVoice = String(options.ttsVoice || '').trim();
@@ -485,7 +485,8 @@ export class TtsQueueManager {
                 } catch (_) {
                   // ignore
                 }
-              }
+              },
+              { allowRefetchFallback: false }
             );
           }
         } finally {

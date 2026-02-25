@@ -1,21 +1,18 @@
 import React from 'react';
 
-export function HomeActions({ onStartTour, onInterrupt, interruptDisabled, onContinueTour }) {
+export function HomeActions({ onTourToggle, tourToggleLabel, tourToggleDanger, tourToggleDisabled, onReset }) {
   return (
     <div className="home-actions">
-      <button type="button" className="home-action-btn home-action-primary" onClick={onStartTour}>
-        开始讲解
-      </button>
       <button
         type="button"
-        className="home-action-btn home-action-danger"
-        onClick={onInterrupt}
-        disabled={!!interruptDisabled}
+        className={`home-action-btn ${tourToggleDanger ? 'home-action-danger' : 'home-action-primary'}`}
+        onClick={onTourToggle}
+        disabled={!!tourToggleDisabled}
       >
-        打断
+        {tourToggleLabel || '开始讲解'}
       </button>
-      <button type="button" className="home-action-btn" onClick={onContinueTour}>
-        继续讲解
+      <button type="button" className="home-action-btn" onClick={onReset}>
+        复位
       </button>
     </div>
   );

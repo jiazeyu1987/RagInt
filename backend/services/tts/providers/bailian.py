@@ -179,15 +179,20 @@ def stream_bailian_tts_dashscope(
     additional_params = bailian_cfg.get("additional_params") or {}
     if not isinstance(additional_params, dict):
         additional_params = {}
-    if sample_rate is not None:
-        additional_params["sample_rate"] = sample_rate
+    # Do not force `sample_rate` via additional_params.
+    # The SDK request already carries target format (e.g. WAV_16000HZ...), and
+    # duplicate/unsupported fields can trigger "Invalid payload data" on server side.
+    additional_params.pop("sample_rate", None)
 
     volume = bailian_cfg.get("volume", None)
     volume = int(volume) if volume is not None and str(volume).strip() != "" else 50
+    volume = max(0, min(100, volume))
     speech_rate = bailian_cfg.get("speech_rate", None)
     speech_rate = float(speech_rate) if speech_rate is not None and str(speech_rate).strip() != "" else 1.0
+    speech_rate = max(0.5, min(2.0, speech_rate))
     pitch_rate = bailian_cfg.get("pitch_rate", None)
     pitch_rate = float(pitch_rate) if pitch_rate is not None and str(pitch_rate).strip() != "" else 1.0
+    pitch_rate = max(0.5, min(2.0, pitch_rate))
 
     class Callback(ResultCallback):
         def __init__(self, logger: logging.Logger):
@@ -416,6 +421,7 @@ def stream_bailian_tts_dashscope(
         raise
     except Exception as e:
         logger.error(f"[{request_id}] dashscope_tts_exception {e}", exc_info=True)
+        raise
     finally:
         stop_event.set()
         if speech_synthesizer is not None:
@@ -438,4 +444,3 @@ def stream_bailian_tts_dashscope(
             else:
                 with contextlib.suppress(Exception):
                     speech_synthesizer.close()
-
