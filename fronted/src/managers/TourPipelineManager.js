@@ -162,9 +162,8 @@ export class TourPipelineManager {
     const tail = String(rawTail || '').trim();
     if (!tail) return '';
 
-    // If the previous answer already contains a "go to next stop" transition, don't echo it again.
-    // This reduces: "接下来我们去下一站/请大家跟我来" + "欢迎来到下一站" duplication.
-    const hints = ['接下来', '下一站', '继续参观', '请大家跟我来', '我们来到了', '让我们来到', '欢迎来到'];
+    // If the previous answer already contains transition words, suppress tail echo.
+    const hints = ['接下来', '下一站', '继续参观', '请大家跟我来', '我们来到', '让我们来到', '欢迎来到'];
     for (const h of hints) {
       if (tail.includes(h)) return '';
     }
@@ -172,7 +171,7 @@ export class TourPipelineManager {
     const maxLen = 80;
     let out = tail;
     if (out.length > maxLen) out = out.slice(-maxLen);
-    out = out.replace(/^[，。；、\s]+/g, '').replace(/[，。；、\s]+$/g, '');
+    out = out.replace(/^[,.;:\s，。；：]+/g, '').replace(/[,.;:\s，。；：]+$/g, '');
     return out;
   }
 
@@ -181,12 +180,13 @@ export class TourPipelineManager {
     const stopName = this._getStopName(idx);
     const stops = this._stops();
     const n = stops.length;
-    const title = stopName ? `第${idx + 1}站「${stopName}」` : `第${idx + 1}站`;
+    const title = stopName ? `第${idx + 1}站“${stopName}”` : `第${idx + 1}站`;
     const suffix = n ? `（共${n}站）` : '';
+
     const rawTail =
       tailOverride != null ? String(tailOverride || '').trim() : String(this._getLastAnswerTail() || '').trim();
     const profile = String(this._getAudienceProfile() || '').trim();
-    const profileHint = profile ? `\n\n【人群画像】${profile}` : '';
+    const profileHint = profile ? `\n受众：${profile}` : '';
 
     const durs = this._getPerStopDurations() || [];
     const targets = this._getPerStopTargetChars() || [];
@@ -196,30 +196,30 @@ export class TourPipelineManager {
       Number.isFinite(Number(targets[idx])) && Number(targets[idx]) > 0
         ? Number(targets[idx])
         : Math.max(30, Math.round(dur * 4.5));
-    const durHint = `\n\n【本站讲解时长】约${dur}秒（建议总字数约${targetChars}字，按中文语速估算）`;
+    const durHint = `\n时长：约${dur}秒，建议约${targetChars}字。`;
 
     const isContinuous = !!(this._isContinuousTourEnabled() && this._active);
     const tail = isContinuous ? this._compressTailForContinuity(rawTail) : rawTail;
-    const tailHint = tail ? `\n\n【上一段结束语（供承接）】${tail}` : '';
+    const tailHint = tail ? `\n上一段结尾（用于承接）：${tail}` : '';
     const continuityHint = isContinuous
-      ? `\n\n【衔接要求】连续讲解模式：上一站刚结束。\n- 开头禁止使用“欢迎来到/接下来我们来到/让我们来到/我们来到了/下面我们来看”等固定过渡话术。\n- 用1句自然承接上一站（不要复述“请大家跟我来/继续参观”等过渡句），然后直接进入本站主题。\n- 结尾不要预告下一站（除非我明确要求）。`
+      ? '\n连续讲解要求：自然承接上一站，直接进入当前站主题，不要寒暄，不要预告下一站。'
       : '';
 
+    const outputHint =
+      '\n输出要求：只输出一段连续讲解正文，不要分点，不要标题，不要列表，不要使用【】[]#*等特殊格式符号；必须使用基础标点（，。；：！？）自然断句。';
+    const languageHint = '\n语言要求：口语化、可直接播报、句子顺畅。';
+
     if (action === 'start') {
-      return `请开始展厅讲解：从${title}${suffix}开始，先给出1-2句开场白，再分点讲解本站重点。${durHint}${profileHint}`;
+      return `请开始讲解${title}${suffix}，生成用于口播的一段讲解稿。${durHint}${profileHint}${outputHint}${languageHint}`;
     }
     if (action === 'continue') {
-      return `继续讲解${title}${suffix}：承接上一段内容，补充关键细节与示例，保持短句分段。${durHint}${tailHint}${profileHint}${continuityHint}`;
+      return `继续讲解${title}${suffix}，承接上一段内容，生成用于口播的一段讲解稿。${durHint}${tailHint}${profileHint}${continuityHint}${outputHint}${languageHint}`;
     }
     if (action === 'next') {
-      if (isContinuous) {
-        return `继续讲解：${title}${suffix}。\n请开始讲解：先用1句概括本站主题，再分点说明。${durHint}${tailHint}${profileHint}${continuityHint}`;
-      }
-      return `现在进入${title}${suffix}：请开始讲解，先概括本站主题，再分点说明。${durHint}${tailHint}${profileHint}`;
+      return `现在进入${title}${suffix}，请生成用于口播的一段讲解稿。${durHint}${tailHint}${profileHint}${continuityHint}${outputHint}${languageHint}`;
     }
-    return '继续讲解';
+    return '继续讲解，输出一段可直接播报的中文正文。';
   }
-
   async startContinuousTour({ startIndex, firstAction, askQuestion, stopsOverride }) {
     this._stopsOverride = Array.isArray(stopsOverride) && stopsOverride.length ? stopsOverride : null;
     const stops = this._stops();
@@ -241,11 +241,14 @@ export class TourPipelineManager {
       const prompt = this.buildTourPrompt(promptAction, start);
       await askQuestion(prompt, { tourAction: action, tourStopIndex: start, continuous: true, continuousRoot: true });
     } finally {
-      if (this._isInterruptEpochCurrent(epoch)) {
+      // Keep continuous mode active after the root ask returns.
+      // Next stops are fetched asynchronously and enqueued by prefetch callbacks.
+      // If we mark inactive here, those callbacks are canceled and auto-advance stops after the first stop.
+      if (!this._isInterruptEpochCurrent(epoch)) {
         this._active = false;
         this._stopsOverride = null;
-        this.abortPrefetch('continuous_end');
-        this._log('[TOUR] continuous end', `epoch=${epoch}`);
+        this.abortPrefetch('continuous_end_interrupted');
+        this._log('[TOUR] continuous end (interrupted)', `epoch=${epoch}`);
       }
     }
   }
@@ -400,7 +403,7 @@ export class TourPipelineManager {
             stop_index: idx,
             stop_name: this._getStopName(idx),
             tour_action: 'next',
-            action_type: '切站',
+            action_type: '鍒囩珯',
           },
         }),
         signal: ctl.signal,
@@ -554,3 +557,4 @@ export class TourPipelineManager {
     }
   }
 }
+
