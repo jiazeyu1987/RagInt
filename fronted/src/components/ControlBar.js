@@ -95,13 +95,15 @@ export function ControlBar({
 
       {guideEnabled ? (
         <label className="kb-select">
-          <span>时长</span>
-          <select value={guideDuration} onChange={(e) => onChangeGuideDuration && onChangeGuideDuration(e.target.value)}>
-            <option value="30">30秒</option>
-            <option value="60">1分钟</option>
-            <option value="180">3分钟</option>
-            <option value="1200">20分钟</option>
-          </select>
+          <span>时长(秒)</span>
+          <input
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            value={String(guideDuration || '10')}
+            onChange={(e) => onChangeGuideDuration && onChangeGuideDuration(e.target.value)}
+            placeholder="10"
+          />
         </label>
       ) : null}
 

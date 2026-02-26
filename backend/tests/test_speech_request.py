@@ -60,3 +60,23 @@ def test_parse_ask_request_supports_tts_speed_header_fallback():
         assert err is None
         assert parsed is not None
         assert abs(float(parsed.tts_speed) - 1.25) < 1e-6
+
+
+def test_parse_ask_request_parses_qa_answer_target_chars():
+    app = Flask(__name__)
+    data = {"question": "hi", "qa_answer_target_chars": "220"}
+    with app.test_request_context("/api/ask", method="POST", json=data):
+        parsed, err = parse_ask_request(deps=_Deps(), data=data)
+        assert err is None
+        assert parsed is not None
+        assert parsed.qa_answer_target_chars == 220
+
+
+def test_parse_ask_request_parses_qa_audio_cache_confidence_threshold():
+    app = Flask(__name__)
+    data = {"question": "hi", "qa_audio_cache_confidence_threshold": "0.66"}
+    with app.test_request_context("/api/ask", method="POST", json=data):
+        parsed, err = parse_ask_request(deps=_Deps(), data=data)
+        assert err is None
+        assert parsed is not None
+        assert abs(float(parsed.qa_audio_cache_confidence_threshold) - 0.66) < 1e-6

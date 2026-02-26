@@ -61,6 +61,8 @@ function AppShell() {
   const [inputText, setInputText] = useState('');
   const [lastQuestion, setLastQuestion] = useState('');
   const [answer, setAnswer] = useState('');
+  const [answerCacheMeta, setAnswerCacheMeta] = useState({ hit: false, type: '' });
+  const [qaCacheDebug, setQaCacheDebug] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [queueStatus, setQueueStatus] = useState('');
   const [tourButtonState, setTourButtonState] = useState({ started: false, mode: TOUR_BTN_MODE.START });
@@ -88,6 +90,10 @@ function AppShell() {
     setGuideDuration,
     guideStyle,
     setGuideStyle,
+    qaAnswerTargetChars,
+    setQaAnswerTargetChars,
+    qaAudioCacheConfidenceThreshold,
+    setQaAudioCacheConfidenceThreshold,
     showHistoryPanel,
     setShowHistoryPanel,
     showDebugPanel,
@@ -175,6 +181,8 @@ function AppShell() {
       continuousTour,
       guideDuration,
       guideStyle,
+      qaAnswerTargetChars,
+      qaAudioCacheConfidenceThreshold,
       tourMode,
       tourTemplateId,
       tourStopsOverride,
@@ -190,6 +198,10 @@ function AppShell() {
           if (typeof bp.continuousTour === 'boolean') setContinuousTour(bp.continuousTour);
           if (typeof bp.guideDuration === 'string' && bp.guideDuration) setGuideDuration(bp.guideDuration);
           if (typeof bp.guideStyle === 'string' && bp.guideStyle) setGuideStyle(bp.guideStyle);
+          if (typeof bp.qaAnswerTargetChars === 'string') setQaAnswerTargetChars(bp.qaAnswerTargetChars);
+          if (typeof bp.qaAudioCacheConfidenceThreshold === 'string') {
+            setQaAudioCacheConfidenceThreshold(bp.qaAudioCacheConfidenceThreshold);
+          }
           if (typeof bp.tourMode === 'string' && bp.tourMode) setTourMode(bp.tourMode);
           if (typeof bp.tourTemplateId === 'string') setTourTemplateId(bp.tourTemplateId);
           if (Array.isArray(bp.tourStopsOverride)) setTourStopsOverride(bp.tourStopsOverride);
@@ -214,6 +226,8 @@ function AppShell() {
   const audienceProfileRef = useRef(audienceProfile);
   const guideDurationRef = useRef(guideDuration);
   const guideStyleRef = useRef(guideStyle);
+  const qaAnswerTargetCharsRef = useRef(qaAnswerTargetChars);
+  const qaAudioCacheConfidenceThresholdRef = useRef(qaAudioCacheConfidenceThreshold);
   const tourModeRef = useRef(tourMode);
   const tourTemplateIdRef = useRef(tourTemplateId);
   const tourStopsOverrideRef = useRef(tourStopsOverride);
@@ -399,6 +413,10 @@ function AppShell() {
     guideDurationRef,
     guideStyle,
     guideStyleRef,
+    qaAnswerTargetChars,
+    qaAnswerTargetCharsRef,
+    qaAudioCacheConfidenceThreshold,
+    qaAudioCacheConfidenceThresholdRef,
     tourMode,
     tourModeRef,
     tourTemplateId,
@@ -547,6 +565,8 @@ function AppShell() {
     debugMark,
     setLastQuestion,
     setAnswer,
+    setAnswerCacheMeta,
+    setQaCacheDebug,
     setIsLoading,
     setQueueStatus,
     setTourState,
@@ -565,6 +585,8 @@ function AppShell() {
     guideEnabledRef,
     guideDurationRef,
     guideStyleRef,
+    qaAnswerTargetCharsRef,
+    qaAudioCacheConfidenceThresholdRef,
     audienceProfileRef,
     useAgentModeRef,
     selectedChatRef,
@@ -798,6 +820,8 @@ function AppShell() {
     setInputText('');
     setLastQuestion('');
     setAnswer('');
+    setAnswerCacheMeta({ hit: false, type: '' });
+    setQaCacheDebug(null);
     setQueueStatus('');
     setQuestionQueue([]);
     setCurrentIntent(null);
@@ -820,6 +844,10 @@ function AppShell() {
     setGuideDuration,
     guideStyle,
     setGuideStyle,
+    qaAnswerTargetChars,
+    setQaAnswerTargetChars,
+    qaAudioCacheConfidenceThreshold,
+    setQaAudioCacheConfidenceThreshold,
     tourMeta,
     tourZone,
     setTourZone,
@@ -910,6 +938,8 @@ function AppShell() {
           onPickHistoryQuestion={onPickHistoryQuestion}
           lastQuestion={lastQuestion}
           answer={answer}
+          answerCacheMeta={answerCacheMeta}
+          qaCacheDebug={qaCacheDebug}
           isLoading={isLoading}
           queueStatus={queueStatus}
           messagesEndRef={messagesEndRef}

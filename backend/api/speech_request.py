@@ -27,6 +27,8 @@ class AskRequest:
     tts_provider: str | None
     tts_voice: str | None
     tts_speed: float | None
+    qa_answer_target_chars: int | None
+    qa_audio_cache_confidence_threshold: float | None
 
 
 def _normalize_guide(guide) -> dict:
@@ -87,6 +89,8 @@ def parse_ask_request(*, deps, data: dict | None) -> tuple[AskRequest | None, Re
     tts_speed = _as_float_or_none(data.get("tts_speed"))
     if tts_speed is None:
         tts_speed = _as_float_or_none(flask_request.headers.get("X-TTS-Speed"))
+    qa_answer_target_chars = _as_int_or_none(data.get("qa_answer_target_chars"))
+    qa_audio_cache_confidence_threshold = _as_float_or_none(data.get("qa_audio_cache_confidence_threshold"))
 
     return (
         AskRequest(
@@ -106,6 +110,8 @@ def parse_ask_request(*, deps, data: dict | None) -> tuple[AskRequest | None, Re
             tts_provider=tts_provider,
             tts_voice=tts_voice,
             tts_speed=tts_speed,
+            qa_answer_target_chars=qa_answer_target_chars,
+            qa_audio_cache_confidence_threshold=qa_audio_cache_confidence_threshold,
         ),
         None,
     )

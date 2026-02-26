@@ -60,9 +60,9 @@ class TourPlanner:
         try:
             duration_s = int(duration_s)
         except Exception:
-            duration_s = 60
+            duration_s = 10
         # Support longer tours (e.g. 20min = 1200s) while keeping a safe upper bound.
-        duration_s = max(15, min(duration_s, 3600))
+        duration_s = max(1, min(duration_s, 3600))
 
         tour_cfg = (cfg or {}).get("tour_planner") if isinstance(cfg, dict) else {}
         if not isinstance(tour_cfg, dict):
@@ -145,7 +145,7 @@ class TourPlanner:
 
         # Fallback: allocate total duration evenly.
         if not stop_durations or len(stop_durations) != len(stops_norm) or sum(stop_durations) <= 0:
-            per = max(15, int(round(float(duration_s) / max(1, len(stops_norm)))))
+            per = max(1, int(round(float(duration_s) / max(1, len(stops_norm)))))
             stop_durations = [per for _ in stops_norm]
 
         # Derive per-stop target chars for Chinese speech planning (heuristic).
@@ -173,14 +173,14 @@ class TourPlanner:
         try:
             duration_s = int(duration_s)
         except Exception:
-            duration_s = 60
-        duration_s = max(15, min(duration_s, 3600))
+            duration_s = 10
+        duration_s = max(1, min(duration_s, 3600))
 
         stops_norm = [self._normalize_str(s) for s in (stops or []) if self._normalize_str(s)]
         if not stops_norm:
             return self.make_plan({}, zone=zone, profile=profile, duration_s=duration_s)
 
-        per = max(15, int(round(float(duration_s) / max(1, len(stops_norm)))))
+        per = max(1, int(round(float(duration_s) / max(1, len(stops_norm)))))
         stop_durations = [per for _ in stops_norm]
 
         cps = 4.5

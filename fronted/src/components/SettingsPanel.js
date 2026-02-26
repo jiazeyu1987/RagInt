@@ -10,6 +10,7 @@ const TABS = [
   { key: 'tts', label: 'TTS设置' },
   { key: 'debug', label: 'Debug设置' },
   { key: 'ops', label: '运维设置' },
+  { key: 'qa', label: '问答缓存' },
   { key: 'archive', label: '存档设置' },
   { key: 'asr', label: 'ASR设置' },
   { key: 'mode', label: '模式设置' },
@@ -204,6 +205,44 @@ function OpsTab({ controlBarProps, stagePanelProps, onQuickSummary, onPrevStop, 
         <SellingPointsPanel stopName={sellingPointsStopName} hideTitle />
       </SettingsGroup>
 
+    </>
+  );
+}
+
+function QaTab({ controlBarProps }) {
+  const c = controlBarProps || {};
+  return (
+    <>
+      <SettingsGroup title="问答配置">
+        <div className="settings-form">
+          <label className="settings-field">
+            <span>问答回答字数</span>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={String(c.qaAnswerTargetChars || '10')}
+              onChange={(e) => c.onChangeQaAnswerTargetChars && c.onChangeQaAnswerTargetChars(e.target.value)}
+              placeholder="最小 1"
+            />
+          </label>
+          <label className="settings-field">
+            <span>缓存置信度阈值</span>
+            <input
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              value={String(c.qaAudioCacheConfidenceThreshold || '0.85')}
+              onChange={(e) =>
+                c.onChangeQaAudioCacheConfidenceThreshold && c.onChangeQaAudioCacheConfidenceThreshold(e.target.value)
+              }
+              placeholder="0~1"
+            />
+          </label>
+        </div>
+      </SettingsGroup>
+
       <SettingsGroup title="问答语音缓存管理">
         <QaAudioCachePanel />
       </SettingsGroup>
@@ -319,18 +358,6 @@ function ModeTab({ controlBarProps, tourModePanelProps }) {
             <input type="checkbox" checked={!!c.guideEnabled} onChange={(e) => c.onChangeGuideEnabled && c.onChangeGuideEnabled(e.target.checked)} />
             <span>启用展厅讲解</span>
           </label>
-
-          {c.guideEnabled ? (
-            <label className="settings-field">
-              <span>讲解时长</span>
-              <select value={String(c.guideDuration || '60')} onChange={(e) => c.onChangeGuideDuration && c.onChangeGuideDuration(e.target.value)}>
-                <option value="30">30秒</option>
-                <option value="60">1分钟</option>
-                <option value="180">3分钟</option>
-                <option value="1200">20分钟</option>
-              </select>
-            </label>
-          ) : null}
 
           {c.guideEnabled ? (
             <label className="settings-toggle">
@@ -455,6 +482,9 @@ export function SettingsPanel({
           sellingPointsStopName={sellingPointsStopName}
         />
       );
+    }
+    if (activeTab === 'qa') {
+      return <QaTab controlBarProps={controlBarProps} />;
     }
     if (activeTab === 'archive') {
       return <ArchiveTab controlBarProps={controlBarProps} />;

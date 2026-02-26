@@ -38,6 +38,8 @@ class AskInput:
     tts_provider: str | None = None
     tts_voice: str | None = None
     tts_speed: float | None = None
+    qa_answer_target_chars: int | None = None
+    qa_audio_cache_confidence_threshold: float | None = None
 
 
 @dataclass(frozen=True)
@@ -124,7 +126,6 @@ class ConversationOrchestrator:
                 and qa_audio_cache_enabled
                 and self._qa_audio_matcher is not None
                 and not str(inp.recording_id or "").strip()
-                and str(inp.tts_provider or "").strip()
             ):
                 with contextlib.suppress(Exception):
                     from backend.services.qa_audio_matcher import TtsProfile
@@ -206,7 +207,14 @@ class ConversationOrchestrator:
             segment_min_chars=segment_min_chars,
         )
 
-    def _build_qa_inputs(self, *, cfg: RagflowRuntimeConfig, question: str, guide: dict) -> tuple[str, bool, bool, int]:
+    def _build_qa_inputs(
+        self,
+        *,
+        cfg: RagflowRuntimeConfig,
+        question: str,
+        guide: dict,
+        qa_answer_target_chars: int | None = None,
+    ) -> tuple[str, bool, bool, int]:
         question_for_rag = apply_guide_prompt(raw_question=question, guide=guide)
         qa_constraints_enabled = bool(cfg.qa_constraints.enabled)
         qa_no_self_intro = bool(cfg.qa_constraints.no_self_intro)
@@ -225,7 +233,23 @@ class ConversationOrchestrator:
             selling_points_store=self._selling_points_store,
             logger=self._logger,
         )
-        question_for_rag = apply_explanation_script_requirements(question_for_rag, enabled=True)
+        target_chars = 0
+        try:
+            target_chars = int(qa_answer_target_chars or 0)
+        except Exception:
+            target_chars = 0
+        if bool(guide.get("tour_action")):
+            target_chars = 0
+        else:
+            if target_chars <= 0:
+                target_chars = 1
+            target_chars = max(1, min(5000, target_chars))
+        question_for_rag = apply_explanation_script_requirements(
+            question_for_rag,
+            enabled=True,
+            answer_target_chars=target_chars,
+            audience_profile=str(guide.get("audience_profile") or "").strip(),
+        )
         return question_for_rag, apply_qa_constraints, qa_no_self_intro, qa_max_answer_chars
 
     def _build_runtime(self, *, ragflow_config: dict | None) -> AskRuntime:
@@ -239,7 +263,7 @@ class ConversationOrchestrator:
         qa_audio_cache_enabled = bool(cfg.qa_audio_cache.enabled)
         qa_audio_recall_top_k = int(cfg.qa_audio_cache.recall_top_k)
         qa_audio_classifier_threshold = float(cfg.qa_audio_cache.classifier_threshold)
-        qa_audio_classifier_chat_name = str(cfg.qa_audio_cache.classifier_chat_name or "__qa_audio_classifier__").strip()
+        qa_audio_classifier_chat_name = str(cfg.qa_audio_cache.classifier_chat_name or "问题比对").strip()
         return AskRuntime(
             cfg=cfg,
             safety_filter=safety_filter,
@@ -250,7 +274,7 @@ class ConversationOrchestrator:
             qa_audio_cache_enabled=qa_audio_cache_enabled,
             qa_audio_recall_top_k=qa_audio_recall_top_k,
             qa_audio_classifier_threshold=qa_audio_classifier_threshold,
-            qa_audio_classifier_chat_name=qa_audio_classifier_chat_name or "__qa_audio_classifier__",
+            qa_audio_classifier_chat_name=qa_audio_classifier_chat_name or "问题比对",
         )
 
     def _maybe_block_input(self, *, request_id: str, question: str, safety_filter: SensitiveWordsFilter, safety_block_msg: str):
@@ -354,6 +378,11 @@ class ConversationOrchestrator:
 
         cache_enabled = runtime.cache_enabled
         cache_ttl_s = runtime.cache_ttl_s
+        qa_audio_conf_threshold = float(runtime.qa_audio_classifier_threshold)
+        with contextlib.suppress(Exception):
+            if inp.qa_audio_cache_confidence_threshold is not None:
+                qa_audio_conf_threshold = float(inp.qa_audio_cache_confidence_threshold)
+        qa_audio_conf_threshold = max(0.0, min(1.0, qa_audio_conf_threshold))
 
         audio_cache_outcome = None
         if not str(inp.recording_id or "").strip():
@@ -363,7 +392,7 @@ class ConversationOrchestrator:
                 qa_audio_matcher=self._qa_audio_matcher,
                 qa_audio_cache_enabled=runtime.qa_audio_cache_enabled,
                 qa_audio_recall_top_k=runtime.qa_audio_recall_top_k,
-                qa_audio_classifier_threshold=runtime.qa_audio_classifier_threshold,
+                qa_audio_classifier_threshold=qa_audio_conf_threshold,
                 qa_audio_classifier_chat_name=runtime.qa_audio_classifier_chat_name,
                 tts_provider=str(inp.tts_provider or ""),
                 tts_voice=str(inp.tts_voice or ""),
@@ -386,6 +415,19 @@ class ConversationOrchestrator:
                 qa_audio_cache_enabled=runtime.qa_audio_cache_enabled,
             )
             return
+
+        # Expose QA-audio-cache miss diagnostics to frontend/debug panel.
+        if (
+            not str(inp.recording_id or "").strip()
+            and runtime.qa_audio_cache_enabled
+            and self._qa_audio_matcher is not None
+            and hasattr(self._qa_audio_matcher, "get_last_debug")
+        ):
+            with contextlib.suppress(Exception):
+                cache_debug = self._qa_audio_matcher.get_last_debug() or {}
+                if isinstance(cache_debug, dict) and cache_debug:
+                    self._logger.info(f"[{request_id}] qa_audio_cache_debug {cache_debug}")
+                    yield make_meta({"qa_audio_cache_debug": cache_debug})
 
         cache_outcome = yield from _maybe_stream_cache_shortcut(
             request_id=request_id,
@@ -415,6 +457,7 @@ class ConversationOrchestrator:
             cfg=cfg,
             question=question_raw,
             guide=guide,
+            qa_answer_target_chars=inp.qa_answer_target_chars,
         )
         text_cleaning_cfg = cfg.text_cleaning
 

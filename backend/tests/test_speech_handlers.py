@@ -25,6 +25,8 @@ class _Parsed:
     tts_provider: str | None = "modelscope"
     tts_voice: str | None = "voice-1"
     tts_speed: float | None = 1.25
+    qa_answer_target_chars: int | None = 180
+    qa_audio_cache_confidence_threshold: float | None = 0.9
     stop_name: str | None = "A"
     stop_index: int | None = 1
     tour_action: str | None = "next"
@@ -95,6 +97,8 @@ def test_build_ask_input_uses_resolved_conversation_name():
     assert inp.tts_provider == "modelscope"
     assert inp.tts_voice == "voice-1"
     assert abs(float(inp.tts_speed) - 1.25) < 1e-6
+    assert inp.qa_answer_target_chars == 180
+    assert abs(float(inp.qa_audio_cache_confidence_threshold) - 0.9) < 1e-6
 
 
 def test_stream_sse_response_encodes_payload_lines():

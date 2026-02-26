@@ -106,7 +106,7 @@ def _parse_qa_audio_cache_cfg(ragflow_config: dict) -> QaAudioCacheCfg:
         classifier_threshold = float(cfg.get("classifier_threshold") or 0.85)
     except Exception:
         classifier_threshold = 0.85
-    classifier_chat_name = str(cfg.get("classifier_chat_name") or "__qa_audio_classifier__").strip() or "__qa_audio_classifier__"
+    classifier_chat_name = str(cfg.get("classifier_chat_name") or "问题比对").strip() or "问题比对"
     recall_top_k = max(1, min(recall_top_k, 50))
     classifier_threshold = max(0.0, min(classifier_threshold, 1.0))
     return QaAudioCacheCfg(

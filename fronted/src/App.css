@@ -947,6 +947,40 @@ h1 {
   font-size: 15px;
 }
 
+.answer-section.answer-section-cache-hit {
+  border-color: rgba(22, 119, 255, 0.32);
+  background: rgba(22, 119, 255, 0.05);
+}
+
+.answer-section.answer-section-cache-hit p {
+  color: #0b5ed7;
+}
+
+.answer-cache-badge {
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #0b5ed7;
+}
+
+.cache-debug-metrics {
+  margin-top: 8px;
+  color: #4b5563;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.cache-debug-hint {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px dashed rgba(250, 81, 81, 0.35);
+  background: rgba(250, 81, 81, 0.06);
+  color: #b42318;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .loading {
   margin-top: 14px;
   color: var(--muted);

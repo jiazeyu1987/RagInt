@@ -190,7 +190,7 @@ export class TourPipelineManager {
 
     const durs = this._getPerStopDurations() || [];
     const targets = this._getPerStopTargetChars() || [];
-    const fallbackDur = Math.max(15, Number(this._getGuideDuration() || 60) || 60);
+    const fallbackDur = Math.max(1, Number(this._getGuideDuration() || 10) || 10);
     const dur = Number.isFinite(Number(durs[idx])) && Number(durs[idx]) > 0 ? Number(durs[idx]) : fallbackDur;
     const targetChars =
       Number.isFinite(Number(targets[idx])) && Number(targets[idx]) > 0
@@ -397,9 +397,10 @@ export class TourPipelineManager {
           agent_id: conv.useAgentMode ? conv.selectedAgentId || null : null,
           guide: {
             enabled: !!this._getGuideEnabled(),
-            duration_s: Math.max(15, Number(this._getGuideDuration() || 60) || 60),
+            duration_s: Math.max(1, Number(this._getGuideDuration() || 10) || 10),
             continuous: true,
             style: String(this._getGuideStyle() || 'friendly'),
+            audience_profile: String(this._getAudienceProfile() || ''),
             stop_index: idx,
             stop_name: this._getStopName(idx),
             tour_action: 'next',

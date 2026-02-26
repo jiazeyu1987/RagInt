@@ -29,6 +29,10 @@ export function useStateRefsSync({
   guideDurationRef,
   guideStyle,
   guideStyleRef,
+  qaAnswerTargetChars,
+  qaAnswerTargetCharsRef,
+  qaAudioCacheConfidenceThreshold,
+  qaAudioCacheConfidenceThresholdRef,
   tourMode,
   tourModeRef,
   tourTemplateId,
@@ -98,6 +102,15 @@ export function useStateRefsSync({
     guideDurationRef.current = guideDuration;
     guideStyleRef.current = guideStyle;
   }, [guideDuration, guideStyle, guideDurationRef, guideStyleRef]);
+
+  useEffect(() => {
+    qaAnswerTargetCharsRef.current = String(qaAnswerTargetChars || '1');
+  }, [qaAnswerTargetChars, qaAnswerTargetCharsRef]);
+
+  useEffect(() => {
+    const n = Number(qaAudioCacheConfidenceThreshold);
+    qaAudioCacheConfidenceThresholdRef.current = Number.isFinite(n) ? String(Math.max(0, Math.min(1, n))) : '0.85';
+  }, [qaAudioCacheConfidenceThreshold, qaAudioCacheConfidenceThresholdRef]);
 
   useEffect(() => {
     tourModeRef.current = String(tourMode || 'basic');

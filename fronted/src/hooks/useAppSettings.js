@@ -8,6 +8,30 @@ function normalizeTtsFetchConcurrency(value) {
   return 4;
 }
 
+function normalizeGuideDuration(value) {
+  const digits = String(value == null ? '' : value).replace(/[^\d]/g, '');
+  if (!digits) return '10';
+  const n = Number(digits);
+  if (!Number.isFinite(n)) return '10';
+  return String(Math.max(1, Math.min(3600, Math.round(n))));
+}
+
+function normalizeQaAnswerTargetChars(value) {
+  const digits = String(value == null ? '' : value).replace(/[^\d]/g, '');
+  if (!digits) return '1';
+  const n = Number(digits);
+  if (!Number.isFinite(n)) return '1';
+  return String(Math.max(1, Math.min(5000, Math.round(n))));
+}
+
+function normalizeQaAudioCacheConfidenceThreshold(value) {
+  const s = String(value == null ? '' : value).trim();
+  if (!s) return '0.85';
+  const n = Number(s);
+  if (!Number.isFinite(n)) return '0.85';
+  return String(Math.max(0, Math.min(1, n)));
+}
+
 export function useAppSettings() {
   const [ttsMode, setTtsMode] = useLocalStorageState('ttsMode', 'modelscope', {
     serialize: (v) => String(v || 'modelscope'),
@@ -65,15 +89,33 @@ export function useAppSettings() {
     deserialize: (raw) => String(raw || ''),
   });
 
-  const [guideDuration, setGuideDuration] = useLocalStorageState('guideDuration', '60', {
-    serialize: (v) => String(v || '60'),
-    deserialize: (raw) => String(raw || '60'),
+  const [guideDuration, setGuideDurationState] = useLocalStorageState('guideDuration', '10', {
+    serialize: (v) => normalizeGuideDuration(v),
+    deserialize: (raw) => normalizeGuideDuration(raw),
   });
+  const setGuideDuration = (value) => setGuideDurationState(normalizeGuideDuration(value));
 
   const [guideStyle, setGuideStyle] = useLocalStorageState('guideStyle', 'friendly', {
     serialize: (v) => String(v || 'friendly'),
     deserialize: (raw) => String(raw || 'friendly'),
   });
+
+  const [qaAnswerTargetChars, setQaAnswerTargetCharsState] = useLocalStorageState('qaAnswerTargetChars', '10', {
+    serialize: (v) => normalizeQaAnswerTargetChars(v),
+    deserialize: (raw) => normalizeQaAnswerTargetChars(raw),
+  });
+  const setQaAnswerTargetChars = (value) => setQaAnswerTargetCharsState(normalizeQaAnswerTargetChars(value));
+
+  const [qaAudioCacheConfidenceThreshold, setQaAudioCacheConfidenceThresholdState] = useLocalStorageState(
+    'qaAudioCacheConfidenceThreshold',
+    '0.85',
+    {
+      serialize: (v) => normalizeQaAudioCacheConfidenceThreshold(v),
+      deserialize: (raw) => normalizeQaAudioCacheConfidenceThreshold(raw),
+    }
+  );
+  const setQaAudioCacheConfidenceThreshold = (value) =>
+    setQaAudioCacheConfidenceThresholdState(normalizeQaAudioCacheConfidenceThreshold(value));
 
   const [showHistoryPanel, setShowHistoryPanel] = useLocalStorageState('uiShowHistory', false, {
     serialize: (v) => (v ? '1' : '0'),
@@ -186,6 +228,10 @@ export function useAppSettings() {
     setGuideDuration,
     guideStyle,
     setGuideStyle,
+    qaAnswerTargetChars,
+    setQaAnswerTargetChars,
+    qaAudioCacheConfidenceThreshold,
+    setQaAudioCacheConfidenceThreshold,
     showHistoryPanel,
     setShowHistoryPanel,
     showDebugPanel,

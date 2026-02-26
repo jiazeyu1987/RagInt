@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+
 import numpy as np
 
 from backend.services.qa_audio_cache_store import QaAudioCacheStore
@@ -99,3 +101,38 @@ def test_qa_audio_store_upsert_same_question_updates_same_pair(tmp_path):
 
     all_pairs = store.list_pairs(limit=20, offset=0)
     assert len(all_pairs) == 1
+
+
+def test_find_exact_pair_legacy_normalized_fallback(tmp_path):
+    root_dir = tmp_path / "qa_audio_root"
+    db_path = tmp_path / "qa_audio.db"
+    store = QaAudioCacheStore(root_dir=root_dir, db_path=db_path)
+
+    pid = store.upsert_pair_with_audio(
+        question_text="9*0=?",
+        answer_text="ans",
+        audio_bytes=b"RIFF_FAKE_WAV_Q",
+        tts_provider="flash",
+        tts_voice="",
+        tts_speed=1.0,
+        source_request_id="ask_q",
+        embedding=_vec(1.0, 0.0, 0.0, 0.0),
+    )
+    assert pid is not None
+
+    # Simulate an old row that stored a legacy normalized_question key.
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("UPDATE qa_audio_pairs SET normalized_question = ? WHERE id = ?", ("9*0\u7b49\u4e8e\u591a\u5c11", int(pid)))
+        conn.commit()
+    finally:
+        conn.close()
+
+    pair = store.find_exact_pair(
+        question_text="9*0\u7b49\u4e8e\u591a\u5c11",
+        tts_provider="flash",
+        tts_voice="",
+        tts_speed=1.0,
+    )
+    assert pair is not None
+    assert int(pair.id) == int(pid)

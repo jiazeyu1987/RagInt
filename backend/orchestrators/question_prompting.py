@@ -51,20 +51,68 @@ def extract_base_question(raw_question: str) -> str:
     return text
 
 
-def apply_explanation_script_requirements(question_for_rag: str, *, enabled: bool = True) -> str:
+def _norm_answer_target_chars(value: int | float | str | None) -> int:
+    try:
+        n = int(value if value is not None else 0)
+    except Exception:
+        n = 0
+    if n <= 0:
+        return 0
+    return max(1, min(n, 5000))
+
+
+def _norm_audience_profile(value: str | None) -> str:
+    text = re.sub(r"\s+", " ", str(value or "").strip())
+    if not text:
+        return ""
+    return text[:40]
+
+
+def apply_explanation_script_requirements(
+    question_for_rag: str,
+    *,
+    enabled: bool = True,
+    answer_target_chars: int | float | str | None = None,
+    audience_profile: str | None = None,
+) -> str:
     if not enabled:
         return str(question_for_rag or "")
     base = str(question_for_rag or "")
     marker = "【口播讲解稿约束】"
+
+    target_chars = _norm_answer_target_chars(answer_target_chars)
+    target_line = f"回答长度控制：{target_chars}个文字左右。\n" if target_chars > 0 else ""
+    profile = _norm_audience_profile(audience_profile)
+    style_line = (
+        f"请用可直接播报的讲解稿风格回复，语言自然连贯，风格请参考人群画像：{profile}。\n"
+        if profile
+        else "请用可直接播报的讲解稿风格回复，语言自然连贯。\n"
+    )
+
     if marker in base:
-        return base
+        # Backward compatibility: if upstream already injected an old constraints block,
+        # rewrite style + length lines to current config.
+        if not target_line and not profile:
+            return base
+        cleaned = base
+        if target_line:
+            cleaned = re.sub(r"回答长度控制：[^\n\r]*(?:\r?\n)?", "", cleaned)
+        if profile:
+            cleaned = re.sub(r"请用可直接播报的讲解稿风格回复[^\n\r]*(?:\r?\n)?", "", cleaned)
+            cleaned = re.sub(rf"{re.escape(marker)}(?:\r?\n)?", f"{marker}\n{style_line}", cleaned, count=1)
+        if not target_line:
+            return cleaned
+        if not cleaned.endswith("\n"):
+            cleaned += "\n"
+        cleaned += target_line
+        return cleaned
 
     req = (
         "\n\n【口播讲解稿约束】\n"
-        "请用可直接播报的讲解稿风格回复，语言自然连贯。\n"
+        f"{style_line}"
         "仅输出正文，不要标题、列表、分点、序号。\n"
         "不要使用特殊符号或格式标记（如【】[]{}<>#*`~^|）。\n"
         "必须使用基础标点（，。；：！？）自然断句，便于TTS分段。\n"
+        f"{target_line}"
     )
     return f"{base}{req}"
-

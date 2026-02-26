@@ -167,6 +167,12 @@
       "json_audio_b64": true
     }
   },
+  "qa_audio_cache": {
+    "enabled": true,
+    "recall_top_k": 20,
+    "classifier_threshold": 0.85,
+    "classifier_chat_name": "问题比对"
+  },
   "timeout": 10,
   "log_level": "INFO",
   "log_file": "/log",

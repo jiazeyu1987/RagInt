@@ -40,7 +40,7 @@ export function useTourPipelineManager({
       isInterruptEpochCurrent: (epoch) =>
         interruptManagerRef && interruptManagerRef.current ? interruptManagerRef.current.isCurrent(epoch) : false,
       getAudienceProfile: () => String((audienceProfileRef && audienceProfileRef.current) || ''),
-      getGuideDuration: () => Number((guideDurationRef && guideDurationRef.current) || 60),
+      getGuideDuration: () => Number((guideDurationRef && guideDurationRef.current) || 10),
       getGuideStyle: () => String((guideStyleRef && guideStyleRef.current) || 'friendly'),
       getGuideEnabled: () => !!(guideEnabledRef && guideEnabledRef.current),
       getPerStopDurations: () => (tourStopDurationsRef ? tourStopDurationsRef.current || [] : []),

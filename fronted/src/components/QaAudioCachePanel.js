@@ -9,11 +9,9 @@ function normalizeSpeedInput(v) {
   return String(n);
 }
 
-function buildQuery({ limit, provider, voice, speed }) {
+function buildQuery({ limit, speed }) {
   const params = new URLSearchParams();
   params.set('limit', String(limit || 100));
-  if (String(provider || '').trim()) params.set('provider', String(provider).trim());
-  if (String(voice || '').trim()) params.set('voice', String(voice).trim());
   if (String(speed || '').trim()) params.set('speed', normalizeSpeedInput(speed));
   return params.toString();
 }
@@ -29,11 +27,9 @@ export function QaAudioCachePanel() {
   const [items, setItems] = useState([]);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
-  const [provider, setProvider] = useState('');
-  const [voice, setVoice] = useState('');
   const [speed, setSpeed] = useState('');
 
-  const query = useMemo(() => buildQuery({ limit: 100, provider, voice, speed }), [provider, voice, speed]);
+  const query = useMemo(() => buildQuery({ limit: 100, speed }), [speed]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -73,14 +69,6 @@ export function QaAudioCachePanel() {
 
       <div className="settings-form" style={{ marginBottom: 10 }}>
         <label className="settings-field">
-          <span>provider</span>
-          <input value={provider} onChange={(e) => setProvider(e.target.value)} placeholder="edge / modelscope" />
-        </label>
-        <label className="settings-field">
-          <span>voice</span>
-          <input value={voice} onChange={(e) => setVoice(e.target.value)} placeholder="voice id" />
-        </label>
-        <label className="settings-field">
           <span>speed</span>
           <input value={speed} onChange={(e) => setSpeed(e.target.value)} placeholder="1.0" />
         </label>
@@ -102,7 +90,7 @@ export function QaAudioCachePanel() {
             return (
               <div key={String(id)} style={{ border: '1px solid rgba(0,0,0,0.08)', borderRadius: 10, padding: 8, marginBottom: 8 }}>
                 <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>
-                  #{id} | {String((it && it.tts_provider) || '')} / {String((it && it.tts_voice) || '')} / {String((it && it.tts_speed) || '')}
+                  #{id} | speed: {String((it && it.tts_speed) || '')}
                 </div>
                 <div style={{ fontSize: 13, marginBottom: 4 }}>Q: {q}</div>
                 <div style={{ fontSize: 13, marginBottom: 6 }}>A: {a}</div>

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import re
 import threading
@@ -10,8 +9,15 @@ from typing import Any
 
 import numpy as np
 
-from backend.config import resolve_tts_request
-from backend.services.audio_utils import ensure_wav_bytes, is_riff_wav
+from backend.services.qa_audio_pipeline_managers import CacheRecallManager
+from backend.services.qa_audio_pipeline_managers import CacheWritebackManager
+from backend.services.qa_audio_pipeline_managers import HitResponseManager
+from backend.services.qa_audio_pipeline_managers import MatchClassifierManager
+from backend.services.qa_audio_pipeline_managers import MatchDecisionManager
+from backend.services.qa_audio_pipeline_managers import MissExecutionManager
+from backend.services.qa_audio_pipeline_managers import QuestionIntakeManager
+from backend.services.qa_audio_pipeline_managers import QuestionNormalizationManager
+from backend.services.qa_audio_utils import DEFAULT_CORE_ENTITY_TERMS
 
 
 @dataclass(frozen=True)
@@ -28,11 +34,33 @@ class QaAudioMatcher:
     2) RAGFlow small-model classification (JSON contract)
     """
 
+    _CORE_ENTITY_TERMS: tuple[str, ...] = DEFAULT_CORE_ENTITY_TERMS
+
     def __init__(self, *, store, ragflow_service, tts_service, logger: logging.Logger | None = None):
         self._store = store
         self._ragflow_service = ragflow_service
         self._tts_service = tts_service
         self._logger = logger or logging.getLogger(__name__)
+        self._debug_local = threading.local()
+
+        self._intake_manager = QuestionIntakeManager()
+        self._normalization_manager = QuestionNormalizationManager(core_terms=self._CORE_ENTITY_TERMS)
+        self._recall_manager = CacheRecallManager(store=store)
+        self._classifier_manager = MatchClassifierManager(ragflow_service=ragflow_service, logger=self._logger)
+        self._decision_manager = MatchDecisionManager()
+        self._hit_manager = HitResponseManager()
+        self._miss_manager = MissExecutionManager()
+        self._writeback_manager = CacheWritebackManager(store=store, tts_service=tts_service, logger=self._logger)
+
+    def _set_last_debug(self, data: dict | None) -> None:
+        try:
+            self._debug_local.last = dict(data or {})
+        except Exception:
+            self._debug_local.last = {}
+
+    def get_last_debug(self) -> dict:
+        data = getattr(self._debug_local, "last", None)
+        return dict(data) if isinstance(data, dict) else {}
 
     @staticmethod
     def _norm_speed(v: float | int | str | None) -> float:
@@ -42,104 +70,76 @@ class QaAudioMatcher:
             x = 1.0
         return round(max(0.5, min(x, 2.0)), 2)
 
+    # Compatibility wrappers (tests and callers may use these private methods).
     def _embed_question(self, text: str, *, dim: int = 512) -> np.ndarray:
-        """
-        Cheap deterministic embedding:
-        - char 1/2/3-gram hashing
-        - signed bucket accumulation + l2 normalize
-        """
-        s = str(text or "").strip().lower()
-        v = np.zeros((int(dim),), dtype=np.float32)
-        if not s:
-            return v
-
-        for n in (1, 2, 3):
-            if len(s) < n:
-                continue
-            for i in range(0, len(s) - n + 1):
-                gram = s[i : i + n]
-                h = hash((n, gram))
-                idx = abs(h) % dim
-                sign = 1.0 if (h & 1) == 0 else -1.0
-                v[idx] += sign
-
-        norm = float(np.linalg.norm(v))
-        if norm > 1e-12:
-            v /= norm
-        return v
+        return self._recall_manager.embed_question(text, dim=dim)
 
     @staticmethod
     def _build_prompt(*, user_question: str, candidates: list[dict]) -> str:
-        lines = []
-        for c in candidates:
-            lines.append(f"- id={int(c.get('pair_id', 0))} | question={str(c.get('question_text') or '')}")
-        if not lines:
-            lines = ["- none"]
-        return (
-            "你是问答缓存匹配分类器。\n"
-            "任务：判断用户问题是否可复用某条历史问题对应的同一语音答案。\n"
-            "仅按问题语义意图判断，不要扩展知识。\n"
-            "必须只输出严格 JSON，不要 markdown，不要多余文本。\n"
-            "JSON schema:\n"
-            '{"match": true|false, "candidate_id": number|null, "confidence": 0~1, "reason": "..."}\n\n'
-            f"用户问题:\n{str(user_question or '').strip()}\n\n"
-            f"候选历史问题:\n{chr(10).join(lines)}\n"
-        )
+        return MatchClassifierManager.build_prompt(user_question=user_question, candidates=candidates)
+
+    @staticmethod
+    def _sanitize_classifier_text(raw_text: str) -> str:
+        return MatchClassifierManager.sanitize_text(raw_text)
 
     @staticmethod
     def _extract_json(raw_text: str) -> str:
-        txt = str(raw_text or "").strip()
-        if not txt:
-            return "{}"
-        txt = re.sub(r"^```(?:json)?\s*", "", txt, flags=re.IGNORECASE)
-        txt = re.sub(r"\s*```$", "", txt)
-        l = txt.find("{")
-        r = txt.rfind("}")
-        if l >= 0 and r > l:
-            return txt[l : r + 1]
-        return txt
+        return MatchClassifierManager.extract_json(raw_text)
+
+    @staticmethod
+    def _try_parse_json_like(raw_text: str) -> dict | None:
+        return MatchClassifierManager.try_parse_json_like(raw_text)
+
+    @staticmethod
+    def _extract_json_objects(raw_text: str) -> list[str]:
+        return MatchClassifierManager.extract_json_objects(raw_text)
+
+    @staticmethod
+    def _build_classifier_prompt(*, user_question: str, candidates: list[dict]) -> str:
+        return MatchClassifierManager.build_prompt(user_question=user_question, candidates=candidates)
+
+    @staticmethod
+    def _char_ngrams(text: str, n: int) -> set[str]:
+        return QuestionNormalizationManager.char_ngrams(text, n)
+
+    @staticmethod
+    def _jaccard(a: set[str], b: set[str]) -> float:
+        return QuestionNormalizationManager.jaccard(a, b)
+
+    @classmethod
+    def _lexical_similarity(cls, a: str, b: str) -> float:
+        manager = QuestionNormalizationManager(core_terms=cls._CORE_ENTITY_TERMS)
+        return manager.lexical_similarity(a, b)
+
+    @classmethod
+    def _extract_core_terms(cls, text: str) -> set[str]:
+        manager = QuestionNormalizationManager(core_terms=cls._CORE_ENTITY_TERMS)
+        return manager.extract_core_terms(text)
+
+    @classmethod
+    def _detect_entity_conflict(cls, *, query: str, candidate: str) -> tuple[bool, list[str], list[str]]:
+        manager = QuestionNormalizationManager(core_terms=cls._CORE_ENTITY_TERMS)
+        return manager.detect_entity_conflict(query=query, candidate=candidate)
+
+    @staticmethod
+    def _candidate_hit_payload(*, pair, audio_url: str, confidence: float, recall_score: float, reason: str) -> dict:
+        return HitResponseManager.build_payload(
+            pair=pair,
+            audio_url=audio_url,
+            confidence=confidence,
+            recall_score=recall_score,
+            reason=reason,
+        )
+
+    @staticmethod
+    def _compact_debug_raw(raw_text: str, *, head: int = 2000, tail: int = 2000) -> tuple[str, bool]:
+        return MatchClassifierManager.compact_debug_raw(raw_text, head=head, tail=tail)
 
     def _parse_classification(self, raw_text: str) -> dict:
-        try:
-            data = json.loads(self._extract_json(raw_text))
-        except Exception:
-            return {"match": False, "candidate_id": None, "confidence": 0.0, "reason": "invalid_json"}
-
-        try:
-            confidence = float(data.get("confidence", 0.0))
-        except Exception:
-            confidence = 0.0
-        confidence = max(0.0, min(confidence, 1.0))
-        cid = data.get("candidate_id")
-        try:
-            cid = int(cid) if cid is not None else None
-        except Exception:
-            cid = None
-        return {
-            "match": bool(data.get("match", False)),
-            "candidate_id": cid,
-            "confidence": confidence,
-            "reason": str(data.get("reason", "") or ""),
-        }
+        return self._classifier_manager.parse_classification(raw_text)
 
     def _ask_classifier_model(self, *, prompt: str, classifier_chat_name: str) -> str:
-        try:
-            sess = self._ragflow_service.get_session(classifier_chat_name)
-            if not sess:
-                return ""
-            resp = sess.ask(prompt, stream=False)
-            if isinstance(resp, str):
-                return resp
-            if hasattr(resp, "content"):
-                return str(getattr(resp, "content") or "")
-            if isinstance(resp, dict):
-                for k in ("answer", "content", "text"):
-                    if k in resp and resp.get(k):
-                        return str(resp.get(k))
-            return str(resp or "")
-        except Exception as e:  # noqa: BLE001
-            self._logger.warning(f"[QA_AUDIO] classifier_call_failed err={e}")
-            return ""
+        return self._classifier_manager.ask_model(prompt=prompt, classifier_chat_name=classifier_chat_name)
 
     def find_match(
         self,
@@ -148,25 +148,103 @@ class QaAudioMatcher:
         tts_profile: TtsProfile,
         top_k: int = 20,
         threshold: float = 0.85,
-        classifier_chat_name: str = "__qa_audio_classifier__",
+        classifier_chat_name: str = "问题比对",
         base_url: str = "",
     ) -> dict | None:
-        q = str(question or "").strip()
-        if not q:
-            return None
-        if not str(tts_profile.provider or "").strip():
+        ctx = self._intake_manager.build(
+            question=question,
+            provider=str(tts_profile.provider or ""),
+            voice=str(tts_profile.voice or ""),
+            speed=tts_profile.speed,
+            top_k=top_k,
+            threshold=threshold,
+            classifier_chat_name=classifier_chat_name,
+            base_url=base_url,
+        )
+
+        debug: dict[str, Any] = {
+            "hit": False,
+            "reason": "",
+            "question": ctx.question[:160],
+            "tts_provider": ctx.provider,
+            "tts_voice": ctx.voice,
+            "tts_speed": ctx.speed,
+            "classifier_chat_name": ctx.classifier_chat_name,
+        }
+
+        if not ctx.question:
+            self._miss_manager.mark(debug, reason="empty_question")
+            self._set_last_debug(debug)
             return None
 
-        emb = self._embed_question(q)
-        candidates = self._store.search_candidates(
-            query_embedding=emb,
-            tts_provider=str(tts_profile.provider or ""),
-            tts_voice=str(tts_profile.voice or ""),
-            tts_speed=self._norm_speed(tts_profile.speed),
-            top_k=max(1, min(int(top_k or 20), 50)),
-        )
+        try:
+            exact = self._recall_manager.find_exact_pair(question=ctx.question, tts_speed=ctx.speed)
+        except Exception:
+            exact = None
+        if exact is not None:
+            audio_path = self._store.get_audio_file_path(pair_id=int(exact.id))
+            if audio_path:
+                debug["hit"] = True
+                debug["reason"] = "exact_normalized_question"
+                debug["pair_id"] = int(exact.id)
+                self._set_last_debug(debug)
+                return self._hit_manager.build_payload(
+                    pair=exact,
+                    audio_url=self._store.audio_url_for_pair(base_url=ctx.base_url, pair_id=int(exact.id)),
+                    confidence=1.0,
+                    recall_score=1.0,
+                    reason="exact_normalized_question",
+                )
+            debug["exact_pair_audio_missing"] = True
+
+        candidates = self._recall_manager.search_candidates(question=ctx.question, tts_speed=ctx.speed, top_k=ctx.top_k)
+        debug["candidate_count"] = int(len(candidates))
         if not candidates:
+            self._miss_manager.mark(debug, reason="no_candidates_in_tts_bucket")
+            self._set_last_debug(debug)
             return None
+
+        best_candidate, best_pair, best_recall, best_lexical, best_audio_url = self._recall_manager.select_best(
+            question=ctx.question,
+            candidates=candidates,
+            lexical_similarity_fn=self._normalization_manager.lexical_similarity,
+            base_url=ctx.base_url,
+        )
+
+        if best_pair is not None:
+            debug["best_pair_id"] = int(best_pair.id)
+            if debug.get("candidate_id") is None:
+                debug["candidate_id"] = int(best_pair.id)
+
+        best_entity_conflict = False
+        if best_pair is not None:
+            best_entity_conflict, q_terms, c_terms = self._normalization_manager.detect_entity_conflict(
+                query=ctx.question,
+                candidate=str(best_pair.question_text or ""),
+            )
+            if best_entity_conflict:
+                debug["entity_conflict"] = True
+                debug["entity_query_terms"] = q_terms
+                debug["entity_candidate_terms"] = c_terms
+
+        if best_candidate is not None and best_pair is not None and self._decision_manager.should_use_heuristic(
+            lexical=best_lexical,
+            recall=best_recall,
+            entity_conflict=best_entity_conflict,
+        ):
+            debug["hit"] = True
+            debug["reason"] = "heuristic_similarity_match"
+            debug["pair_id"] = int(best_pair.id)
+            debug["best_lexical"] = round(float(best_lexical), 4)
+            debug["best_recall"] = round(float(best_recall), 4)
+            self._set_last_debug(debug)
+            return self._hit_manager.build_payload(
+                pair=best_pair,
+                audio_url=best_audio_url,
+                confidence=self._decision_manager.heuristic_confidence(lexical=best_lexical, recall=best_recall),
+                recall_score=best_recall,
+                reason="heuristic_similarity_match",
+            )
 
         raw_candidates = [
             {
@@ -176,38 +254,171 @@ class QaAudioMatcher:
             }
             for c in candidates
         ]
-        prompt = self._build_prompt(user_question=q, candidates=raw_candidates)
-        raw_text = self._ask_classifier_model(prompt=prompt, classifier_chat_name=classifier_chat_name)
-        parsed = self._parse_classification(raw_text)
+        prompt = self._build_classifier_prompt(user_question=ctx.question, candidates=raw_candidates)
+        raw_text = self._ask_classifier_model(prompt=prompt, classifier_chat_name=ctx.classifier_chat_name)
+        raw_text_str = str(raw_text or "")
+        debug["classifier_raw_len"] = len(raw_text_str)
+        debug["classifier_raw_preview"] = raw_text_str[:260]
+        compact_raw, is_truncated = self._compact_debug_raw(raw_text_str, head=2000, tail=2000)
+        debug["classifier_raw"] = compact_raw
+        debug["classifier_raw_truncated"] = bool(is_truncated)
+        debug["classifier_raw_head"] = raw_text_str[:800]
+        debug["classifier_raw_tail"] = raw_text_str[-800:] if raw_text_str else ""
+
+        parsed = self._parse_classification(raw_text_str)
+        debug["classifier_match"] = bool(parsed.get("match"))
+        debug["classifier_confidence"] = round(float(parsed.get("confidence") or 0.0), 4)
+        debug["classifier_reason"] = str(parsed.get("reason") or "")
+        if parsed.get("candidate_id") is not None:
+            try:
+                debug["candidate_id"] = int(parsed.get("candidate_id"))
+            except Exception:
+                pass
+
         if not parsed.get("match"):
+            if best_candidate is not None and best_pair is not None and self._decision_manager.should_use_fallback(
+                lexical=best_lexical,
+                recall=best_recall,
+                entity_conflict=best_entity_conflict,
+            ):
+                reason = f"classifier_{str(parsed.get('reason') or 'no_match')}_fallback_similarity"
+                debug["hit"] = True
+                debug["reason"] = reason
+                debug["pair_id"] = int(best_pair.id)
+                debug["best_lexical"] = round(float(best_lexical), 4)
+                debug["best_recall"] = round(float(best_recall), 4)
+                self._set_last_debug(debug)
+                return self._hit_manager.build_payload(
+                    pair=best_pair,
+                    audio_url=best_audio_url,
+                    confidence=self._decision_manager.fallback_confidence(lexical=best_lexical, recall=best_recall),
+                    recall_score=best_recall,
+                    reason=reason,
+                )
+
+            self._miss_manager.mark(debug, reason=f"classifier_no_match:{str(parsed.get('reason') or '')}")
+            self._set_last_debug(debug)
             return None
 
         cid = parsed.get("candidate_id")
         conf = float(parsed.get("confidence") or 0.0)
-        if cid is None or conf < float(threshold):
+        candidate_map = {int(c.pair_id): c for c in candidates}
+        hit = candidate_map.get(int(cid)) if cid is not None else None
+
+        if cid is None:
+            self._miss_manager.mark(debug, reason="classifier_missing_candidate_id")
+            self._set_last_debug(debug)
             return None
 
-        candidate_map = {int(c.pair_id): c for c in candidates}
-        hit = candidate_map.get(int(cid))
+        if conf < float(ctx.threshold):
+            low_conf_pair = self._store.get_pair(pair_id=int(cid)) if hit else None
+            low_conf_audio = self._store.get_audio_file_path(pair_id=int(cid)) if low_conf_pair else None
+            if low_conf_pair and low_conf_audio:
+                low_conflict, q_terms, c_terms = self._normalization_manager.detect_entity_conflict(
+                    query=ctx.question,
+                    candidate=str(low_conf_pair.question_text or ""),
+                )
+                if low_conflict:
+                    self._miss_manager.mark(
+                        debug,
+                        reason="classifier_entity_mismatch_guard",
+                        candidate_id=int(cid),
+                        entity_conflict=True,
+                        entity_query_terms=q_terms,
+                        entity_candidate_terms=c_terms,
+                        classifier_confidence=round(min(float(conf), 0.2), 4),
+                    )
+                    self._set_last_debug(debug)
+                    return None
+
+                recall_score = float(hit.score)
+                lexical = self._normalization_manager.lexical_similarity(ctx.question, str(low_conf_pair.question_text or ""))
+                if self._decision_manager.should_soft_accept(
+                    confidence=conf,
+                    lexical=lexical,
+                    recall=recall_score,
+                    entity_conflict=low_conflict,
+                ):
+                    debug["hit"] = True
+                    debug["reason"] = "classifier_match_soft_accept"
+                    debug["pair_id"] = int(low_conf_pair.id)
+                    debug["threshold"] = float(ctx.threshold)
+                    debug["lexical"] = round(float(lexical), 4)
+                    debug["recall_score"] = round(float(recall_score), 4)
+                    self._set_last_debug(debug)
+                    return self._hit_manager.build_payload(
+                        pair=low_conf_pair,
+                        audio_url=self._store.audio_url_for_pair(base_url=ctx.base_url, pair_id=int(low_conf_pair.id)),
+                        confidence=max(float(conf), 0.75),
+                        recall_score=recall_score,
+                        reason="classifier_match_soft_accept",
+                    )
+
+            self._miss_manager.mark(
+                debug,
+                reason="classifier_confidence_below_threshold",
+                threshold=float(ctx.threshold),
+            )
+            self._set_last_debug(debug)
+            return None
+
         if not hit:
+            self._miss_manager.mark(
+                debug,
+                reason="classifier_candidate_not_in_recall_set",
+                candidate_id=int(cid),
+            )
+            self._set_last_debug(debug)
             return None
 
         pair = self._store.get_pair(pair_id=int(cid))
         if not pair:
-            return None
-        audio_path = self._store.get_audio_file_path(pair_id=int(cid))
-        if not audio_path:
+            self._miss_manager.mark(
+                debug,
+                reason="candidate_pair_not_found",
+                candidate_id=int(cid),
+            )
+            self._set_last_debug(debug)
             return None
 
-        return {
-            "pair_id": int(pair.id),
-            "question_text": str(pair.question_text or ""),
-            "answer_text": str(pair.answer_text or ""),
-            "audio_url": self._store.audio_url_for_pair(base_url=base_url, pair_id=int(pair.id)),
-            "confidence": conf,
-            "recall_score": float(hit.score),
-            "reason": str(parsed.get("reason") or ""),
-        }
+        audio_path = self._store.get_audio_file_path(pair_id=int(cid))
+        if not audio_path:
+            self._miss_manager.mark(
+                debug,
+                reason="candidate_audio_missing",
+                candidate_id=int(cid),
+            )
+            self._set_last_debug(debug)
+            return None
+
+        final_conflict, q_terms, c_terms = self._normalization_manager.detect_entity_conflict(
+            query=ctx.question,
+            candidate=str(pair.question_text or ""),
+        )
+        if final_conflict:
+            self._miss_manager.mark(
+                debug,
+                reason="classifier_entity_mismatch_guard",
+                candidate_id=int(cid),
+                entity_conflict=True,
+                entity_query_terms=q_terms,
+                entity_candidate_terms=c_terms,
+                classifier_confidence=round(min(float(conf), 0.2), 4),
+            )
+            self._set_last_debug(debug)
+            return None
+
+        debug["hit"] = True
+        debug["reason"] = "classifier_match"
+        debug["pair_id"] = int(pair.id)
+        self._set_last_debug(debug)
+        return self._hit_manager.build_payload(
+            pair=pair,
+            audio_url=self._store.audio_url_for_pair(base_url=ctx.base_url, pair_id=int(pair.id)),
+            confidence=conf,
+            recall_score=float(hit.score),
+            reason=str(parsed.get("reason") or ""),
+        )
 
     def schedule_upsert_from_answer(
         self,
@@ -249,59 +460,25 @@ class QaAudioMatcher:
         tts_profile: TtsProfile,
         app_config: dict,
     ) -> None:
-        data = {
-            "tts_provider": str(tts_profile.provider or ""),
-            "tts_voice": str(tts_profile.voice or ""),
-            "tts_speed": self._norm_speed(tts_profile.speed),
-        }
-        provider, resolved_cfg = resolve_tts_request(app_config, data=data, headers=None)
-        req_for_tts = f"qa_audio_{request_id}_{int(time.time() * 1000)}"
-        cancel_event = threading.Event()
-        chunks: list[bytes] = []
-        for chunk in self._tts_service.stream(
-            text=answer,
-            request_id=req_for_tts,
-            config=resolved_cfg,
-            provider=str(provider or ""),
-            endpoint="/qa_audio_cache/synthesize",
-            segment_index=0,
-            cancel_event=cancel_event,
-        ):
-            if chunk:
-                chunks.append(bytes(chunk))
-        if not chunks:
-            self._logger.warning(f"[QA_AUDIO] tts_no_audio request_id={request_id}")
-            return
-
-        wav_bytes_raw = b"".join(chunks)
-        wav_bytes = ensure_wav_bytes(
-            wav_bytes_raw,
-            sample_rate=self._guess_sample_rate(resolved_cfg=resolved_cfg, provider=str(provider or "")),
-            channels=1,
-            bits_per_sample=16,
-        )
-        if not wav_bytes:
-            self._logger.warning(f"[QA_AUDIO] tts_audio_unsupported_for_wav_cache request_id={request_id} bytes={len(wav_bytes_raw)}")
-            return
-
-        if is_riff_wav(wav_bytes_raw) and wav_bytes != wav_bytes_raw:
-            self._logger.info(f"[QA_AUDIO] wav_header_patched request_id={request_id} before={len(wav_bytes_raw)} after={len(wav_bytes)}")
-
-        emb = self._embed_question(question)
-        pair_id = self._store.upsert_pair_with_audio(
-            question_text=question,
-            answer_text=answer,
-            audio_bytes=wav_bytes,
-            tts_provider=str(tts_profile.provider or ""),
-            tts_voice=str(tts_profile.voice or ""),
-            tts_speed=self._norm_speed(tts_profile.speed),
-            source_request_id=str(request_id or ""),
-            embedding=emb,
-            embedding_model="hash_char_ngram_v1",
+        pair_id = self._writeback_manager.upsert_from_answer(
+            question=str(question or "").strip(),
+            answer=str(answer or "").strip(),
+            request_id=str(request_id or ""),
+            provider=str(tts_profile.provider or ""),
+            voice=str(tts_profile.voice or ""),
+            speed=self._norm_speed(tts_profile.speed),
+            app_config=app_config if isinstance(app_config, dict) else {},
+            guess_sample_rate_fn=self._guess_sample_rate,
+            embed_fn=self._embed_question,
         )
         if pair_id:
             self._logger.info(
-                f"[QA_AUDIO] upsert_ok pair_id={pair_id} request_id={request_id} provider={tts_profile.provider} voice={tts_profile.voice} speed={self._norm_speed(tts_profile.speed)}"
+                "[QA_AUDIO] upsert_ok pair_id=%s request_id=%s provider=%s voice=%s speed=%s",
+                pair_id,
+                request_id,
+                str(tts_profile.provider or ""),
+                str(tts_profile.voice or ""),
+                self._norm_speed(tts_profile.speed),
             )
 
     @staticmethod
@@ -309,7 +486,6 @@ class QaAudioMatcher:
         cfg = resolved_cfg if isinstance(resolved_cfg, dict) else {}
         p = str(provider or "").strip().lower()
 
-        # Prefer explicit provider config sample rates if present.
         if p in ("modelscope", "bailian", "dashscope", "flash"):
             try:
                 sr = (((cfg.get("tts") or {}).get("bailian") or {}).get("sample_rate"))

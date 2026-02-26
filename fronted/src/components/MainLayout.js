@@ -11,6 +11,8 @@ export function MainLayout({
   onPickHistoryQuestion,
   lastQuestion,
   answer,
+  answerCacheMeta,
+  qaCacheDebug,
   isLoading,
   queueStatus,
   messagesEndRef,
@@ -38,7 +40,15 @@ export function MainLayout({
         />
       ) : null}
 
-      <ChatPanel lastQuestion={lastQuestion} answer={answer} isLoading={isLoading} queueStatus={queueStatus} messagesEndRef={messagesEndRef} />
+      <ChatPanel
+        lastQuestion={lastQuestion}
+        answer={answer}
+        answerCacheMeta={answerCacheMeta}
+        qaCacheDebug={qaCacheDebug}
+        isLoading={isLoading}
+        queueStatus={queueStatus}
+        messagesEndRef={messagesEndRef}
+      />
 
       {showDebugPanel ? (
         <DebugPanel

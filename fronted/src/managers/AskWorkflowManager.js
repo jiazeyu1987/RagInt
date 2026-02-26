@@ -192,6 +192,8 @@ export class AskWorkflowManager {
       debugMark,
       setLastQuestion,
       setAnswer,
+      setAnswerCacheMeta,
+      setQaCacheDebug,
       setIsLoading,
       receivedSegmentsRef,
       getTtsManager,
@@ -209,6 +211,8 @@ export class AskWorkflowManager {
       guideStyleRef,
       guideEnabledRef,
       audienceProfileRef,
+      qaAnswerTargetCharsRef,
+      qaAudioCacheConfidenceThresholdRef,
       tourStopDurationsRef,
       tourStopTargetCharsRef,
       useAgentModeRef,
@@ -268,6 +272,8 @@ export class AskWorkflowManager {
     if (debugRef && !debugRef.current && typeof beginDebugRun === 'function') beginDebugRun('unknown');
     if (typeof setLastQuestion === 'function') setLastQuestion(text);
     if (typeof setAnswer === 'function') setAnswer('');
+    if (typeof setAnswerCacheMeta === 'function') setAnswerCacheMeta({ hit: false, type: '' });
+    if (typeof setQaCacheDebug === 'function') setQaCacheDebug(null);
     if (typeof setIsLoading === 'function') setIsLoading(true);
 
     // 清空所有队列/状态（用于“打断”或新问题覆盖旧问题）
@@ -337,7 +343,7 @@ export class AskWorkflowManager {
 
     let fullAnswer = '';
     try {
-      let guideDurationS = Math.max(15, Number((guideDurationRef && guideDurationRef.current) || 60) || 60);
+      let guideDurationS = Math.max(1, Number((guideDurationRef && guideDurationRef.current) || 10) || 10);
       let guideTargetChars = Math.max(30, Math.round(guideDurationS * 4.5));
       let guideStopName = null;
       if (options.tourAction) {
@@ -351,18 +357,43 @@ export class AskWorkflowManager {
         const tcs = (tourStopTargetCharsRef && tourStopTargetCharsRef.current) || [];
         const d = Number.isFinite(Number(durs[idx])) ? Number(durs[idx]) : 0;
         const tc = Number.isFinite(Number(tcs[idx])) ? Number(tcs[idx]) : 0;
-        if (d > 0) guideDurationS = Math.max(15, Math.min(600, d));
+        if (d > 0) guideDurationS = Math.max(1, Math.min(600, d));
         if (tc > 0) guideTargetChars = Math.max(30, tc);
         if (tc <= 0 && d > 0) guideTargetChars = Math.max(30, Math.round(guideDurationS * 4.5));
       }
       if (Number.isFinite(Number(options.guideDurationSOverride)) && Number(options.guideDurationSOverride) > 0) {
-        guideDurationS = Math.max(15, Math.min(600, Number(options.guideDurationSOverride)));
+        guideDurationS = Math.max(1, Math.min(600, Number(options.guideDurationSOverride)));
       }
       if (Number.isFinite(Number(options.guideTargetCharsOverride)) && Number(options.guideTargetCharsOverride) > 0) {
         guideTargetChars = Math.max(30, Number(options.guideTargetCharsOverride));
       }
+      let qaAnswerTargetChars = 1;
+      try {
+        qaAnswerTargetChars = Number(qaAnswerTargetCharsRef && qaAnswerTargetCharsRef.current);
+      } catch (_) {
+        qaAnswerTargetChars = 1;
+      }
+      if (!Number.isFinite(qaAnswerTargetChars) || qaAnswerTargetChars <= 0) qaAnswerTargetChars = 1;
+      qaAnswerTargetChars = Math.max(1, Math.min(5000, Math.round(qaAnswerTargetChars)));
+      let qaAudioCacheConfidenceThreshold = null;
+      try {
+        const n = Number(qaAudioCacheConfidenceThresholdRef && qaAudioCacheConfidenceThresholdRef.current);
+        if (Number.isFinite(n)) qaAudioCacheConfidenceThreshold = Math.max(0, Math.min(1, n));
+      } catch (_) {
+        qaAudioCacheConfidenceThreshold = null;
+      }
 
       const base = String(baseUrl || '').replace(/\/+$/, '');
+      const resolveAudioUrl = (rawUrl) => {
+        const u = String(rawUrl || '').trim();
+        if (!u) return '';
+        const baseForResolve = base || (typeof window !== 'undefined' ? window.location.origin : '');
+        try {
+          return new URL(u, `${String(baseForResolve || '').replace(/\/+$/, '')}/`).toString();
+        } catch (_) {
+          return u;
+        }
+      };
       const emitClientEvent = typeof this.deps.emitClientEvent === 'function' ? this.deps.emitClientEvent : null;
       const tourAction = options.tourAction ? String(options.tourAction || '').trim() : '';
       const stopIndex = options.tourAction
@@ -458,7 +489,7 @@ export class AskWorkflowManager {
         for (const item of segments) {
           if (!allow()) break;
           if (options.tourAction && !allow()) break;
-          const audioUrl = item && item.audio_url ? String(item.audio_url || '').trim() : '';
+          const audioUrl = resolveAudioUrl(item && item.audio_url ? String(item.audio_url || '').trim() : '');
           const segText = item && item.text ? String(item.text || '') : '';
           if (!audioUrl || !ttsMgr || typeof ttsMgr.enqueueAudioUrl !== 'function') continue;
           if (typeof debugMark === 'function') debugMark('ragflowFirstSegmentAt');
@@ -525,6 +556,8 @@ export class AskWorkflowManager {
           tts_provider: askTtsProvider || null,
           tts_voice: askTtsVoice || null,
           tts_speed: askTtsSpeed,
+          qa_answer_target_chars: qaAnswerTargetChars,
+          qa_audio_cache_confidence_threshold: qaAudioCacheConfidenceThreshold,
           conversation_name: useAgentModeRef && useAgentModeRef.current ? null : selectedChatRef ? selectedChatRef.current : null,
           agent_id: useAgentModeRef && useAgentModeRef.current ? (selectedAgentIdRef ? (selectedAgentIdRef.current || null) : null) : null,
           guide: {
@@ -574,7 +607,58 @@ export class AskWorkflowManager {
           if (!trimmed.startsWith('data: ')) continue;
           try {
             const data = JSON.parse(trimmed.slice(6));
+            if (data && data.cache && data.cache.hit && typeof setAnswerCacheMeta === 'function') {
+              const cacheType = String((data.cache && data.cache.type) || '').trim();
+              setAnswerCacheMeta({ hit: true, type: cacheType || 'qa_text' });
+              if (typeof setQaCacheDebug === 'function') {
+                setQaCacheDebug((prev) => ({
+                  ...(prev && typeof prev === 'object' ? prev : {}),
+                  hit: true,
+                  reason: String(((prev && prev.reason) || 'cache_hit')),
+                  type: cacheType || 'qa_text',
+                }));
+              }
+            }
             if (data && data.meta && typeof data.meta === 'object') {
+              const cacheDebug = data.meta.qa_audio_cache_debug;
+              if (cacheDebug && typeof cacheDebug === 'object') {
+                if (typeof setQaCacheDebug === 'function') {
+                  const normalizedDebug = { ...cacheDebug };
+                  if (!Number.isFinite(Number(normalizedDebug.pair_id)) && Number.isFinite(Number(normalizedDebug.candidate_id))) {
+                    normalizedDebug.pair_id = Number(normalizedDebug.candidate_id);
+                  }
+                  if (
+                    !Number.isFinite(Number(normalizedDebug.confidence)) &&
+                    Number.isFinite(Number(normalizedDebug.classifier_confidence))
+                  ) {
+                    normalizedDebug.confidence = Number(normalizedDebug.classifier_confidence);
+                  }
+                  setQaCacheDebug(normalizedDebug);
+                }
+                // eslint-disable-next-line no-console
+                console.log('[QA_AUDIO_CACHE_DEBUG]', cacheDebug);
+                if (Object.prototype.hasOwnProperty.call(cacheDebug, 'classifier_raw')) {
+                  // eslint-disable-next-line no-console
+                  console.log('[QA_AUDIO_CACHE_DEBUG_RAW]', String(cacheDebug.classifier_raw || ''));
+                  if (Object.prototype.hasOwnProperty.call(cacheDebug, 'classifier_raw_head')) {
+                    // eslint-disable-next-line no-console
+                    console.log('[QA_AUDIO_CACHE_DEBUG_RAW_HEAD]', String(cacheDebug.classifier_raw_head || ''));
+                  }
+                  if (Object.prototype.hasOwnProperty.call(cacheDebug, 'classifier_raw_tail')) {
+                    // eslint-disable-next-line no-console
+                    console.log('[QA_AUDIO_CACHE_DEBUG_RAW_TAIL]', String(cacheDebug.classifier_raw_tail || ''));
+                  }
+                  try {
+                    if (typeof window !== 'undefined') {
+                      window.__qaAudioClassifierRaw = String(cacheDebug.classifier_raw || '');
+                      window.__qaAudioClassifierRawHead = String(cacheDebug.classifier_raw_head || '');
+                      window.__qaAudioClassifierRawTail = String(cacheDebug.classifier_raw_tail || '');
+                    }
+                  } catch (_) {
+                    // ignore
+                  }
+                }
+              }
               const intent = data.meta.intent ? String(data.meta.intent) : '';
               const conf = data.meta.intent_confidence != null ? Number(data.meta.intent_confidence) : null;
               if (intent && typeof setCurrentIntent === 'function') setCurrentIntent({ intent, confidence: conf });
@@ -602,10 +686,27 @@ export class AskWorkflowManager {
             }
 
             if (data && data.audio_hit && !data.done) {
+              if (typeof setAnswerCacheMeta === 'function') setAnswerCacheMeta({ hit: true, type: 'qa_audio' });
               const hit = data.audio_hit && typeof data.audio_hit === 'object' ? data.audio_hit : null;
-              const audioUrl = hit && hit.audio_url ? String(hit.audio_url).trim() : '';
+              const audioUrl = resolveAudioUrl(hit && hit.audio_url ? String(hit.audio_url).trim() : '');
               const hitText = hit && hit.answer_text ? String(hit.answer_text) : '';
+              const hitPairId = Number.isFinite(Number(hit && hit.pair_id)) ? Number(hit.pair_id) : null;
+              const hitConfidence = Number.isFinite(Number(hit && hit.confidence)) ? Number(hit.confidence) : null;
+              if (typeof setQaCacheDebug === 'function') {
+                setQaCacheDebug({
+                  hit: true,
+                  type: 'qa_audio',
+                  reason: String((hit && hit.reason) || 'qa_audio_hit'),
+                  pair_id: hitPairId,
+                  candidate_id: hitPairId,
+                  confidence: hitConfidence,
+                  classifier_confidence: hitConfidence,
+                  recall_score: Number.isFinite(Number(hit && hit.recall_score)) ? Number(hit.recall_score) : null,
+                });
+              }
               if (audioUrl && ttsEnabledRef && ttsEnabledRef.current && ttsMgr && typeof ttsMgr.enqueueAudioUrl === 'function') {
+                // eslint-disable-next-line no-console
+                console.log('[QA_AUDIO_CACHE_PLAY_URL]', audioUrl);
                 if (!options.tourAction || allow()) {
                   ttsMgr.enqueueAudioUrl(audioUrl, {
                     stopIndex: ttsStopIndexForAsk,

@@ -169,21 +169,116 @@ class QaAudioCacheStore:
                     """,
                     (pid,),
                 ).fetchone()
-                if not row:
-                    return None
-                return QaAudioPair(
-                    id=int(row["id"]),
-                    normalized_question=str(row["normalized_question"] or ""),
-                    question_text=str(row["question_text"] or ""),
-                    answer_text=str(row["answer_text"] or ""),
-                    audio_rel_path=str(row["audio_rel_path"] or ""),
-                    tts_provider=str(row["tts_provider"] or ""),
-                    tts_voice=str(row["tts_voice"] or ""),
-                    tts_speed=float(row["tts_speed"] or 1.0),
-                    source_request_id=str(row["source_request_id"] or ""),
-                    created_at_ms=int(row["created_at_ms"] or 0),
-                    updated_at_ms=int(row["updated_at_ms"] or 0),
-                )
+                if row:
+                    return QaAudioPair(
+                        id=int(row["id"]),
+                        normalized_question=str(row["normalized_question"] or ""),
+                        question_text=str(row["question_text"] or ""),
+                        answer_text=str(row["answer_text"] or ""),
+                        audio_rel_path=str(row["audio_rel_path"] or ""),
+                        tts_provider=str(row["tts_provider"] or ""),
+                        tts_voice=str(row["tts_voice"] or ""),
+                        tts_speed=float(row["tts_speed"] or 1.0),
+                        source_request_id=str(row["source_request_id"] or ""),
+                        created_at_ms=int(row["created_at_ms"] or 0),
+                        updated_at_ms=int(row["updated_at_ms"] or 0),
+                    )
+                return None
+            finally:
+                conn.close()
+
+    def find_exact_pair(
+        self,
+        *,
+        question_text: str,
+        tts_provider: str,
+        tts_voice: str,
+        tts_speed: float,
+    ) -> QaAudioPair | None:
+        nq = normalize_question(str(question_text or ""))
+        if not nq:
+            return None
+        provider = str(tts_provider or "").strip()
+        voice = str(tts_voice or "").strip()
+        speed = self._norm_tts_speed(tts_speed)
+        where = ["normalized_question = ?", "tts_speed = ?"]
+        params: list[object] = [nq, float(speed)]
+        if provider:
+            where.append("tts_provider = ?")
+            params.append(provider)
+        if voice:
+            where.append("tts_voice = ?")
+            params.append(voice)
+
+        with self._lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    (
+                        """
+                    SELECT
+                        id, normalized_question, question_text, answer_text, audio_rel_path,
+                        tts_provider, tts_voice, tts_speed, source_request_id, created_at_ms, updated_at_ms
+                    FROM qa_audio_pairs
+                    WHERE """
+                        + " AND ".join(where)
+                        + " ORDER BY updated_at_ms DESC, id DESC LIMIT 1"
+                    ),
+                    tuple(params),
+                ).fetchone()
+                if row:
+                    return QaAudioPair(
+                        id=int(row["id"]),
+                        normalized_question=str(row["normalized_question"] or ""),
+                        question_text=str(row["question_text"] or ""),
+                        answer_text=str(row["answer_text"] or ""),
+                        audio_rel_path=str(row["audio_rel_path"] or ""),
+                        tts_provider=str(row["tts_provider"] or ""),
+                        tts_voice=str(row["tts_voice"] or ""),
+                        tts_speed=float(row["tts_speed"] or 1.0),
+                        source_request_id=str(row["source_request_id"] or ""),
+                        created_at_ms=int(row["created_at_ms"] or 0),
+                        updated_at_ms=int(row["updated_at_ms"] or 0),
+                    )
+
+                # Backward-compat fallback:
+                # if old rows were written with a legacy normalizer, compare by current
+                # normalized(question_text) in memory within the same TTS profile bucket.
+                rows = conn.execute(
+                    (
+                        """
+                    SELECT
+                        id, normalized_question, question_text, answer_text, audio_rel_path,
+                        tts_provider, tts_voice, tts_speed, source_request_id, created_at_ms, updated_at_ms
+                    FROM qa_audio_pairs
+                    WHERE """
+                        + " AND ".join(
+                            (["tts_speed = ?"] + (["tts_provider = ?"] if provider else []) + (["tts_voice = ?"] if voice else []))
+                        )
+                        + """
+                    ORDER BY updated_at_ms DESC
+                    LIMIT 200
+                    """
+                    ),
+                    tuple([float(speed)] + ([provider] if provider else []) + ([voice] if voice else [])),
+                ).fetchall()
+                for r in rows:
+                    if normalize_question(str(r["question_text"] or "")) != nq:
+                        continue
+                    return QaAudioPair(
+                        id=int(r["id"]),
+                        normalized_question=str(r["normalized_question"] or ""),
+                        question_text=str(r["question_text"] or ""),
+                        answer_text=str(r["answer_text"] or ""),
+                        audio_rel_path=str(r["audio_rel_path"] or ""),
+                        tts_provider=str(r["tts_provider"] or ""),
+                        tts_voice=str(r["tts_voice"] or ""),
+                        tts_speed=float(r["tts_speed"] or 1.0),
+                        source_request_id=str(r["source_request_id"] or ""),
+                        created_at_ms=int(r["created_at_ms"] or 0),
+                        updated_at_ms=int(r["updated_at_ms"] or 0),
+                    )
+                return None
             finally:
                 conn.close()
 
@@ -248,12 +343,23 @@ class QaAudioCacheStore:
         q = np.asarray(query_embedding, dtype=np.float32).reshape(-1)
         top_k = max(1, min(int(top_k or 20), 100))
         speed = self._norm_tts_speed(tts_speed)
+        provider = str(tts_provider or "").strip()
+        voice = str(tts_voice or "").strip()
+        where = ["p.tts_speed = ?"]
+        params: list[object] = [float(speed)]
+        if provider:
+            where.append("p.tts_provider = ?")
+            params.append(provider)
+        if voice:
+            where.append("p.tts_voice = ?")
+            params.append(voice)
         rows = []
         with self._lock:
             conn = self._connect()
             try:
                 rows = conn.execute(
-                    """
+                    (
+                        """
                     SELECT
                         p.id,
                         p.question_text,
@@ -266,9 +372,10 @@ class QaAudioCacheStore:
                         e.vector_blob
                     FROM qa_audio_pairs p
                     JOIN qa_audio_embeddings e ON e.pair_id = p.id
-                    WHERE p.tts_provider = ? AND p.tts_voice = ? AND p.tts_speed = ?
-                    """,
-                    (str(tts_provider or ""), str(tts_voice or ""), float(speed)),
+                    WHERE """
+                        + " AND ".join(where)
+                    ),
+                    tuple(params),
                 ).fetchall()
             finally:
                 conn.close()

@@ -70,7 +70,7 @@ export class TourController {
       const meta = (tourMetaRef && tourMetaRef.current) || null;
       const zone = String((tourZoneRef && tourZoneRef.current) || (meta && meta.default_zone) || '默认路线');
       const profile = String((audienceProfileRef && audienceProfileRef.current) || (meta && meta.default_profile) || '大众');
-      const duration = Number((guideDurationRef && guideDurationRef.current) || 60);
+      const duration = Number((guideDurationRef && guideDurationRef.current) || 10);
       const body = { zone, profile, duration_s: duration };
       const stopsOverride = tourStopsOverrideRef && Array.isArray(tourStopsOverrideRef.current) ? tourStopsOverrideRef.current : [];
       if (Array.isArray(stopsOverride) && stopsOverride.length) body.stops_override = stopsOverride;

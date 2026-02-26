@@ -59,8 +59,6 @@ def _maybe_stream_audio_cache_hit(
         return None
     if qa_audio_matcher is None:
         return None
-    if not str(tts_provider or "").strip():
-        return None
 
     hit = None
     with contextlib.suppress(Exception):
@@ -71,7 +69,7 @@ def _maybe_stream_audio_cache_hit(
             tts_profile=TtsProfile(provider=str(tts_provider or ""), voice=str(tts_voice or ""), speed=float(tts_speed or 1.0)),
             top_k=max(1, int(qa_audio_recall_top_k or 20)),
             threshold=float(qa_audio_classifier_threshold or 0.85),
-            classifier_chat_name=str(qa_audio_classifier_chat_name or "__qa_audio_classifier__"),
+            classifier_chat_name=str(qa_audio_classifier_chat_name or "问题比对"),
             base_url=str(base_url or ""),
         )
 

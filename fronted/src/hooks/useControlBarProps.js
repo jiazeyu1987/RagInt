@@ -1,5 +1,13 @@
 import { useCallback, useMemo } from 'react';
 
+function normalizeGuideDurationInput(raw) {
+  const digits = String(raw == null ? '' : raw).replace(/[^\d]/g, '');
+  if (!digits) return '10';
+  const n = Number(digits);
+  if (!Number.isFinite(n)) return '10';
+  return String(Math.max(1, Math.min(3600, Math.round(n))));
+}
+
 export function useControlBarProps({
   useAgentMode,
   setUseAgentMode,
@@ -15,6 +23,10 @@ export function useControlBarProps({
   setGuideDuration,
   guideStyle,
   setGuideStyle,
+  qaAnswerTargetChars,
+  setQaAnswerTargetChars,
+  qaAudioCacheConfidenceThreshold,
+  setQaAudioCacheConfidenceThreshold,
   tourMeta,
   tourZone,
   setTourZone,
@@ -82,6 +94,14 @@ export function useControlBarProps({
     }
   }, [jumpTourStop, tourSelectedStopIndex]);
 
+  const onChangeGuideDuration = useCallback(
+    (value) => {
+      if (typeof setGuideDuration !== 'function') return;
+      setGuideDuration(normalizeGuideDurationInput(value));
+    },
+    [setGuideDuration]
+  );
+
   return useMemo(
     () => ({
       useAgentMode,
@@ -95,9 +115,13 @@ export function useControlBarProps({
       guideEnabled,
       onChangeGuideEnabled: setGuideEnabled,
       guideDuration,
-      onChangeGuideDuration: setGuideDuration,
+      onChangeGuideDuration,
       guideStyle,
       onChangeGuideStyle: setGuideStyle,
+      qaAnswerTargetChars,
+      onChangeQaAnswerTargetChars: setQaAnswerTargetChars,
+      qaAudioCacheConfidenceThreshold,
+      onChangeQaAudioCacheConfidenceThreshold: setQaAudioCacheConfidenceThreshold,
       tourMeta,
       tourZone,
       onChangeTourZone: setTourZone,
@@ -149,7 +173,10 @@ export function useControlBarProps({
       guideDuration,
       guideEnabled,
       guideStyle,
+      qaAnswerTargetChars,
+      qaAudioCacheConfidenceThreshold,
       onJumpSelectedStop,
+      onChangeGuideDuration,
       onChangePlayTourRecordingEnabled,
       onChangeTourRecordingEnabled,
       playTourRecordingEnabled,
@@ -161,9 +188,10 @@ export function useControlBarProps({
       setAudienceProfile,
       setContinuousTour,
       setGroupMode,
-      setGuideDuration,
       setGuideEnabled,
       setGuideStyle,
+      setQaAnswerTargetChars,
+      setQaAudioCacheConfidenceThreshold,
       setSelectedAgentId,
       setSelectedChat,
       setSelectedTourRecordingId,

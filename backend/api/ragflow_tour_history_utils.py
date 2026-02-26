@@ -75,7 +75,7 @@ def build_tour_templates(*, app_cfg, raw_cfg) -> list[dict]:
 def parse_tour_plan_request(data: dict) -> tuple[str, str, int | float, list[str] | None]:
     zone = str((data.get("zone") or "")).strip()
     profile = str((data.get("profile") or "")).strip()
-    duration_s = data.get("duration_s") or 60
+    duration_s = data.get("duration_s") or 10
     stops_override = data.get("stops_override")
     if isinstance(stops_override, list) and stops_override:
         return zone, profile, duration_s, normalize_stops(stops_override)

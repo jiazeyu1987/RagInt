@@ -10,24 +10,8 @@ def apply_guide_prompt(*, raw_question: str, guide: dict | None) -> str:
     stop_name = str(guide.get("stop_name") or "").strip()
     is_continuous = bool(guide.get("continuous", False))
 
-    try:
-        target_chars = int(guide.get("target_chars") or 0)
-    except Exception:
-        target_chars = 0
-    try:
-        duration_s = int(guide.get("duration_s") or 60)
-    except Exception:
-        duration_s = 60
-
-    duration_s = max(15, min(duration_s, 3600))
-    target_chars = max(0, target_chars)
-
     style_text = "通俗自然、亲切口语化" if style in ("friendly", "simple") else "专业准确、仍保持口播流畅"
     stop_text = f"当前展厅：{stop_name}。\n" if stop_name else ""
-    length_text = (
-        f"时长控制：约{duration_s}秒。\n"
-        + (f"建议字数：约{target_chars}字。\n" if target_chars > 0 else "")
-    )
     continuity_text = (
         "连续讲解要求：自然承接上一段，直接进入当前展厅主题，不要寒暄，不要预告下一站。\n"
         if is_continuous
@@ -49,7 +33,6 @@ def apply_guide_prompt(*, raw_question: str, guide: dict | None) -> str:
         "你是展厅讲解员，请根据用户问题生成口播讲解稿。\n"
         f"{stop_text}"
         f"风格：{style_text}。\n"
-        f"{length_text}"
         f"{continuity_text}"
         f"{output_constraints}"
     )

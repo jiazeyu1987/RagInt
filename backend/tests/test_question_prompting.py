@@ -88,12 +88,50 @@ def test_extract_base_question_strips_instruction_blocks():
 
 def test_apply_explanation_script_requirements_appends_constraints_once():
     q = "请介绍展厅"
-    out1 = apply_explanation_script_requirements(q, enabled=True)
+    out1 = apply_explanation_script_requirements(q, enabled=True, answer_target_chars=220)
     out2 = apply_explanation_script_requirements(out1, enabled=True)
     assert "【口播讲解稿约束】" in out1
     assert "不要使用特殊符号" in out1
     assert "基础标点" in out1
+    assert "220个文字左右" in out1
     assert out1 == out2
+
+
+def test_apply_explanation_script_requirements_uses_chars_phrase():
+    out = apply_explanation_script_requirements("请回答", enabled=True, answer_target_chars=10)
+    assert "10个文字左右" in out
+
+
+def test_apply_explanation_script_requirements_includes_audience_profile_style_hint():
+    out = apply_explanation_script_requirements(
+        "请回答",
+        enabled=True,
+        answer_target_chars=10,
+        audience_profile="儿童",
+    )
+    assert "风格请参考人群画像：儿童" in out
+
+
+def test_apply_explanation_script_requirements_rewrites_existing_old_length_line():
+    src = (
+        "请介绍展厅\n\n"
+        "【口播讲解稿约束】\n"
+        "请用可直接播报的讲解稿风格回复，语言自然连贯。\n"
+        "回答长度控制：约20字。\n"
+    )
+    out = apply_explanation_script_requirements(src, enabled=True, answer_target_chars=1)
+    assert "约20字" not in out
+    assert "1个文字左右" in out
+
+
+def test_apply_explanation_script_requirements_rewrites_existing_style_line():
+    src = (
+        "请介绍展厅\n\n"
+        "【口播讲解稿约束】\n"
+        "请用可直接播报的讲解稿风格回复，语言自然连贯。\n"
+    )
+    out = apply_explanation_script_requirements(src, enabled=True, answer_target_chars=1, audience_profile="专业")
+    assert "风格请参考人群画像：专业" in out
 
 
 def test_stream_ask_upserts_qa_audio_with_base_question_only():
@@ -140,3 +178,51 @@ def test_stream_ask_upserts_qa_audio_with_base_question_only():
 
     assert matcher.upserts, "qa audio upsert should be scheduled"
     assert matcher.upserts[0]["question"] == "请介绍心脏介入展厅"
+
+
+def test_stream_ask_applies_audience_profile_to_script_prompt():
+    class _CaptureSession:
+        def __init__(self):
+            self.last_question = ""
+
+        def ask(self, question: str, stream: bool = True):  # noqa: ARG002
+            self.last_question = str(question or "")
+            if stream:
+                return [_Chunk("好的。")]
+            return "好的。"
+
+    class _CaptureRagflowService:
+        def __init__(self):
+            self.session = _CaptureSession()
+
+        def get_session(self, conversation_name: str):  # noqa: ARG002
+            return self.session
+
+    ragflow = _CaptureRagflowService()
+    orch = ConversationOrchestrator(
+        ragflow_service=ragflow,
+        ragflow_agent_service=_RagflowAgentService(),
+        intent_service=_IntentService(),
+        history_store=_HistoryStore(),
+        selling_points_store=None,
+        logger=logging.getLogger("test"),
+        timings_set=_timings_set,
+        timings_get=_timings_get,
+        default_session=ragflow.session,
+        qa_audio_matcher=None,
+    )
+
+    inp = AskInput(
+        question="请介绍心脏介入展厅",
+        request_id="ask_t2",
+        client_id="c1",
+        kind="ask",
+        conversation_name="展厅聊天",
+        save_history=False,
+        guide={"enabled": False, "audience_profile": "儿童"},
+        qa_answer_target_chars=10,
+    )
+    cfg = {"kb_version": "kb1", "qa_cache": {"enabled": False}, "text_cleaning": {"enabled": False}}
+
+    list(orch.stream_ask(inp=inp, ragflow_config=cfg, cancel_event=threading.Event(), t_submit=0.0))
+    assert "风格请参考人群画像：儿童" in ragflow.session.last_question
