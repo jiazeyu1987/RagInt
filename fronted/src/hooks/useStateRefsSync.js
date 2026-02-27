@@ -31,14 +31,16 @@ export function useStateRefsSync({
   guideStyleRef,
   qaAnswerTargetChars,
   qaAnswerTargetCharsRef,
+  qaAudioCacheLookupEnabled,
+  qaAudioCacheLookupEnabledRef,
   qaAudioCacheConfidenceThreshold,
   qaAudioCacheConfidenceThresholdRef,
-  tourMode,
-  tourModeRef,
   tourTemplateId,
   tourTemplateIdRef,
   tourStopsOverride,
   tourStopsOverrideRef,
+  tourStopDurationsOverride,
+  tourStopDurationsOverrideRef,
   useAgentMode,
   useAgentModeRef,
   selectedChat,
@@ -108,15 +110,22 @@ export function useStateRefsSync({
   }, [qaAnswerTargetChars, qaAnswerTargetCharsRef]);
 
   useEffect(() => {
+    qaAudioCacheLookupEnabledRef.current = !!qaAudioCacheLookupEnabled;
+  }, [qaAudioCacheLookupEnabled, qaAudioCacheLookupEnabledRef]);
+
+  useEffect(() => {
     const n = Number(qaAudioCacheConfidenceThreshold);
     qaAudioCacheConfidenceThresholdRef.current = Number.isFinite(n) ? String(Math.max(0, Math.min(1, n))) : '0.85';
   }, [qaAudioCacheConfidenceThreshold, qaAudioCacheConfidenceThresholdRef]);
 
   useEffect(() => {
-    tourModeRef.current = String(tourMode || 'basic');
     tourTemplateIdRef.current = String(tourTemplateId || '');
     tourStopsOverrideRef.current = Array.isArray(tourStopsOverride) ? tourStopsOverride : [];
-  }, [tourMode, tourTemplateId, tourStopsOverride, tourModeRef, tourTemplateIdRef, tourStopsOverrideRef]);
+    tourStopDurationsOverrideRef.current =
+      tourStopDurationsOverride && typeof tourStopDurationsOverride === 'object' && !Array.isArray(tourStopDurationsOverride)
+        ? tourStopDurationsOverride
+        : {};
+  }, [tourTemplateId, tourStopsOverride, tourStopDurationsOverride, tourTemplateIdRef, tourStopsOverrideRef, tourStopDurationsOverrideRef]);
 
   useEffect(() => {
     useAgentModeRef.current = !!useAgentMode;

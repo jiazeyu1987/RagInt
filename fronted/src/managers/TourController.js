@@ -57,6 +57,7 @@ export class TourController {
       guideDurationRef,
       tourMetaRef,
       tourStopsOverrideRef,
+      tourStopDurationsOverrideRef,
       setTourStops,
       setTourStopDurations,
       setTourStopTargetChars,
@@ -74,6 +75,23 @@ export class TourController {
       const body = { zone, profile, duration_s: duration };
       const stopsOverride = tourStopsOverrideRef && Array.isArray(tourStopsOverrideRef.current) ? tourStopsOverrideRef.current : [];
       if (Array.isArray(stopsOverride) && stopsOverride.length) body.stops_override = stopsOverride;
+      const rawDurationOverrides =
+        tourStopDurationsOverrideRef &&
+        tourStopDurationsOverrideRef.current &&
+        typeof tourStopDurationsOverrideRef.current === 'object' &&
+        !Array.isArray(tourStopDurationsOverrideRef.current)
+          ? tourStopDurationsOverrideRef.current
+          : null;
+      if (rawDurationOverrides) {
+        const normalized = {};
+        Object.entries(rawDurationOverrides).forEach(([k, v]) => {
+          const key = String(k || '').trim();
+          const n = Number(v);
+          if (!key || !Number.isFinite(n) || n <= 0) return;
+          normalized[key] = Math.max(1, Math.min(3600, Math.round(n)));
+        });
+        if (Object.keys(normalized).length > 0) body.stop_durations_s_override = normalized;
+      }
 
       const data = await fetchJson('/api/tour/plan', {
         method: 'POST',

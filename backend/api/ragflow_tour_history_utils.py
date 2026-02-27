@@ -72,14 +72,47 @@ def build_tour_templates(*, app_cfg, raw_cfg) -> list[dict]:
     return templates
 
 
-def parse_tour_plan_request(data: dict) -> tuple[str, str, int | float, list[str] | None]:
+def _normalize_stop_durations_override(raw) -> dict[str, int] | list[int] | None:
+    if isinstance(raw, list):
+        out: list[int] = []
+        for v in raw:
+            try:
+                n = int(v)
+            except Exception:
+                n = 0
+            out.append(max(0, n))
+        if any(x > 0 for x in out):
+            return out
+        return None
+
+    if isinstance(raw, dict):
+        out: dict[str, int] = {}
+        for k, v in raw.items():
+            key = str(k or "").strip()
+            if not key:
+                continue
+            try:
+                n = int(v)
+            except Exception:
+                n = 0
+            if n > 0:
+                out[key] = n
+        return out or None
+
+    return None
+
+
+def parse_tour_plan_request(
+    data: dict,
+) -> tuple[str, str, int | float, list[str] | None, dict[str, int] | list[int] | None]:
     zone = str((data.get("zone") or "")).strip()
     profile = str((data.get("profile") or "")).strip()
     duration_s = data.get("duration_s") or 10
+    stop_durations_override = _normalize_stop_durations_override(data.get("stop_durations_s_override"))
     stops_override = data.get("stops_override")
     if isinstance(stops_override, list) and stops_override:
-        return zone, profile, duration_s, normalize_stops(stops_override)
-    return zone, profile, duration_s, None
+        return zone, profile, duration_s, normalize_stops(stops_override), stop_durations_override
+    return zone, profile, duration_s, None, stop_durations_override
 
 
 def build_stops_meta(plan) -> list[dict]:

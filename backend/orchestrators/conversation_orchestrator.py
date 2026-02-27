@@ -40,6 +40,7 @@ class AskInput:
     tts_speed: float | None = None
     qa_answer_target_chars: int | None = None
     qa_audio_cache_confidence_threshold: float | None = None
+    qa_audio_cache_lookup_enabled: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -383,6 +384,9 @@ class ConversationOrchestrator:
             if inp.qa_audio_cache_confidence_threshold is not None:
                 qa_audio_conf_threshold = float(inp.qa_audio_cache_confidence_threshold)
         qa_audio_conf_threshold = max(0.0, min(1.0, qa_audio_conf_threshold))
+        qa_audio_lookup_enabled = bool(runtime.qa_audio_cache_enabled)
+        if inp.qa_audio_cache_lookup_enabled is not None:
+            qa_audio_lookup_enabled = bool(inp.qa_audio_cache_lookup_enabled)
 
         audio_cache_outcome = None
         if not str(inp.recording_id or "").strip():
@@ -390,7 +394,7 @@ class ConversationOrchestrator:
                 request_id=request_id,
                 question=question,
                 qa_audio_matcher=self._qa_audio_matcher,
-                qa_audio_cache_enabled=runtime.qa_audio_cache_enabled,
+                qa_audio_cache_enabled=qa_audio_lookup_enabled,
                 qa_audio_recall_top_k=runtime.qa_audio_recall_top_k,
                 qa_audio_classifier_threshold=qa_audio_conf_threshold,
                 qa_audio_classifier_chat_name=runtime.qa_audio_classifier_chat_name,
@@ -419,7 +423,7 @@ class ConversationOrchestrator:
         # Expose QA-audio-cache miss diagnostics to frontend/debug panel.
         if (
             not str(inp.recording_id or "").strip()
-            and runtime.qa_audio_cache_enabled
+            and qa_audio_lookup_enabled
             and self._qa_audio_matcher is not None
             and hasattr(self._qa_audio_matcher, "get_last_debug")
         ):
@@ -428,6 +432,8 @@ class ConversationOrchestrator:
                 if isinstance(cache_debug, dict) and cache_debug:
                     self._logger.info(f"[{request_id}] qa_audio_cache_debug {cache_debug}")
                     yield make_meta({"qa_audio_cache_debug": cache_debug})
+        elif not str(inp.recording_id or "").strip() and runtime.qa_audio_cache_enabled and not qa_audio_lookup_enabled:
+            yield make_meta({"qa_audio_cache_debug": {"hit": False, "reason": "lookup_disabled_by_client"}})
 
         cache_outcome = yield from _maybe_stream_cache_shortcut(
             request_id=request_id,

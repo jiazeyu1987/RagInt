@@ -98,6 +98,14 @@ class RecordingStore:
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_rec_tts_lookup ON recording_tts_audio(recording_id, stop_index, seq);"
                 )
+                # Backward compatible migration: add updated_at_ms to support
+                # per-segment text/audio regeneration with cache-busting URLs.
+                try:
+                    cols_tts = [str(r["name"]) for r in conn.execute("PRAGMA table_info(recording_tts_audio);").fetchall()]
+                    if "updated_at_ms" not in cols_tts:
+                        conn.execute("ALTER TABLE recording_tts_audio ADD COLUMN updated_at_ms INTEGER;")
+                except Exception:
+                    pass
                 conn.commit()
             finally:
                 conn.close()
@@ -299,12 +307,105 @@ class RecordingStore:
                 conn.execute(
                     """
                     INSERT INTO recording_tts_audio
-                      (recording_id, stop_index, request_id, segment_index, seq, text, rel_path, created_at_ms)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                      (recording_id, stop_index, request_id, segment_index, seq, text, rel_path, created_at_ms, updated_at_ms)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (rid, int(stop_index), req, seg_i, int(seq), None if text is None else str(text), rel, int(created_at_ms)),
+                    (
+                        rid,
+                        int(stop_index),
+                        req,
+                        seg_i,
+                        int(seq),
+                        None if text is None else str(text),
+                        rel,
+                        int(created_at_ms),
+                        int(created_at_ms),
+                    ),
                 )
                 conn.commit()
+            finally:
+                conn.close()
+
+    def get_tts_segment(self, *, recording_id: str, segment_id: int) -> dict | None:
+        rid = str(recording_id or "").strip()
+        if not rid:
+            return None
+        try:
+            seg_id = int(segment_id)
+        except Exception:
+            return None
+        with self._lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    """
+                    SELECT id, recording_id, stop_index, request_id, segment_index, seq, text, rel_path, created_at_ms, updated_at_ms
+                    FROM recording_tts_audio
+                    WHERE recording_id=? AND id=?
+                    LIMIT 1
+                    """,
+                    (rid, seg_id),
+                ).fetchone()
+                return dict(row) if row else None
+            finally:
+                conn.close()
+
+    def update_tts_segment(self, *, recording_id: str, segment_id: int, text: str | None, rel_path: str) -> dict | None:
+        rid = str(recording_id or "").strip()
+        if not rid:
+            return None
+        try:
+            seg_id = int(segment_id)
+        except Exception:
+            return None
+        rel = str(rel_path or "").replace("\\", "/").lstrip("/")
+        if not rel:
+            return None
+        now_ms = self._now_ms()
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    """
+                    UPDATE recording_tts_audio
+                    SET text=?, rel_path=?, updated_at_ms=?
+                    WHERE recording_id=? AND id=?
+                    """,
+                    (None if text is None else str(text), rel, int(now_ms), rid, seg_id),
+                )
+                row = conn.execute(
+                    """
+                    SELECT id, recording_id, stop_index, request_id, segment_index, seq, text, rel_path, created_at_ms, updated_at_ms
+                    FROM recording_tts_audio
+                    WHERE recording_id=? AND id=?
+                    LIMIT 1
+                    """,
+                    (rid, seg_id),
+                ).fetchone()
+                conn.commit()
+                return dict(row) if row else None
+            finally:
+                conn.close()
+
+    def count_tts_rel_path_refs(self, *, recording_id: str, rel_path: str, exclude_segment_id: int | None = None) -> int:
+        rid = str(recording_id or "").strip()
+        rel = str(rel_path or "").replace("\\", "/").lstrip("/")
+        if not rid or not rel:
+            return 0
+        with self._lock:
+            conn = self._connect()
+            try:
+                if exclude_segment_id is None:
+                    row = conn.execute(
+                        "SELECT COUNT(1) AS c FROM recording_tts_audio WHERE recording_id=? AND rel_path=?",
+                        (rid, rel),
+                    ).fetchone()
+                else:
+                    row = conn.execute(
+                        "SELECT COUNT(1) AS c FROM recording_tts_audio WHERE recording_id=? AND rel_path=? AND id<>?",
+                        (rid, rel, int(exclude_segment_id)),
+                    ).fetchone()
+                return int(row["c"]) if row and row["c"] is not None else 0
             finally:
                 conn.close()
 
@@ -351,7 +452,7 @@ class RecordingStore:
 
                 tts_rows = conn.execute(
                     """
-                    SELECT seq, text, rel_path
+                    SELECT id, segment_index, seq, text, rel_path, created_at_ms, updated_at_ms
                     FROM recording_tts_audio
                     WHERE recording_id=? AND stop_index=?
                     ORDER BY seq ASC
@@ -359,18 +460,35 @@ class RecordingStore:
                     (rid, int(idx)),
                 ).fetchall()
                 segments = []
+                segment_text_chunks: list[str] = []
                 for r in tts_rows:
                     rel = str(r["rel_path"] or "").replace("\\", "/").lstrip("/")
+                    v = int(r["updated_at_ms"] or r["created_at_ms"] or 0)
                     url = f"{str(base_url).rstrip('/')}/api/recordings/{rid}/audio/{rel}"
-                    segments.append({"text": str(r["text"] or ""), "audio_url": url})
+                    if v > 0:
+                        url = f"{url}?v={v}"
+                    seg_text = str(r["text"] or "")
+                    if seg_text.strip():
+                        segment_text_chunks.append(seg_text)
+                    segments.append(
+                        {
+                            "segment_id": int(r["id"]),
+                            "segment_index": int(r["segment_index"]) if r["segment_index"] is not None else None,
+                            "seq": int(r["seq"]),
+                            "text": seg_text,
+                            "audio_url": url,
+                            "updated_at_ms": v if v > 0 else None,
+                        }
+                    )
 
-                answer_text = "".join(chunks).strip()
+                effective_chunks = segment_text_chunks if segment_text_chunks else chunks
+                answer_text = "".join(effective_chunks).strip()
                 tail = answer_text[-80:] if answer_text else ""
                 return {
                     "recording_id": rid,
                     "stop_index": int(idx),
                     "stop_name": str(stops[idx] if isinstance(stops, list) and idx < len(stops) else ""),
-                    "chunks": chunks,
+                    "chunks": effective_chunks,
                     "answer_text": answer_text,
                     "tail": tail,
                     "segments": segments,

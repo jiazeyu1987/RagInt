@@ -60,8 +60,10 @@ class _HistoryStore:
 class _QaAudioMatcher:
     def __init__(self):
         self.upserts = []
+        self.find_calls = []
 
     def find_match(self, **kwargs):  # noqa: ANN003
+        self.find_calls.append(dict(kwargs))
         return None
 
     def schedule_upsert_from_answer(self, **kwargs):  # noqa: ANN003
@@ -178,6 +180,47 @@ def test_stream_ask_upserts_qa_audio_with_base_question_only():
 
     assert matcher.upserts, "qa audio upsert should be scheduled"
     assert matcher.upserts[0]["question"] == "请介绍心脏介入展厅"
+
+
+def test_stream_ask_disables_audio_cache_lookup_but_still_upserts():
+    history = _HistoryStore()
+    matcher = _QaAudioMatcher()
+    orch = ConversationOrchestrator(
+        ragflow_service=_RagflowService(),
+        ragflow_agent_service=_RagflowAgentService(),
+        intent_service=_IntentService(),
+        history_store=history,
+        selling_points_store=None,
+        logger=logging.getLogger("test"),
+        timings_set=_timings_set,
+        timings_get=_timings_get,
+        default_session=_Session(),
+        qa_audio_matcher=matcher,
+    )
+
+    inp = AskInput(
+        question="请介绍心脏介入展厅",
+        request_id="ask_t1_disabled_lookup",
+        client_id="c1",
+        kind="ask",
+        conversation_name="展厅聊天",
+        save_history=True,
+        tts_provider="edge",
+        tts_voice="zh-CN-XiaoxiaoNeural",
+        tts_speed=1.0,
+        qa_audio_cache_lookup_enabled=False,
+    )
+    cfg = {
+        "kb_version": "kb1",
+        "qa_cache": {"enabled": True, "ttl_s": 60},
+        "qa_audio_cache": {"enabled": True, "recall_top_k": 10, "classifier_threshold": 0.8},
+        "text_cleaning": {"enabled": False},
+    }
+
+    list(orch.stream_ask(inp=inp, ragflow_config=cfg, cancel_event=threading.Event(), t_submit=0.0))
+
+    assert matcher.find_calls == []
+    assert matcher.upserts, "qa audio upsert should still be scheduled when lookup is disabled"
 
 
 def test_stream_ask_applies_audience_profile_to_script_prompt():

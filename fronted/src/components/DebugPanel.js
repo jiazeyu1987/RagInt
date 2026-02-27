@@ -13,6 +13,7 @@ export function DebugPanel({
   questionQueue,
   onAnswerQueuedNow,
   onRemoveQueuedQuestion,
+  embedded = false,
 }) {
   const q = Array.isArray(questionQueue) ? questionQueue : [];
   const requestId = debugInfo && debugInfo.requestId ? String(debugInfo.requestId) : '';
@@ -22,7 +23,10 @@ export function DebugPanel({
   const tourStopName = tour && tour.stopName ? String(tour.stopName) : '';
   const tourStopIndex = tour && Number.isFinite(Number(tour.stopIndex)) ? Number(tour.stopIndex) : null;
   const tourMode = tour && tour.mode ? String(tour.mode) : '';
-  let navState = '—';
+  const rootClass = `debug-panel${embedded ? ' debug-panel-embedded' : ''}`;
+  const Root = embedded ? 'div' : 'aside';
+
+  let navState = '-';
   try {
     for (let i = events.length - 1; i >= 0; i -= 1) {
       const e = events[i];
@@ -33,8 +37,9 @@ export function DebugPanel({
   } catch (_) {
     // ignore
   }
+
   return (
-    <aside className="debug-panel">
+    <Root className={rootClass}>
       <div className="debug-title">调试面板</div>
       {!debugInfo ? (
         <div className="debug-muted">点击发送后显示耗时</div>
@@ -43,7 +48,7 @@ export function DebugPanel({
           <div className="debug-subtitle">讲解/移动</div>
           <div className="debug-row">
             <div className="debug-k">当前站点</div>
-            <div className="debug-v">{tourStopName ? `${tourStopIndex != null ? `#${tourStopIndex} ` : ''}${tourStopName}` : '—'}</div>
+            <div className="debug-v">{tourStopName ? `${tourStopIndex != null ? `#${tourStopIndex} ` : ''}${tourStopName}` : '-'}</div>
           </div>
           <div className="debug-row">
             <div className="debug-k">移动状态</div>
@@ -51,55 +56,55 @@ export function DebugPanel({
           </div>
           <div className="debug-row">
             <div className="debug-k">tour_mode</div>
-            <div className="debug-v">{tourMode || '—'}</div>
+            <div className="debug-v">{tourMode || '-'}</div>
           </div>
 
           <div className="debug-row">
             <div className="debug-k">request_id</div>
-            <div className="debug-v">{requestId || '—'}</div>
+            <div className="debug-v">{requestId || '-'}</div>
           </div>
           <div className="debug-row">
             <div className="debug-k">触发</div>
             <div className="debug-v">{debugInfo.trigger}</div>
           </div>
           <div className="debug-row">
-            <div className="debug-k">提交 → 首字</div>
+            <div className="debug-k">提交 -> 首字</div>
             <div className="debug-v">
-              {debugInfo.ragflowFirstChunkAt ? `${(debugInfo.ragflowFirstChunkAt - debugInfo.submitAt).toFixed(0)} ms` : '—'}
+              {debugInfo.ragflowFirstChunkAt ? `${(debugInfo.ragflowFirstChunkAt - debugInfo.submitAt).toFixed(0)} ms` : '-'}
             </div>
           </div>
           <div className="debug-row">
-            <div className="debug-k">提交 → 首段</div>
+            <div className="debug-k">提交 -> 首段</div>
             <div className="debug-v">
-              {debugInfo.ragflowFirstSegmentAt ? `${(debugInfo.ragflowFirstSegmentAt - debugInfo.submitAt).toFixed(0)} ms` : '—'}
+              {debugInfo.ragflowFirstSegmentAt ? `${(debugInfo.ragflowFirstSegmentAt - debugInfo.submitAt).toFixed(0)} ms` : '-'}
             </div>
           </div>
           <div className="debug-row">
-            <div className="debug-k">提交 → TTS首包</div>
+            <div className="debug-k">提交 -> TTS首包</div>
             <div className="debug-v">
-              {debugInfo.ttsFirstAudioAt ? `${(debugInfo.ttsFirstAudioAt - debugInfo.submitAt).toFixed(0)} ms` : ttsEnabled ? '—' : '已关闭'}
+              {debugInfo.ttsFirstAudioAt ? `${(debugInfo.ttsFirstAudioAt - debugInfo.submitAt).toFixed(0)} ms` : ttsEnabled ? '-' : '已关闭'}
             </div>
           </div>
           <div className="debug-row">
-            <div className="debug-k">提交 → RAG结束</div>
+            <div className="debug-k">提交 -> RAG结束</div>
             <div className="debug-v">
-              {debugInfo.ragflowDoneAt ? `${(debugInfo.ragflowDoneAt - debugInfo.submitAt).toFixed(0)} ms` : '—'}
+              {debugInfo.ragflowDoneAt ? `${(debugInfo.ragflowDoneAt - debugInfo.submitAt).toFixed(0)} ms` : '-'}
             </div>
           </div>
           <div className="debug-row">
-            <div className="debug-k">提交 → TTS结束</div>
+            <div className="debug-k">提交 -> TTS结束</div>
             <div className="debug-v">
-              {debugInfo.ttsAllDoneAt ? `${(debugInfo.ttsAllDoneAt - debugInfo.submitAt).toFixed(0)} ms` : ttsEnabled ? '—' : '已关闭'}
+              {debugInfo.ttsAllDoneAt ? `${(debugInfo.ttsAllDoneAt - debugInfo.submitAt).toFixed(0)} ms` : ttsEnabled ? '-' : '已关闭'}
             </div>
           </div>
 
           <div className="debug-subtitle">后端状态</div>
           {!requestId ? (
-            <div className="debug-muted">等待 request_id…</div>
+            <div className="debug-muted">等待 request_id...</div>
           ) : serverStatusErr ? (
             <div className="debug-muted">{serverStatusErr}</div>
           ) : !serverStatus ? (
-            <div className="debug-muted">查询中…</div>
+            <div className="debug-muted">查询中...</div>
           ) : (
             <>
               <div className="debug-row">
@@ -107,35 +112,53 @@ export function DebugPanel({
                 <div className="debug-v">{serverStatus.cancelled ? '是' : '否'}</div>
               </div>
               <div className="debug-row">
-                <div className="debug-k">submit→rag首chunk</div>
-                <div className="debug-v">{serverStatus.derived_ms && serverStatus.derived_ms.submit_to_rag_first_chunk_ms != null ? `${serverStatus.derived_ms.submit_to_rag_first_chunk_ms} ms` : '—'}</div>
+                <div className="debug-k">submit->rag首chunk</div>
+                <div className="debug-v">
+                  {serverStatus.derived_ms && serverStatus.derived_ms.submit_to_rag_first_chunk_ms != null
+                    ? `${serverStatus.derived_ms.submit_to_rag_first_chunk_ms} ms`
+                    : '-'}
+                </div>
               </div>
               <div className="debug-row">
-                <div className="debug-k">submit→rag首字</div>
-                <div className="debug-v">{serverStatus.derived_ms && serverStatus.derived_ms.submit_to_rag_first_text_ms != null ? `${serverStatus.derived_ms.submit_to_rag_first_text_ms} ms` : '—'}</div>
+                <div className="debug-k">submit->rag首字</div>
+                <div className="debug-v">
+                  {serverStatus.derived_ms && serverStatus.derived_ms.submit_to_rag_first_text_ms != null
+                    ? `${serverStatus.derived_ms.submit_to_rag_first_text_ms} ms`
+                    : '-'}
+                </div>
               </div>
               <div className="debug-row">
-                <div className="debug-k">submit→首段</div>
-                <div className="debug-v">{serverStatus.derived_ms && serverStatus.derived_ms.submit_to_first_segment_ms != null ? `${serverStatus.derived_ms.submit_to_first_segment_ms} ms` : '—'}</div>
+                <div className="debug-k">submit->首段</div>
+                <div className="debug-v">
+                  {serverStatus.derived_ms && serverStatus.derived_ms.submit_to_first_segment_ms != null
+                    ? `${serverStatus.derived_ms.submit_to_first_segment_ms} ms`
+                    : '-'}
+                </div>
               </div>
               <div className="debug-row">
                 <div className="debug-k">tts_seen</div>
-                <div className="debug-v">{serverStatus.tts_state && serverStatus.tts_state.count != null ? `${serverStatus.tts_state.count}` : '—'}</div>
+                <div className="debug-v">{serverStatus.tts_state && serverStatus.tts_state.count != null ? `${serverStatus.tts_state.count}` : '-'}</div>
               </div>
               <div className="debug-row">
-                <div className="debug-k">submit→tts首包</div>
-                <div className="debug-v">{serverStatus.derived_ms && serverStatus.derived_ms.submit_to_tts_first_audio_ms != null ? `${serverStatus.derived_ms.submit_to_tts_first_audio_ms} ms` : '—'}</div>
+                <div className="debug-k">submit->tts首包</div>
+                <div className="debug-v">
+                  {serverStatus.derived_ms && serverStatus.derived_ms.submit_to_tts_first_audio_ms != null
+                    ? `${serverStatus.derived_ms.submit_to_tts_first_audio_ms} ms`
+                    : '-'}
+                </div>
               </div>
               <div className="debug-row">
-                <div className="debug-k">submit→播报结束</div>
-                <div className="debug-v">{serverStatus.derived_ms && serverStatus.derived_ms.submit_to_play_end_ms != null ? `${serverStatus.derived_ms.submit_to_play_end_ms} ms` : '—'}</div>
+                <div className="debug-k">submit->播报结束</div>
+                <div className="debug-v">
+                  {serverStatus.derived_ms && serverStatus.derived_ms.submit_to_play_end_ms != null
+                    ? `${serverStatus.derived_ms.submit_to_play_end_ms} ms`
+                    : '-'}
+                </div>
               </div>
               {serverStatus.last_error ? (
                 <div className="debug-row">
                   <div className="debug-k">失败原因</div>
-                  <div className="debug-v">
-                    {`${(serverStatus.last_error.kind || 'error')}:${(serverStatus.last_error.name || 'error')}`}
-                  </div>
+                  <div className="debug-v">{`${serverStatus.last_error.kind || 'error'}:${serverStatus.last_error.name || 'error'}`}</div>
                 </div>
               ) : null}
             </>
@@ -143,11 +166,11 @@ export function DebugPanel({
 
           <div className="debug-subtitle">事件时间线</div>
           {!requestId ? (
-            <div className="debug-muted">等待 request_id…</div>
+            <div className="debug-muted">等待 request_id...</div>
           ) : serverEventsErr ? (
             <div className="debug-muted">{serverEventsErr}</div>
           ) : !serverEvents ? (
-            <div className="debug-muted">查询中…</div>
+            <div className="debug-muted">查询中...</div>
           ) : (
             <>
               {lastErr ? (
@@ -176,9 +199,7 @@ export function DebugPanel({
                       </div>
                       <div className="debug-item-b">
                         <div>{e.name || 'event'}</div>
-                        <div className="debug-muted">
-                          {e.ts_ms ? new Date(Number(e.ts_ms)).toLocaleTimeString() : '—'}
-                        </div>
+                        <div className="debug-muted">{e.ts_ms ? new Date(Number(e.ts_ms)).toLocaleTimeString() : '-'}</div>
                       </div>
                     </div>
                   ))
@@ -204,11 +225,7 @@ export function DebugPanel({
                       <button type="button" className="queue-btn" onClick={() => onAnswerQueuedNow && onAnswerQueuedNow(item)}>
                         立即回答
                       </button>
-                      <button
-                        type="button"
-                        className="queue-btn queue-btn-danger"
-                        onClick={() => onRemoveQueuedQuestion && onRemoveQueuedQuestion(item.id)}
-                      >
+                      <button type="button" className="queue-btn queue-btn-danger" onClick={() => onRemoveQueuedQuestion && onRemoveQueuedQuestion(item.id)}>
                         移除
                       </button>
                     </div>
@@ -227,15 +244,15 @@ export function DebugPanel({
                   <span>{s.chars}字</span>
                 </div>
                 <div className="debug-item-b">
-                  <div>请求: {s.ttsRequestAt ? `${(s.ttsRequestAt - debugInfo.submitAt).toFixed(0)}ms` : '—'}</div>
-                  <div>首包: {s.ttsFirstAudioAt ? `${(s.ttsFirstAudioAt - debugInfo.submitAt).toFixed(0)}ms` : '—'}</div>
-                  <div>结束: {s.ttsDoneAt ? `${(s.ttsDoneAt - debugInfo.submitAt).toFixed(0)}ms` : '—'}</div>
+                  <div>请求: {s.ttsRequestAt ? `${(s.ttsRequestAt - debugInfo.submitAt).toFixed(0)}ms` : '-'}</div>
+                  <div>首包: {s.ttsFirstAudioAt ? `${(s.ttsFirstAudioAt - debugInfo.submitAt).toFixed(0)}ms` : '-'}</div>
+                  <div>结束: {s.ttsDoneAt ? `${(s.ttsDoneAt - debugInfo.submitAt).toFixed(0)}ms` : '-'}</div>
                 </div>
               </div>
             ))}
           </div>
         </>
       )}
-    </aside>
+    </Root>
   );
 }

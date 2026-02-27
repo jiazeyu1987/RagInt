@@ -19,7 +19,6 @@ export function TextInputControls({
   onChangeInputText,
   sendBtnClassName,
   submitDisabled,
-  onOpenSettings,
 }) {
   if (children) return <TextInputBar onSubmit={onSubmit}>{children}</TextInputBar>;
 
@@ -56,7 +55,7 @@ export function TextInputControls({
         title={conversationEnabled ? '对话模式中不可用' : '按住说话，松开后识别并填入输入框'}
         aria-label={isRecording ? '录音中' : '语音输入'}
       >
-        {isRecording ? '■' : '🎙'}
+        {isRecording ? '●' : '🎤'}
       </button>
 
       <input
@@ -64,17 +63,14 @@ export function TextInputControls({
         ref={inputElRef}
         value={inputText}
         onChange={(e) => onChangeInputText(e.target.value)}
-        placeholder="输入问题…"
+        placeholder="输入问题..."
         disabled={false}
       />
 
       <button type="submit" className={sendBtnClassName} disabled={submitDisabled} title="提交">
         发送
       </button>
-
-      <button type="button" className="settings-btn" onClick={onOpenSettings} title="设置" aria-label="设置">
-        ⚙
-      </button>
     </TextInputBar>
   );
 }
+

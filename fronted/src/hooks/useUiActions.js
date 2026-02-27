@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 
-export function useUiActions({ inputElRef, setInputText, submitTextAuto, setHistorySort, setSettingsOpen } = {}) {
+export function useUiActions({ inputElRef, setInputText, submitTextAuto, setHistorySort } = {}) {
   const focusInputEl = useCallback(() => {
     try {
       setTimeout(() => {
@@ -23,8 +23,6 @@ export function useUiActions({ inputElRef, setInputText, submitTextAuto, setHist
 
   const onQuickSummary = useCallback(() => submitTextAuto('请用30秒总结刚才的讲解', 'settings_quick'), [submitTextAuto]);
   const onChangeHistorySort = setHistorySort;
-  const onOpenSettings = useCallback(() => setSettingsOpen(true), [setSettingsOpen]);
-  const onCloseSettings = useCallback(() => setSettingsOpen(false), [setSettingsOpen]);
 
-  return { focusInputEl, onPickHistoryQuestion, onQuickSummary, onChangeHistorySort, onOpenSettings, onCloseSettings };
+  return { focusInputEl, onPickHistoryQuestion, onQuickSummary, onChangeHistorySort };
 }

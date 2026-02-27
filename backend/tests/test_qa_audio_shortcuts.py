@@ -95,3 +95,35 @@ def test_audio_cache_shortcut_still_checks_match_when_provider_missing():
     assert outcome is not None
     assert len(matcher.calls) == 1
 
+
+def test_audio_cache_shortcut_skips_lookup_when_disabled():
+    matcher = _Matcher(
+        payload={
+            "pair_id": 1,
+            "answer_text": "x",
+            "audio_url": "/api/qa_audio_cache/audio/1",
+        }
+    )
+    safety = SensitiveWordsFilter.from_config({})
+
+    payloads, outcome = _collect(
+        _maybe_stream_audio_cache_hit(
+            request_id="ask_1",
+            question="q",
+            qa_audio_matcher=matcher,
+            qa_audio_cache_enabled=False,
+            qa_audio_recall_top_k=10,
+            qa_audio_classifier_threshold=0.8,
+            qa_audio_classifier_chat_name="qa_cls",
+            tts_provider="edge",
+            tts_voice="zh-CN-XiaoxiaoNeural",
+            tts_speed=1.0,
+            safety_filter=safety,
+            logger=None,
+            base_url="",
+        )
+    )
+
+    assert payloads == []
+    assert outcome is None
+    assert len(matcher.calls) == 0

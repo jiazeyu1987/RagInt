@@ -213,6 +213,7 @@ export class AskWorkflowManager {
       audienceProfileRef,
       qaAnswerTargetCharsRef,
       qaAudioCacheConfidenceThresholdRef,
+      qaAudioCacheLookupEnabledRef,
       tourStopDurationsRef,
       tourStopTargetCharsRef,
       useAgentModeRef,
@@ -381,6 +382,12 @@ export class AskWorkflowManager {
         if (Number.isFinite(n)) qaAudioCacheConfidenceThreshold = Math.max(0, Math.min(1, n));
       } catch (_) {
         qaAudioCacheConfidenceThreshold = null;
+      }
+      let qaAudioCacheLookupEnabled = true;
+      try {
+        qaAudioCacheLookupEnabled = !!(qaAudioCacheLookupEnabledRef ? qaAudioCacheLookupEnabledRef.current : true);
+      } catch (_) {
+        qaAudioCacheLookupEnabled = true;
       }
 
       const base = String(baseUrl || '').replace(/\/+$/, '');
@@ -558,6 +565,7 @@ export class AskWorkflowManager {
           tts_speed: askTtsSpeed,
           qa_answer_target_chars: qaAnswerTargetChars,
           qa_audio_cache_confidence_threshold: qaAudioCacheConfidenceThreshold,
+          qa_audio_cache_lookup_enabled: qaAudioCacheLookupEnabled,
           conversation_name: useAgentModeRef && useAgentModeRef.current ? null : selectedChatRef ? selectedChatRef.current : null,
           agent_id: useAgentModeRef && useAgentModeRef.current ? (selectedAgentIdRef ? (selectedAgentIdRef.current || null) : null) : null,
           guide: {

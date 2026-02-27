@@ -80,3 +80,13 @@ def test_parse_ask_request_parses_qa_audio_cache_confidence_threshold():
         assert err is None
         assert parsed is not None
         assert abs(float(parsed.qa_audio_cache_confidence_threshold) - 0.66) < 1e-6
+
+
+def test_parse_ask_request_parses_qa_audio_cache_lookup_enabled():
+    app = Flask(__name__)
+    data = {"question": "hi", "qa_audio_cache_lookup_enabled": "0"}
+    with app.test_request_context("/api/ask", method="POST", json=data):
+        parsed, err = parse_ask_request(deps=_Deps(), data=data)
+        assert err is None
+        assert parsed is not None
+        assert parsed.qa_audio_cache_lookup_enabled is False

@@ -62,6 +62,7 @@ def build_ask_input(*, parsed, conversation_name: str) -> AskInput:
         tts_speed=parsed.tts_speed,
         qa_answer_target_chars=parsed.qa_answer_target_chars,
         qa_audio_cache_confidence_threshold=parsed.qa_audio_cache_confidence_threshold,
+        qa_audio_cache_lookup_enabled=parsed.qa_audio_cache_lookup_enabled,
     )
 
 

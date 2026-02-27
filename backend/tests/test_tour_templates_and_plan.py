@@ -15,9 +15,27 @@ def test_tour_templates_endpoint():
 def test_tour_plan_accepts_override():
     app = create_app()
     c = app.test_client()
-    r = c.post("/api/tour/plan", json={"zone": "默认路线", "profile": "大众", "duration_s": 60, "stops_override": ["A", "B"]})
+    r = c.post("/api/tour/plan", json={"zone": "榛樿璺嚎", "profile": "澶т紬", "duration_s": 60, "stops_override": ["A", "B"]})
     assert r.status_code == 200
     payload = r.get_json()
     assert payload["stops"] == ["A", "B"]
     assert payload["source"] == "override"
 
+
+def test_tour_plan_accepts_stop_duration_override():
+    app = create_app()
+    c = app.test_client()
+    r = c.post(
+        "/api/tour/plan",
+        json={
+            "zone": "榛樿璺嚎",
+            "profile": "澶т紬",
+            "duration_s": 60,
+            "stops_override": ["A", "B"],
+            "stop_durations_s_override": {"A": 11, "B": 22},
+        },
+    )
+    assert r.status_code == 200
+    payload = r.get_json()
+    assert payload["stops"] == ["A", "B"]
+    assert payload["stop_durations_s"] == [11, 22]

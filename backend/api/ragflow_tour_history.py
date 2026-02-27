@@ -66,7 +66,9 @@ def create_blueprint(deps):
     def api_tour_plan():
         cfg = get_ragflow_config(deps=deps)
         data = request.get_json() or {}
-        zone, profile, duration_s, stops_override = parse_tour_plan_request(data if isinstance(data, dict) else {})
+        zone, profile, duration_s, stops_override, stop_durations_override = parse_tour_plan_request(
+            data if isinstance(data, dict) else {}
+        )
         if stops_override:
             plan = deps.tour_planner.make_plan_from_stops(
                 zone=zone,
@@ -74,9 +76,16 @@ def create_blueprint(deps):
                 duration_s=duration_s,
                 stops=stops_override,
                 source="override",
+                stop_durations_override=stop_durations_override,
             )
         else:
-            plan = deps.tour_planner.make_plan(cfg if isinstance(cfg, dict) else {}, zone=zone, profile=profile, duration_s=duration_s)
+            plan = deps.tour_planner.make_plan(
+                cfg if isinstance(cfg, dict) else {},
+                zone=zone,
+                profile=profile,
+                duration_s=duration_s,
+                stop_durations_override=stop_durations_override,
+            )
         stops_meta = build_stops_meta(plan)
         return jsonify(
             {

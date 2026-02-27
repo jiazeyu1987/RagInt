@@ -29,6 +29,7 @@ class AskRequest:
     tts_speed: float | None
     qa_answer_target_chars: int | None
     qa_audio_cache_confidence_threshold: float | None
+    qa_audio_cache_lookup_enabled: bool | None
 
 
 def _normalize_guide(guide) -> dict:
@@ -47,6 +48,21 @@ def _as_float_or_none(value):
         return float(value) if value is not None and str(value).strip() != "" else None
     except Exception:
         return None
+
+
+def _as_bool_or_none(value):
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return bool(value)
+    s = str(value).strip().lower()
+    if not s:
+        return None
+    if s in ("1", "true", "yes", "y", "on"):
+        return True
+    if s in ("0", "false", "no", "n", "off"):
+        return False
+    return None
 
 
 def _compute_action_type(*, guide: dict) -> str:
@@ -91,6 +107,7 @@ def parse_ask_request(*, deps, data: dict | None) -> tuple[AskRequest | None, Re
         tts_speed = _as_float_or_none(flask_request.headers.get("X-TTS-Speed"))
     qa_answer_target_chars = _as_int_or_none(data.get("qa_answer_target_chars"))
     qa_audio_cache_confidence_threshold = _as_float_or_none(data.get("qa_audio_cache_confidence_threshold"))
+    qa_audio_cache_lookup_enabled = _as_bool_or_none(data.get("qa_audio_cache_lookup_enabled"))
 
     return (
         AskRequest(
@@ -112,6 +129,7 @@ def parse_ask_request(*, deps, data: dict | None) -> tuple[AskRequest | None, Re
             tts_speed=tts_speed,
             qa_answer_target_chars=qa_answer_target_chars,
             qa_audio_cache_confidence_threshold=qa_audio_cache_confidence_threshold,
+            qa_audio_cache_lookup_enabled=qa_audio_cache_lookup_enabled,
         ),
         None,
     )

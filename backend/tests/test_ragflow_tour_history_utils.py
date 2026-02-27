@@ -42,13 +42,30 @@ def test_build_tour_templates_fallback_from_routes():
 
 
 def test_parse_tour_plan_request_with_override():
-    zone, profile, duration_s, stops = parse_tour_plan_request(
+    zone, profile, duration_s, stops, stop_durations = parse_tour_plan_request(
         {"zone": "z1", "profile": "p1", "duration_s": 80, "stops_override": [" A ", "", "B"]}
     )
     assert zone == "z1"
     assert profile == "p1"
     assert duration_s == 80
     assert stops == ["A", "B"]
+    assert stop_durations is None
+
+
+def test_parse_tour_plan_request_with_stop_duration_override():
+    zone, profile, duration_s, stops, stop_durations = parse_tour_plan_request(
+        {
+            "zone": "z1",
+            "profile": "p1",
+            "duration_s": 80,
+            "stop_durations_s_override": {"A": "12", "B": 0, "": 5},
+        }
+    )
+    assert zone == "z1"
+    assert profile == "p1"
+    assert duration_s == 80
+    assert stops is None
+    assert stop_durations == {"A": 12}
 
 
 class _Plan:

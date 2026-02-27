@@ -26,6 +26,43 @@ class TourPlanner:
     def _normalize_str(v: str) -> str:
         return str(v or "").strip()
 
+    @staticmethod
+    def _parse_stop_durations_override(
+        override: list | dict | None, stops: list[str]
+    ) -> list[int | None]:
+        result: list[int | None] = [None for _ in stops]
+        if not stops:
+            return result
+
+        if isinstance(override, list):
+            for i, _s in enumerate(stops):
+                if i >= len(override):
+                    break
+                try:
+                    n = int(override[i])
+                except Exception:
+                    n = 0
+                if n > 0:
+                    result[i] = n
+            return result
+
+        if isinstance(override, dict):
+            for i, s in enumerate(stops):
+                raw = None
+                if s in override:
+                    raw = override.get(s)
+                elif str(i) in override:
+                    raw = override.get(str(i))
+                try:
+                    n = int(raw)
+                except Exception:
+                    n = 0
+                if n > 0:
+                    result[i] = n
+            return result
+
+        return result
+
     def get_meta(self, cfg: dict) -> dict:
         tour_cfg = (cfg or {}).get("tour_planner") if isinstance(cfg, dict) else {}
         if not isinstance(tour_cfg, dict):
@@ -54,7 +91,15 @@ class TourPlanner:
             "default_profile": default_profile,
         }
 
-    def make_plan(self, cfg: dict, *, zone: str, profile: str, duration_s: int) -> TourPlan:
+    def make_plan(
+        self,
+        cfg: dict,
+        *,
+        zone: str,
+        profile: str,
+        duration_s: int,
+        stop_durations_override: list | dict | None = None,
+    ) -> TourPlan:
         zone = self._normalize_str(zone) or "默认路线"
         profile = self._normalize_str(profile) or "大众"
         try:
@@ -148,6 +193,12 @@ class TourPlanner:
             per = max(1, int(round(float(duration_s) / max(1, len(stops_norm)))))
             stop_durations = [per for _ in stops_norm]
 
+        # Apply request-level overrides from frontend/UI.
+        overrides = self._parse_stop_durations_override(stop_durations_override, stops_norm)
+        for i, v in enumerate(overrides):
+            if isinstance(v, int) and v > 0 and i < len(stop_durations):
+                stop_durations[i] = v
+
         # Derive per-stop target chars for Chinese speech planning (heuristic).
         # Default: ~4.5 chars/s; configurable via tour_planner.chars_per_second.
         try:
@@ -167,7 +218,16 @@ class TourPlanner:
             source=source,
         )
 
-    def make_plan_from_stops(self, *, zone: str, profile: str, duration_s: int, stops: list[str], source: str = "override") -> TourPlan:
+    def make_plan_from_stops(
+        self,
+        *,
+        zone: str,
+        profile: str,
+        duration_s: int,
+        stops: list[str],
+        source: str = "override",
+        stop_durations_override: list | dict | None = None,
+    ) -> TourPlan:
         zone = self._normalize_str(zone) or "默认路线"
         profile = self._normalize_str(profile) or "大众"
         try:
@@ -182,6 +242,10 @@ class TourPlanner:
 
         per = max(1, int(round(float(duration_s) / max(1, len(stops_norm)))))
         stop_durations = [per for _ in stops_norm]
+        overrides = self._parse_stop_durations_override(stop_durations_override, stops_norm)
+        for i, v in enumerate(overrides):
+            if isinstance(v, int) and v > 0 and i < len(stop_durations):
+                stop_durations[i] = v
 
         cps = 4.5
         stop_target_chars = [max(20, int(round(float(d) * cps))) for d in stop_durations]

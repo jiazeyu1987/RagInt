@@ -12,19 +12,19 @@ export function StagePanel({
   return (
     <div className="settings-block">
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <button type="button" disabled={!!disabled} onClick={() => onPause && onPause()}>
+        <button type="button" className="settings-action-btn" disabled={!!disabled} onClick={() => onPause && onPause()}>
           暂停
         </button>
-        <button type="button" disabled={!!disabled} onClick={() => onContinue && onContinue()}>
+        <button type="button" className="settings-action-btn settings-action-btn-primary" disabled={!!disabled} onClick={() => onContinue && onContinue()}>
           继续
         </button>
-        <button type="button" disabled={!!disabled} onClick={() => onSkip && onSkip()}>
+        <button type="button" className="settings-action-btn" disabled={!!disabled} onClick={() => onSkip && onSkip()}>
           跳过
         </button>
-        <button type="button" disabled={!!disabled} onClick={() => onRestart && onRestart()}>
+        <button type="button" className="settings-action-btn settings-action-btn-danger" disabled={!!disabled} onClick={() => onRestart && onRestart()}>
           重来
         </button>
-        <button type="button" disabled={!!disabled} onClick={() => onToggleSpeed && onToggleSpeed()}>
+        <button type="button" className="settings-action-btn" disabled={!!disabled} onClick={() => onToggleSpeed && onToggleSpeed()}>
           加速：{speedLabel || '标准'}
         </button>
       </div>

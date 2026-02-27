@@ -3,8 +3,8 @@ import { SettingsDrawer } from './SettingsDrawer';
 import { SettingsToggles } from './SettingsToggles';
 import { StagePanel } from './StagePanel';
 import { TourModePanel } from './TourModePanel';
-import { SellingPointsPanel } from './SellingPointsPanel';
 import { QaAudioCachePanel } from './QaAudioCachePanel';
+import { RecordingArchivePreviewPanel } from './RecordingArchivePreviewPanel';
 
 const TABS = [
   { key: 'tts', label: 'TTS设置' },
@@ -13,7 +13,8 @@ const TABS = [
   { key: 'qa', label: '问答缓存' },
   { key: 'archive', label: '存档设置' },
   { key: 'asr', label: 'ASR设置' },
-  { key: 'mode', label: '模式设置' },
+  { key: 'mode', label: '讲解设置' },
+  { key: 'template', label: '模板编辑' },
 ];
 
 function SettingsGroup({ title, children }) {
@@ -60,7 +61,7 @@ function TtsTab({ controlBarProps, ttsMode, modelscopeVoice, onChangeModelscopeV
       <SettingsGroup title="语音参数">
         <div className="settings-form">
           <label className="settings-field">
-            <span>TTS提供商</span>
+            <span>TTS提供方</span>
             <select value={String(c.ttsMode || 'modelscope')} onChange={(e) => c.onChangeTtsMode && c.onChangeTtsMode(e.target.value)}>
               <option value="sovtts1">SOVTTS1</option>
               <option value="sovtts2">SOVTTS2</option>
@@ -82,10 +83,7 @@ function TtsTab({ controlBarProps, ttsMode, modelscopeVoice, onChangeModelscopeV
 
           <label className="settings-field">
             <span>TTS并发数</span>
-            <select
-              value={String(ttsFetchConcurrency || 4)}
-              onChange={(e) => onChangeTtsFetchConcurrency && onChangeTtsFetchConcurrency(Number(e.target.value) || 4)}
-            >
+            <select value={String(ttsFetchConcurrency || 4)} onChange={(e) => onChangeTtsFetchConcurrency && onChangeTtsFetchConcurrency(Number(e.target.value) || 4)}>
               <option value="2">2</option>
               <option value="4">4</option>
               <option value="6">6</option>
@@ -100,7 +98,7 @@ function TtsTab({ controlBarProps, ttsMode, modelscopeVoice, onChangeModelscopeV
               <input
                 value={modelscopeVoice}
                 onChange={(e) => onChangeModelscopeVoice && onChangeModelscopeVoice(e.target.value)}
-                placeholder="例如：cosyvoice-v3-plus-xxxx / cosyvoice-v3-plus-myvoice-..."
+                placeholder="例如 cosyvoice-v3-plus-myvoice-..."
               />
             </label>
           ) : null}
@@ -143,69 +141,23 @@ function DebugTab({ showHistoryPanel, onChangeShowHistoryPanel, showDebugPanel, 
   );
 }
 
-function OpsTab({ controlBarProps, stagePanelProps, onQuickSummary, onPrevStop, onNextStop, sellingPointsStopName }) {
-  const c = controlBarProps || {};
+function OpsTab({ stagePanelProps, onQuickSummary, onPrevStop, onNextStop }) {
   return (
-    <>
-      <SettingsGroup title="会话设置">
-        <div className="settings-form">
-          <label className="settings-field">
-            <span>Chat(会话)</span>
-            <select value={String(c.selectedChat || '')} onChange={(e) => c.onChangeSelectedChat && c.onChangeSelectedChat(e.target.value)}>
-              {(Array.isArray(c.chatOptions) && c.chatOptions.length ? c.chatOptions : [c.selectedChat || '']).map((name) => (
-                <option key={String(name)} value={String(name)}>
-                  {String(name)}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="settings-toggle">
-            <input type="checkbox" checked={!!c.useAgentMode} onChange={(e) => c.onChangeUseAgentMode && c.onChangeUseAgentMode(e.target.checked)} />
-            <span>Agent模式</span>
-          </label>
-
-          {c.useAgentMode ? (
-            <label className="settings-field">
-              <span>Agent</span>
-              <select value={String(c.selectedAgentId || '')} onChange={(e) => c.onChangeSelectedAgentId && c.onChangeSelectedAgentId(e.target.value)}>
-                <option value="">请选择Agent</option>
-                {(Array.isArray(c.agentOptions) ? c.agentOptions : []).map((a) => {
-                  const id = String((a && a.id) || '');
-                  const name = String((a && a.title) || id);
-                  return (
-                    <option key={id || name} value={id}>
-                      {name}
-                    </option>
-                  );
-                })}
-              </select>
-            </label>
-          ) : null}
-        </div>
-      </SettingsGroup>
-
-      <SettingsGroup title="运维动作">
-        <StagePanel {...(stagePanelProps || {})} />
-        <div className="settings-divider" />
-        <div className="settings-actions">
-          <button type="button" className="settings-action-btn" onClick={onQuickSummary}>
-            30秒总结
-          </button>
-          <button type="button" className="settings-action-btn" onClick={onPrevStop}>
-            上一站
-          </button>
-          <button type="button" className="settings-action-btn" onClick={onNextStop}>
-            下一站
-          </button>
-        </div>
-      </SettingsGroup>
-
-      <SettingsGroup title={`卖点库：${String(sellingPointsStopName || '').trim() || '当前站点'}`}>
-        <SellingPointsPanel stopName={sellingPointsStopName} hideTitle />
-      </SettingsGroup>
-
-    </>
+    <SettingsGroup title="运维动作">
+      <StagePanel {...(stagePanelProps || {})} />
+      <div className="settings-divider" />
+      <div className="settings-actions">
+        <button type="button" className="settings-action-btn" onClick={onQuickSummary}>
+          30秒总结
+        </button>
+        <button type="button" className="settings-action-btn" onClick={onPrevStop}>
+          上一站
+        </button>
+        <button type="button" className="settings-action-btn" onClick={onNextStop}>
+          下一站
+        </button>
+      </div>
+    </SettingsGroup>
   );
 }
 
@@ -215,6 +167,14 @@ function QaTab({ controlBarProps }) {
     <>
       <SettingsGroup title="问答配置">
         <div className="settings-form">
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={!!c.qaAudioCacheLookupEnabled}
+              onChange={(e) => c.onChangeQaAudioCacheLookupEnabled && c.onChangeQaAudioCacheLookupEnabled(e.target.checked)}
+            />
+            <span>开启问答缓存命中（关闭后仅写入不读取）</span>
+          </label>
           <label className="settings-field">
             <span>问答回答字数</span>
             <input
@@ -223,7 +183,7 @@ function QaTab({ controlBarProps }) {
               step="1"
               value={String(c.qaAnswerTargetChars || '10')}
               onChange={(e) => c.onChangeQaAnswerTargetChars && c.onChangeQaAnswerTargetChars(e.target.value)}
-              placeholder="最小 1"
+              placeholder="最小1"
             />
           </label>
           <label className="settings-field">
@@ -234,9 +194,7 @@ function QaTab({ controlBarProps }) {
               max="1"
               step="0.01"
               value={String(c.qaAudioCacheConfidenceThreshold || '0.85')}
-              onChange={(e) =>
-                c.onChangeQaAudioCacheConfidenceThreshold && c.onChangeQaAudioCacheConfidenceThreshold(e.target.value)
-              }
+              onChange={(e) => c.onChangeQaAudioCacheConfidenceThreshold && c.onChangeQaAudioCacheConfidenceThreshold(e.target.value)}
               placeholder="0~1"
             />
           </label>
@@ -250,60 +208,75 @@ function QaTab({ controlBarProps }) {
   );
 }
 
-function ArchiveTab({ controlBarProps }) {
+function ArchiveTab({ controlBarProps, ttsMode, modelscopeVoice }) {
   const c = controlBarProps || {};
+  const resolvedProvider = String(c.ttsMode || ttsMode || '').trim();
+  const resolvedVoice =
+    resolvedProvider.toLowerCase() === 'modelscope' || resolvedProvider.toLowerCase() === 'flash' ? String(modelscopeVoice || '').trim() : '';
+  const resolvedSpeed = Number(c.ttsSpeed);
+
   return (
-    <SettingsGroup title="录制与回放">
-      <div className="settings-form">
-        <label className="settings-toggle">
-          <input
-            type="checkbox"
-            checked={!!c.tourRecordingEnabled}
-            onChange={(e) => c.onChangeTourRecordingEnabled && c.onChangeTourRecordingEnabled(e.target.checked)}
-            disabled={!c.guideEnabled}
-          />
-          <span>录制讲解</span>
-        </label>
-
-        <label className="settings-toggle">
-          <input
-            type="checkbox"
-            checked={!!c.playTourRecordingEnabled}
-            onChange={(e) => c.onChangePlayTourRecordingEnabled && c.onChangePlayTourRecordingEnabled(e.target.checked)}
-            disabled={!c.guideEnabled}
-          />
-          <span>播放存档</span>
-        </label>
-
-        {c.playTourRecordingEnabled ? (
-          <label className="settings-field">
-            <span>选择存档</span>
-            <select
-              value={String(c.selectedTourRecordingId || '')}
-              onChange={(e) => c.onChangeSelectedTourRecordingId && c.onChangeSelectedTourRecordingId(e.target.value)}
-            >
-              <option value="">请选择</option>
-              {(c.tourRecordingOptions || []).map((r) => (
-                <option key={String(r.recording_id)} value={String(r.recording_id)}>
-                  {r.label || String(r.recording_id)}
-                </option>
-              ))}
-            </select>
+    <>
+      <SettingsGroup title="录制与回放">
+        <div className="settings-form">
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={!!c.tourRecordingEnabled}
+              onChange={(e) => c.onChangeTourRecordingEnabled && c.onChangeTourRecordingEnabled(e.target.checked)}
+              disabled={!c.guideEnabled}
+            />
+            <span>录制讲解</span>
           </label>
-        ) : null}
 
-        {c.playTourRecordingEnabled ? (
-          <div className="settings-actions">
-            <button type="button" className="settings-action-btn" onClick={() => c.onRenameSelectedTourRecording && c.onRenameSelectedTourRecording()}>
-              重命名
-            </button>
-            <button type="button" className="settings-action-btn" onClick={() => c.onDeleteSelectedTourRecording && c.onDeleteSelectedTourRecording()}>
-              删除
-            </button>
-          </div>
-        ) : null}
-      </div>
-    </SettingsGroup>
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={!!c.playTourRecordingEnabled}
+              onChange={(e) => c.onChangePlayTourRecordingEnabled && c.onChangePlayTourRecordingEnabled(e.target.checked)}
+              disabled={!c.guideEnabled}
+            />
+            <span>播放存档</span>
+          </label>
+
+          {c.playTourRecordingEnabled ? (
+            <label className="settings-field">
+              <span>选择存档</span>
+              <select value={String(c.selectedTourRecordingId || '')} onChange={(e) => c.onChangeSelectedTourRecordingId && c.onChangeSelectedTourRecordingId(e.target.value)}>
+                <option value="">请选择</option>
+                {(c.tourRecordingOptions || []).map((r) => (
+                  <option key={String(r.recording_id)} value={String(r.recording_id)}>
+                    {r.label || String(r.recording_id)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
+          {c.playTourRecordingEnabled ? (
+            <div className="settings-actions">
+              <button type="button" className="settings-action-btn" onClick={() => c.onRenameSelectedTourRecording && c.onRenameSelectedTourRecording()}>
+                重命名
+              </button>
+              <button type="button" className="settings-action-btn" onClick={() => c.onDeleteSelectedTourRecording && c.onDeleteSelectedTourRecording()}>
+                删除
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </SettingsGroup>
+
+      {c.playTourRecordingEnabled ? (
+        <SettingsGroup title="存档文字与语音预览">
+          <RecordingArchivePreviewPanel
+            recordingId={String(c.selectedTourRecordingId || '')}
+            ttsProvider={resolvedProvider}
+            ttsVoice={resolvedVoice}
+            ttsSpeed={Number.isFinite(resolvedSpeed) ? resolvedSpeed : 1.0}
+          />
+        </SettingsGroup>
+      ) : null}
+    </>
   );
 }
 
@@ -346,13 +319,15 @@ function AsrTab({ controlBarProps }) {
   );
 }
 
-function ModeTab({ controlBarProps, tourModePanelProps }) {
+function ModeTab({ controlBarProps }) {
   const c = controlBarProps || {};
   const zones = (c.tourMeta && Array.isArray(c.tourMeta.zones) ? c.tourMeta.zones : []).map((x) => String(x || '').trim()).filter(Boolean);
   const profiles = (c.tourMeta && Array.isArray(c.tourMeta.profiles) ? c.tourMeta.profiles : []).map((x) => String(x || '').trim()).filter(Boolean);
+  const stops = (Array.isArray(c.tourStops) && c.tourStops.length ? c.tourStops : ['第1站']).map((s) => String(s || '').trim());
+
   return (
     <>
-      <SettingsGroup title="讲解参数">
+      <SettingsGroup title="讲解设置">
         <div className="settings-form">
           <label className="settings-toggle">
             <input type="checkbox" checked={!!c.guideEnabled} onChange={(e) => c.onChangeGuideEnabled && c.onChangeGuideEnabled(e.target.checked)} />
@@ -397,7 +372,7 @@ function ModeTab({ controlBarProps, tourModePanelProps }) {
       <SettingsGroup title="站点控制">
         <div className="tour-controls">
           <select value={String(c.tourSelectedStopIndex || 0)} onChange={(e) => c.onChangeTourSelectedStopIndex && c.onChangeTourSelectedStopIndex(Number(e.target.value) || 0)}>
-            {(Array.isArray(c.tourStops) && c.tourStops.length ? c.tourStops : ['第1站']).map((s, i) => (
+            {stops.map((s, i) => (
               <option key={`${i}_${String(s)}`} value={String(i)}>
                 {`第${i + 1}站 ${String(s || '').trim()}`}
               </option>
@@ -407,21 +382,26 @@ function ModeTab({ controlBarProps, tourModePanelProps }) {
             跳转
           </button>
           <button type="button" className="tour-reset-btn" onClick={() => c.onReset && c.onReset()}>
-            重置
+            复位
           </button>
         </div>
       </SettingsGroup>
-
-      <SettingsGroup title="讲解模板">
-        <TourModePanel {...(tourModePanelProps || {})} />
-      </SettingsGroup>
     </>
+  );
+}
+
+function TemplateTab({ tourModePanelProps }) {
+  return (
+    <SettingsGroup title="模板编辑">
+      <TourModePanel {...(tourModePanelProps || {})} />
+    </SettingsGroup>
   );
 }
 
 export function SettingsPanel({
   open,
   onClose,
+  docked,
   showHistoryPanel,
   onChangeShowHistoryPanel,
   showDebugPanel,
@@ -429,7 +409,6 @@ export function SettingsPanel({
   controlBarProps,
   stagePanelProps,
   tourModePanelProps,
-  sellingPointsStopName,
   ttsMode,
   modelscopeVoice,
   onChangeModelscopeVoice,
@@ -472,27 +451,21 @@ export function SettingsPanel({
       );
     }
     if (activeTab === 'ops') {
-      return (
-        <OpsTab
-          controlBarProps={controlBarProps}
-          stagePanelProps={stagePanelProps}
-          onQuickSummary={onQuickSummary}
-          onPrevStop={onPrevStop}
-          onNextStop={onNextStop}
-          sellingPointsStopName={sellingPointsStopName}
-        />
-      );
+      return <OpsTab stagePanelProps={stagePanelProps} onQuickSummary={onQuickSummary} onPrevStop={onPrevStop} onNextStop={onNextStop} />;
     }
     if (activeTab === 'qa') {
       return <QaTab controlBarProps={controlBarProps} />;
     }
     if (activeTab === 'archive') {
-      return <ArchiveTab controlBarProps={controlBarProps} />;
+      return <ArchiveTab controlBarProps={controlBarProps} ttsMode={ttsMode} modelscopeVoice={modelscopeVoice} />;
     }
     if (activeTab === 'asr') {
       return <AsrTab controlBarProps={controlBarProps} />;
     }
-    return <ModeTab controlBarProps={controlBarProps} tourModePanelProps={tourModePanelProps} />;
+    if (activeTab === 'mode') {
+      return <ModeTab controlBarProps={controlBarProps} />;
+    }
+    return <TemplateTab tourModePanelProps={tourModePanelProps} />;
   }, [
     activeTab,
     controlBarProps,
@@ -509,9 +482,22 @@ export function SettingsPanel({
     onQuickSummary,
     onPrevStop,
     onNextStop,
-    sellingPointsStopName,
     tourModePanelProps,
   ]);
+
+  if (docked) {
+    return (
+      <aside className="settings-docked" aria-label="设置">
+        <div className="settings-header settings-header-docked">
+          <div className="settings-title">设置</div>
+        </div>
+        <div className="settings-body">
+          <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
+          <div className="settings-tab-panel">{tabContent}</div>
+        </div>
+      </aside>
+    );
+  }
 
   return (
     <SettingsDrawer open={open} title="设置" onClose={onClose}>

@@ -1,9 +1,11 @@
 import React from 'react';
 
-export function HistoryPanel({ historySort, onChangeSort, items, onPickQuestion }) {
+export function HistoryPanel({ historySort, onChangeSort, items, onPickQuestion, embedded = false }) {
   const safeItems = Array.isArray(items) ? items : [];
+  const rootClass = `history-panel${embedded ? ' history-panel-embedded' : ''}`;
+  const Root = embedded ? 'div' : 'aside';
   return (
-    <aside className="history-panel">
+    <Root className={rootClass}>
       <div className="history-title">
         <span>历史</span>
         <select value={historySort} onChange={(e) => onChangeSort && onChangeSort(e.target.value)}>
@@ -19,13 +21,7 @@ export function HistoryPanel({ historySort, onChangeSort, items, onPickQuestion 
           const meta = cnt != null ? `${cnt}次` : '';
           const key = item && item.id != null ? `id_${item.id}` : `q_${idx}_${q}`;
           return (
-            <button
-              key={key}
-              type="button"
-              className="history-item"
-              onClick={() => onPickQuestion && onPickQuestion(q)}
-              title={q}
-            >
+            <button key={key} type="button" className="history-item" onClick={() => onPickQuestion && onPickQuestion(q)} title={q}>
               <div className="history-row">
                 <div className="history-q">{q}</div>
                 {meta ? <div className="history-count">{meta}</div> : null}
@@ -35,7 +31,6 @@ export function HistoryPanel({ historySort, onChangeSort, items, onPickQuestion 
         })}
         {!safeItems.length ? <div className="history-empty">暂无历史</div> : null}
       </div>
-    </aside>
+    </Root>
   );
 }
-

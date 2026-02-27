@@ -16,11 +16,7 @@ export function useTextInputProps({
   setInputText,
   sendBtnClassName,
   submitDisabled,
-  setSettingsOpen,
 } = {}) {
-  const onOpenSettings = useCallback(() => setSettingsOpen(true), [setSettingsOpen]);
-  const onCloseSettings = useCallback(() => setSettingsOpen(false), [setSettingsOpen]);
-
   const textInputProps = useMemo(
     () => ({
       isRecording,
@@ -38,7 +34,6 @@ export function useTextInputProps({
       onChangeInputText: setInputText,
       sendBtnClassName,
       submitDisabled,
-      onOpenSettings,
     }),
     [
       conversationBusy,
@@ -50,7 +45,6 @@ export function useTextInputProps({
       onRecordPointerDown,
       onRecordPointerUp,
       onToggleConversation,
-      onOpenSettings,
       pointerSupported,
       sendBtnClassName,
       setInputText,
@@ -60,5 +54,15 @@ export function useTextInputProps({
     ]
   );
 
-  return { textInputProps, onOpenSettings, onCloseSettings };
+  const onFocusInput = useCallback(() => {
+    try {
+      if (inputElRef && inputElRef.current && typeof inputElRef.current.focus === 'function') {
+        inputElRef.current.focus();
+      }
+    } catch (_) {
+      // ignore
+    }
+  }, [inputElRef]);
+
+  return { textInputProps, onFocusInput };
 }
