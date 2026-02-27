@@ -12,6 +12,7 @@ export function useTourPipelineManager({
   guideEnabledRef,
   tourStopDurationsRef,
   tourStopTargetCharsRef,
+  tourStopPromptOverridesRef,
   continuousTourRef,
   tourRecordingEnabledRef,
   activeTourRecordingIdRef,
@@ -45,6 +46,13 @@ export function useTourPipelineManager({
       getGuideEnabled: () => !!(guideEnabledRef && guideEnabledRef.current),
       getPerStopDurations: () => (tourStopDurationsRef ? tourStopDurationsRef.current || [] : []),
       getPerStopTargetChars: () => (tourStopTargetCharsRef ? tourStopTargetCharsRef.current || [] : []),
+      getPerStopPrompts: () =>
+        tourStopPromptOverridesRef &&
+        tourStopPromptOverridesRef.current &&
+        typeof tourStopPromptOverridesRef.current === 'object' &&
+        !Array.isArray(tourStopPromptOverridesRef.current)
+          ? tourStopPromptOverridesRef.current
+          : {},
       isContinuousTourEnabled: () => !!(continuousTourRef && continuousTourRef.current),
       getRecordingId: () =>
         !!(tourRecordingEnabledRef && tourRecordingEnabledRef.current) && activeTourRecordingIdRef
@@ -77,6 +85,7 @@ export function useTourPipelineManager({
     guideEnabledRef,
     tourStopDurationsRef,
     tourStopTargetCharsRef,
+    tourStopPromptOverridesRef,
     continuousTourRef,
     tourRecordingEnabledRef,
     activeTourRecordingIdRef,

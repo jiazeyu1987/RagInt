@@ -25,6 +25,19 @@ function normalizeStopDurationInput(raw) {
   return String(Math.max(1, Math.min(3600, Math.round(n))));
 }
 
+function normalizeStopPromptOverrideMap(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out = {};
+  Object.keys(value).forEach((key) => {
+    const stopName = String(key || '').trim();
+    if (!stopName) return;
+    const text = String(value[key] == null ? '' : value[key]).trim();
+    if (!text) return;
+    out[stopName] = text;
+  });
+  return out;
+}
+
 function normalizeTemplateKey(value) {
   const key = String(value || '').trim();
   if (STOP_DURATION_TEMPLATE_KEYS.includes(key)) return key;
@@ -92,9 +105,12 @@ export function useControlBarProps({
   tourState,
   currentIntent,
   tourStops,
+  tourStopsOverride,
   tourStopDurations,
   tourStopDurationsOverride,
   setTourStopDurationsOverride,
+  tourStopPromptOverrides,
+  setTourStopPromptOverrides,
   tourStopDurationTemplateKey,
   setTourStopDurationTemplateKey,
   tourStopDurationTemplates,
@@ -175,6 +191,33 @@ export function useControlBarProps({
     }
     setTourStopDurationsOverride(next);
   }, [setTourStopDurationsOverride, tourStopDurations, tourStops]);
+
+  const onChangeTourStopPromptOverride = useCallback(
+    (stopName, value) => {
+      if (typeof setTourStopPromptOverrides !== 'function') return;
+      const key = String(stopName || '').trim();
+      if (!key) return;
+      const text = String(value == null ? '' : value);
+      const prevMap = normalizeStopPromptOverrideMap(tourStopPromptOverrides);
+      const nextMap = { ...prevMap };
+      if (!String(text).trim()) delete nextMap[key];
+      else nextMap[key] = text;
+      setTourStopPromptOverrides(nextMap);
+    },
+    [setTourStopPromptOverrides, tourStopPromptOverrides]
+  );
+
+  const onSaveTourStopPromptOverrides = useCallback(
+    (nextMap) => {
+      if (typeof setTourStopPromptOverrides !== 'function') return;
+      setTourStopPromptOverrides(normalizeStopPromptOverrideMap(nextMap));
+    },
+    [setTourStopPromptOverrides]
+  );
+
+  const onClearTourStopPromptOverrides = useCallback(() => {
+    onSaveTourStopPromptOverrides({});
+  }, [onSaveTourStopPromptOverrides]);
 
   const normalizedTemplateKey = normalizeTemplateKey(tourStopDurationTemplateKey);
 
@@ -325,10 +368,15 @@ export function useControlBarProps({
       tourState,
       currentIntent,
       tourStops,
+      tourStopsOverride: Array.isArray(tourStopsOverride) ? tourStopsOverride : [],
       tourStopDurations,
       tourStopDurationsOverride:
         tourStopDurationsOverride && typeof tourStopDurationsOverride === 'object' && !Array.isArray(tourStopDurationsOverride)
           ? tourStopDurationsOverride
+          : {},
+      tourStopPromptOverrides:
+        tourStopPromptOverrides && typeof tourStopPromptOverrides === 'object' && !Array.isArray(tourStopPromptOverrides)
+          ? tourStopPromptOverrides
           : {},
       tourStopDurationTemplateKey: normalizedTemplateKey,
       tourStopDurationTemplateOptions: templateOptions,
@@ -337,6 +385,9 @@ export function useControlBarProps({
       onFillTourStopDurationsOverrideFromPlan,
       onChangeTourStopDurationTemplate,
       onSaveTourStopDurationsToTemplate,
+      onChangeTourStopPromptOverride,
+      onSaveTourStopPromptOverrides,
+      onClearTourStopPromptOverrides,
       tourSelectedStopIndex,
       onChangeTourSelectedStopIndex: setTourSelectedStopIndex,
       onJump: onJumpSelectedStop,
@@ -393,8 +444,10 @@ export function useControlBarProps({
       tourSelectedStopIndex,
       tourState,
       tourStops,
+      tourStopsOverride,
       tourStopDurations,
       tourStopDurationsOverride,
+      tourStopPromptOverrides,
       normalizedTemplateKey,
       templateOptions,
       tourZone,
@@ -411,6 +464,9 @@ export function useControlBarProps({
       onFillTourStopDurationsOverrideFromPlan,
       onChangeTourStopDurationTemplate,
       onSaveTourStopDurationsToTemplate,
+      onChangeTourStopPromptOverride,
+      onSaveTourStopPromptOverrides,
+      onClearTourStopPromptOverrides,
     ]
   );
 }

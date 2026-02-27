@@ -23,6 +23,7 @@ export class TourPipelineManager {
     this._getGuideEnabled = typeof options.getGuideEnabled === 'function' ? options.getGuideEnabled : () => false;
     this._getPerStopDurations = typeof options.getPerStopDurations === 'function' ? options.getPerStopDurations : () => [];
     this._getPerStopTargetChars = typeof options.getPerStopTargetChars === 'function' ? options.getPerStopTargetChars : () => [];
+    this._getPerStopPrompts = typeof options.getPerStopPrompts === 'function' ? options.getPerStopPrompts : () => ({});
     this._isContinuousTourEnabled =
       typeof options.isContinuousTourEnabled === 'function' ? options.isContinuousTourEnabled : () => false;
     this._getConversationConfig =
@@ -158,35 +159,52 @@ export class TourPipelineManager {
     return String(stops[i] || '').trim();
   }
 
+  _getPerStopPromptByIndex(index) {
+    const idx = Number.isFinite(index) ? Number(index) : 0;
+    const stopName = this._getStopName(idx);
+    if (!stopName) return '';
+    const promptMap = this._getPerStopPrompts();
+    if (!promptMap || typeof promptMap !== 'object' || Array.isArray(promptMap)) return '';
+    return String(promptMap[stopName] || '').trim();
+  }
+
   _compressTailForContinuity(rawTail) {
-    const tail = String(rawTail || '').trim();
-    if (!tail) return '';
+    const tail = String(rawTail || "").trim();
+    if (!tail) return "";
 
     // If the previous answer already contains transition words, suppress tail echo.
-    const hints = ['接下来', '下一站', '继续参观', '请大家跟我来', '我们来到', '让我们来到', '欢迎来到'];
+    const hints = [
+      "\u63a5\u4e0b\u6765",
+      "\u4e0b\u4e00\u7ad9",
+      "\u7ee7\u7eed\u53c2\u89c2",
+      "\u8bf7\u5927\u5bb6\u8ddf\u6211\u6765",
+      "\u6211\u4eec\u6765\u5230",
+      "\u8ba9\u6211\u4eec\u6765\u5230",
+      "\u6b22\u8fce\u6765\u5230",
+    ];
     for (const h of hints) {
-      if (tail.includes(h)) return '';
+      if (tail.includes(h)) return "";
     }
 
     const maxLen = 80;
     let out = tail;
     if (out.length > maxLen) out = out.slice(-maxLen);
-    out = out.replace(/^[,.;:\s，。；：]+/g, '').replace(/[,.;:\s，。；：]+$/g, '');
+    out = out.replace(/^[,.;:\s\uFF0C\u3002\uFF1B\uFF1A\uFF01\uFF1F]+/g, "").replace(/[,.;:\s\uFF0C\u3002\uFF1B\uFF1A\uFF01\uFF1F]+$/g, "");
     return out;
   }
 
   buildTourPrompt(action, stopIndex, tailOverride) {
-    const idx = Number.isFinite(stopIndex) ? stopIndex : 0;
+    const idx = Number.isFinite(stopIndex) ? Number(stopIndex) : 0;
     const stopName = this._getStopName(idx);
     const stops = this._stops();
     const n = stops.length;
-    const title = stopName ? `第${idx + 1}站“${stopName}”` : `第${idx + 1}站`;
-    const suffix = n ? `（共${n}站）` : '';
+    const title = stopName ? `\u7b2c${idx + 1}\u7ad9\u300c${stopName}\u300d` : `\u7b2c${idx + 1}\u7ad9`;
+    const suffix = n ? `\uff08\u5171${n}\u7ad9\uff09` : "";
 
     const rawTail =
-      tailOverride != null ? String(tailOverride || '').trim() : String(this._getLastAnswerTail() || '').trim();
-    const profile = String(this._getAudienceProfile() || '').trim();
-    const profileHint = profile ? `\n受众：${profile}` : '';
+      tailOverride != null ? String(tailOverride || "").trim() : String(this._getLastAnswerTail() || "").trim();
+    const profile = String(this._getAudienceProfile() || "").trim();
+    const profileHint = profile ? `\n\u3010\u4eba\u7fa4\u753b\u50cf\u3011${profile}` : "";
 
     const durs = this._getPerStopDurations() || [];
     const targets = this._getPerStopTargetChars() || [];
@@ -196,29 +214,32 @@ export class TourPipelineManager {
       Number.isFinite(Number(targets[idx])) && Number(targets[idx]) > 0
         ? Number(targets[idx])
         : Math.max(30, Math.round(dur * 4.5));
-    const durHint = `\n时长：约${dur}秒，建议约${targetChars}字。`;
+    const durHint = `\n\u3010\u672c\u7ad9\u8bb2\u89e3\u65f6\u957f\u3011\u7ea6${dur}\u79d2\uff08\u5efa\u8bae\u603b\u5b57\u6570\u7ea6${targetChars}\u5b57\uff09`;
+
+    const perStopPrompt = this._getPerStopPromptByIndex(idx);
+    const perStopHint = perStopPrompt ? `\n\u3010\u672c\u7ad9\u9644\u52a0\u63d0\u793a\u8bcd\u3011${perStopPrompt}` : "";
 
     const isContinuous = !!(this._isContinuousTourEnabled() && this._active);
     const tail = isContinuous ? this._compressTailForContinuity(rawTail) : rawTail;
-    const tailHint = tail ? `\n上一段结尾（用于承接）：${tail}` : '';
+    const tailHint = tail ? `\n\u3010\u4e0a\u4e00\u6bb5\u7ed3\u675f\u8bed\uff08\u4f9b\u627f\u63a5\uff09\u3011${tail}` : "";
     const continuityHint = isContinuous
-      ? '\n连续讲解要求：自然承接上一站，直接进入当前站主题，不要寒暄，不要预告下一站。'
-      : '';
+      ? "\n\u3010\u8854\u63a5\u8981\u6c42\u3011\u8fde\u7eed\u8bb2\u89e3\u6a21\u5f0f\uff1a\u4e0a\u4e00\u7ad9\u521a\u7ed3\u675f\u3002\u5f00\u5934\u81ea\u7136\u627f\u63a5\uff0c\u4e0d\u8981\u4f7f\u7528\u56fa\u5b9a\u8fc7\u6e21\u8bdd\u672f\uff1b\u7ed3\u5c3e\u4e0d\u8981\u9884\u544a\u4e0b\u4e00\u7ad9\u3002"
+      : "";
 
     const outputHint =
-      '\n输出要求：只输出一段连续讲解正文，不要分点，不要标题，不要列表，不要使用【】[]#*等特殊格式符号；必须使用基础标点（，。；：！？）自然断句。';
-    const languageHint = '\n语言要求：口语化、可直接播报、句子顺畅。';
+      "\n\u3010\u8f93\u51fa\u683c\u5f0f\u8981\u6c42\u3011\u53ea\u8f93\u51fa\u4e00\u6574\u6bb5\u8fde\u7eed\u8bb2\u89e3\u6b63\u6587\uff0c\u4e0d\u8981\u5206\u70b9\u3001\u4e0d\u8981\u6807\u9898\u3001\u4e0d\u8981\u5217\u8868\uff0c\u4e0d\u8981\u4f7f\u7528\u7279\u6b8a\u683c\u5f0f\u7b26\u53f7\uff08\u5982\u3010\u3011[]#*\u7b49\uff09\uff0c\u5fc5\u987b\u4f7f\u7528\u57fa\u7840\u6807\u70b9\uff08\uff0c\u3002\uff1b\uff1a\uff01\uff1f\uff09\u81ea\u7136\u65ad\u53e5\u3002";
+    const languageHint = "\n\u3010\u8bed\u8a00\u8981\u6c42\u3011\u53e3\u8bed\u5316\u3001\u81ea\u7136\u8fde\u8d2f\u3001\u53ef\u76f4\u63a5\u7528\u4e8e\u8bed\u97f3\u64ad\u62a5\u3002";
 
-    if (action === 'start') {
-      return `请开始讲解${title}${suffix}，生成用于口播的一段讲解稿。${durHint}${profileHint}${outputHint}${languageHint}`;
+    if (action === "start") {
+      return `\u8bf7\u5f00\u59cb\u8bb2\u89e3\uff1a${title}${suffix}\u3002${durHint}${profileHint}${perStopHint}${outputHint}${languageHint}`;
     }
-    if (action === 'continue') {
-      return `继续讲解${title}${suffix}，承接上一段内容，生成用于口播的一段讲解稿。${durHint}${tailHint}${profileHint}${continuityHint}${outputHint}${languageHint}`;
+    if (action === "continue") {
+      return `\u7ee7\u7eed\u8bb2\u89e3\uff1a${title}${suffix}\u3002${durHint}${tailHint}${profileHint}${perStopHint}${continuityHint}${outputHint}${languageHint}`;
     }
-    if (action === 'next') {
-      return `现在进入${title}${suffix}，请生成用于口播的一段讲解稿。${durHint}${tailHint}${profileHint}${continuityHint}${outputHint}${languageHint}`;
+    if (action === "next") {
+      return `\u8bf7\u8bb2\u89e3\u4e0b\u4e00\u7ad9\uff1a${title}${suffix}\u3002${durHint}${tailHint}${profileHint}${perStopHint}${continuityHint}${outputHint}${languageHint}`;
     }
-    return '继续讲解，输出一段可直接播报的中文正文。';
+    return "\u8bf7\u8f93\u51fa\u4e00\u6bb5\u53ef\u76f4\u63a5\u8bed\u97f3\u64ad\u62a5\u7684\u4e2d\u6587\u8bb2\u89e3\u6b63\u6587\u3002";
   }
   async startContinuousTour({ startIndex, firstAction, askQuestion, stopsOverride }) {
     this._stopsOverride = Array.isArray(stopsOverride) && stopsOverride.length ? stopsOverride : null;
@@ -404,7 +425,7 @@ export class TourPipelineManager {
             stop_index: idx,
             stop_name: this._getStopName(idx),
             tour_action: 'next',
-            action_type: '鍒囩珯',
+            action_type: '切站',
           },
         }),
         signal: ctl.signal,

@@ -465,6 +465,33 @@ export class AskWorkflowManager {
       const ttsStopIndexForAsk = options.tourAction
         ? (Number.isFinite(options.tourStopIndex) ? Number(options.tourStopIndex) : null)
         : playbackStopIndex;
+      const prefetchNextContinuousStop = () => {
+        if (!options.tourAction || !options.continuousRoot || typeof getTourPipeline !== 'function') return;
+        try {
+          const pipeline = getTourPipeline();
+          if (!pipeline || typeof pipeline.maybePrefetchNextStop !== 'function') return;
+          const curStopIndex = Number.isFinite(options.tourStopIndex)
+            ? Number(options.tourStopIndex)
+            : tourStateRef && tourStateRef.current
+              ? Number(tourStateRef.current.stopIndex)
+              : 0;
+          const tail = String(fullAnswer || '').trim().slice(-80);
+          pipeline.maybePrefetchNextStop({
+            currentStopIndex: curStopIndex,
+            tail,
+            enqueueSegment: (s, meta) => {
+              if (!allow()) return;
+              if (ttsMgr && typeof ttsMgr.enqueueText === 'function') ttsMgr.enqueueText(s, meta);
+            },
+            ensureTtsRunning: () => {
+              if (!allow()) return;
+              if (ttsEnabledRef && ttsEnabledRef.current && ttsMgr && typeof ttsMgr.ensureRunning === 'function') ttsMgr.ensureRunning();
+            },
+          });
+        } catch (_) {
+          // ignore
+        }
+      };
 
       if (isPlaybackTour) {
         try {
@@ -750,30 +777,7 @@ export class AskWorkflowManager {
               if (ttsMgr) ttsMgr.markRagDone();
 
               // Prefetch next stop text (continuous tour pipeline) without waiting for current TTS.
-              if (options.tourAction && options.continuousRoot && typeof getTourPipeline === 'function' && ttsMgr) {
-                try {
-                  const curStopIndex = Number.isFinite(options.tourStopIndex)
-                    ? options.tourStopIndex
-                    : tourStateRef && tourStateRef.current
-                      ? tourStateRef.current.stopIndex
-                      : 0;
-                  const tail = String(fullAnswer || '').trim().slice(-80);
-                  getTourPipeline().maybePrefetchNextStop({
-                    currentStopIndex: curStopIndex,
-                    tail,
-                    enqueueSegment: (s, meta) => {
-                      if (!allow()) return;
-                      ttsMgr.enqueueText(s, meta);
-                    },
-                    ensureTtsRunning: () => {
-                      if (!allow()) return;
-                      if (ttsEnabledRef && ttsEnabledRef.current) ttsMgr.ensureRunning();
-                    },
-                  });
-                } catch (_) {
-                  // ignore
-                }
-              }
+              prefetchNextContinuousStop();
 
               if (!ttsEnabledRef || !ttsEnabledRef.current) {
                 if (allow() && typeof setIsLoading === 'function') setIsLoading(false);
@@ -837,6 +841,7 @@ export class AskWorkflowManager {
 
               try {
                 ttsMgr.markRagDone();
+                prefetchNextContinuousStop();
                 ttsMgr.ensureRunning();
                 await ttsMgr.waitForIdle();
               } catch (_) {

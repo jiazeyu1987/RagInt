@@ -1076,8 +1076,23 @@ h1 {
   outline: none;
 }
 
+.settings-field textarea,
+.settings-textarea {
+  min-height: 92px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  outline: none;
+  resize: vertical;
+  line-height: 1.45;
+}
+
 .settings-field input:focus,
-.settings-field select:focus {
+.settings-field select:focus,
+.settings-field textarea:focus,
+.settings-textarea:focus {
   border-color: rgba(7, 193, 96, 0.45);
   box-shadow: 0 0 0 3px rgba(7, 193, 96, 0.18);
 }
@@ -1120,16 +1135,16 @@ h1 {
 }
 
 .settings-action-btn-danger {
-  border-color: rgba(250, 81, 81, 0.40);
-  background: linear-gradient(180deg, #fff7f7 0%, #ffecec 100%);
-  color: #c33b3b;
-  box-shadow: 0 4px 10px rgba(250, 81, 81, 0.12);
+  border-color: rgba(250, 81, 81, 0.62);
+  background: linear-gradient(180deg, #ff7875 0%, #f5222d 100%);
+  color: #fff;
+  box-shadow: 0 6px 14px rgba(245, 34, 45, 0.28);
 }
 
 .settings-action-btn-danger:hover {
-  border-color: rgba(250, 81, 81, 0.55);
-  background: linear-gradient(180deg, #fff2f2 0%, #ffe3e3 100%);
-  box-shadow: 0 6px 12px rgba(250, 81, 81, 0.18);
+  border-color: rgba(250, 81, 81, 0.78);
+  background: linear-gradient(180deg, #ff8e8c 0%, #ff4d4f 100%);
+  box-shadow: 0 8px 16px rgba(245, 34, 45, 0.32);
 }
 
 .template-drag-handle {

@@ -1,6 +1,51 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchJson } from '../api/backendClient';
 import { TourTemplateManager } from '../managers/TourTemplateManager';
+
+function normalizeStringList(value) {
+  return Array.isArray(value)
+    ? value
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)
+    : [];
+}
+
+function sameStringList(a, b) {
+  const left = normalizeStringList(a);
+  const right = normalizeStringList(b);
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    if (left[i] !== right[i]) return false;
+  }
+  return true;
+}
+
+function normalizeDurationMap(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out = {};
+  Object.keys(value).forEach((key) => {
+    const stopName = String(key || '').trim();
+    if (!stopName) return;
+    const n = Number(value[key]);
+    if (!Number.isFinite(n) || n <= 0) return;
+    out[stopName] = Math.max(1, Math.round(n));
+  });
+  return out;
+}
+
+function sameDurationMap(a, b) {
+  const left = normalizeDurationMap(a);
+  const right = normalizeDurationMap(b);
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  if (leftKeys.length !== rightKeys.length) return false;
+  for (let i = 0; i < leftKeys.length; i += 1) {
+    const key = leftKeys[i];
+    if (key !== rightKeys[i]) return false;
+    if (left[key] !== right[key]) return false;
+  }
+  return true;
+}
 
 export function useTourModePanelProps({
   tourGuideTemplates,
@@ -47,6 +92,7 @@ export function useTourModePanelProps({
   const selectedTemplate = useMemo(() => {
     return TourTemplateManager.selectTemplate(normalizedTemplates, tourGuideTemplateId);
   }, [normalizedTemplates, tourGuideTemplateId]);
+  const lastAppliedOverrideSigRef = useRef('');
 
   useEffect(() => {
     if (!allStops.length || typeof setTourGuideTemplates !== 'function') return;
@@ -82,8 +128,22 @@ export function useTourModePanelProps({
   useEffect(() => {
     if (!selectedTemplate) return;
     const { enabledStops, durationMap } = TourTemplateManager.buildOverrides(selectedTemplate);
-    if (typeof setTourStopsOverride === 'function') setTourStopsOverride(enabledStops);
-    if (typeof setTourStopDurationsOverride === 'function') setTourStopDurationsOverride(durationMap);
+    const normalizedStops = normalizeStringList(enabledStops);
+    const normalizedDurationMap = normalizeDurationMap(durationMap);
+    const nextSig = JSON.stringify({
+      templateId: String(selectedTemplate.id || ''),
+      stops: normalizedStops,
+      durationMap: normalizedDurationMap,
+    });
+    if (nextSig === lastAppliedOverrideSigRef.current) return;
+    lastAppliedOverrideSigRef.current = nextSig;
+
+    if (typeof setTourStopsOverride === 'function') {
+      setTourStopsOverride((prev) => (sameStringList(prev, normalizedStops) ? prev : normalizedStops));
+    }
+    if (typeof setTourStopDurationsOverride === 'function') {
+      setTourStopDurationsOverride((prev) => (sameDurationMap(prev, normalizedDurationMap) ? prev : normalizedDurationMap));
+    }
   }, [selectedTemplate, setTourStopDurationsOverride, setTourStopsOverride]);
 
   const updateSelectedTemplate = useCallback(

@@ -116,6 +116,8 @@ function AppShell() {
     setTourStopsOverride,
     tourStopDurationsOverride,
     setTourStopDurationsOverride,
+    tourStopPromptOverrides,
+    setTourStopPromptOverrides,
     tourGuideTemplates,
     setTourGuideTemplates,
     tourGuideTemplateId,
@@ -232,6 +234,7 @@ function AppShell() {
   const tourTemplateIdRef = useRef(tourTemplateId);
   const tourStopsOverrideRef = useRef(tourStopsOverride);
   const tourStopDurationsOverrideRef = useRef(tourStopDurationsOverride);
+  const tourStopPromptOverridesRef = useRef(tourStopPromptOverrides);
   const useAgentModeRef = useRef(useAgentMode);
   const selectedChatRef = useRef(selectedChat);
   const selectedAgentIdRef = useRef(selectedAgentId);
@@ -263,6 +266,7 @@ function AppShell() {
     guideEnabledRef,
     tourStopDurationsRef,
     tourStopTargetCharsRef,
+    tourStopPromptOverridesRef,
     continuousTourRef,
     tourRecordingEnabledRef,
     activeTourRecordingIdRef,
@@ -426,6 +430,8 @@ function AppShell() {
     tourStopsOverrideRef,
     tourStopDurationsOverride,
     tourStopDurationsOverrideRef,
+    tourStopPromptOverrides,
+    tourStopPromptOverridesRef,
     useAgentMode,
     useAgentModeRef,
     selectedChat,
@@ -889,9 +895,12 @@ function AppShell() {
     tourState,
     currentIntent,
     tourStops,
+    tourStopsOverride,
     tourStopDurations,
     tourStopDurationsOverride,
     setTourStopDurationsOverride,
+    tourStopPromptOverrides,
+    setTourStopPromptOverrides,
     tourSelectedStopIndex,
     setTourSelectedStopIndex,
     jumpTourStop,

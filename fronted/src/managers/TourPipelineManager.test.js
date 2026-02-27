@@ -21,8 +21,8 @@ describe('TourPipelineManager', () => {
     const mgr = createManager();
     const prompt = mgr.buildTourPrompt('start', 1);
 
-    expect(prompt).toContain('第2站“产品区”');
-    expect(prompt).toContain('只输出一段连续讲解正文');
+    expect(prompt).toContain('第2站「产品区」');
+    expect(prompt).toContain('只输出一整段连续讲解正文');
     expect(prompt).toContain('不要分点');
   });
 
@@ -33,8 +33,20 @@ describe('TourPipelineManager', () => {
     mgr._active = true;
     const prompt = mgr.buildTourPrompt('next', 1);
 
-    expect(prompt).toContain('连续讲解要求');
-    expect(prompt).toContain('上一段结尾（用于承接）');
+    expect(prompt).toContain('衔接要求');
+    expect(prompt).toContain('上一段结束语（供承接）');
+  });
+
+  test('buildTourPrompt appends per-stop prompt when configured', () => {
+    const mgr = createManager({
+      getPerStopPrompts: () => ({
+        产品区: '重点说明导丝与导管差异，避免混淆。',
+      }),
+    });
+
+    const prompt = mgr.buildTourPrompt('next', 1);
+    expect(prompt).toContain('本站附加提示词');
+    expect(prompt).toContain('重点说明导丝与导管差异，避免混淆。');
   });
 
   test('replayPrefetchToQueue replays cached segments in order', () => {

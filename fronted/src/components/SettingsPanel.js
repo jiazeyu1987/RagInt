@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { SettingsDrawer } from './SettingsDrawer';
 import { SettingsToggles } from './SettingsToggles';
 import { StagePanel } from './StagePanel';
@@ -14,8 +14,16 @@ const TABS = [
   { key: 'archive', label: '存档设置' },
   { key: 'asr', label: 'ASR设置' },
   { key: 'mode', label: '讲解设置' },
+  { key: 'stop_prompt', label: '站点提示词' },
   { key: 'template', label: '模板编辑' },
 ];
+const SETTINGS_ACTIVE_TAB_KEY = 'settingsActiveTab';
+const DEFAULT_SETTINGS_TAB = 'tts';
+
+function normalizeSettingsTabKey(value) {
+  const key = String(value || '').trim();
+  return TABS.some((tab) => tab.key === key) ? key : DEFAULT_SETTINGS_TAB;
+}
 
 function SettingsGroup({ title, children }) {
   return (
@@ -24,6 +32,19 @@ function SettingsGroup({ title, children }) {
       <div className="settings-group-body">{children}</div>
     </div>
   );
+}
+
+function normalizeStopPromptMap(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out = {};
+  Object.keys(value).forEach((key) => {
+    const stopName = String(key || '').trim();
+    if (!stopName) return;
+    const text = String(value[key] == null ? '' : value[key]).trim();
+    if (!text) return;
+    out[stopName] = text;
+  });
+  return out;
 }
 
 function TabBar({ activeTab, onTabChange }) {
@@ -323,7 +344,7 @@ function ModeTab({ controlBarProps }) {
   const c = controlBarProps || {};
   const zones = (c.tourMeta && Array.isArray(c.tourMeta.zones) ? c.tourMeta.zones : []).map((x) => String(x || '').trim()).filter(Boolean);
   const profiles = (c.tourMeta && Array.isArray(c.tourMeta.profiles) ? c.tourMeta.profiles : []).map((x) => String(x || '').trim()).filter(Boolean);
-  const stops = (Array.isArray(c.tourStops) && c.tourStops.length ? c.tourStops : ['第1站']).map((s) => String(s || '').trim());
+  const stops = (Array.isArray(c.tourStops) && c.tourStops.length ? c.tourStops : ['无站点']).map((s) => String(s || '').trim());
 
   return (
     <>
@@ -390,6 +411,112 @@ function ModeTab({ controlBarProps }) {
   );
 }
 
+function StopPromptTab({ controlBarProps }) {
+  const c = controlBarProps || {};
+  const savedPromptMap = useMemo(() => {
+    const src = c.tourStopPromptOverrides;
+    const normalizedFromState = normalizeStopPromptMap(src);
+    if (Object.keys(normalizedFromState).length) return normalizedFromState;
+    try {
+      const raw = localStorage.getItem('tourStopPromptOverrides');
+      if (!raw) return {};
+      return normalizeStopPromptMap(JSON.parse(raw));
+    } catch (_) {
+      // ignore
+    }
+    return {};
+  }, [c.tourStopPromptOverrides]);
+  const [draftPromptMap, setDraftPromptMap] = useState(savedPromptMap);
+  const savedPromptMapSignature = useMemo(() => JSON.stringify(savedPromptMap || {}), [savedPromptMap]);
+
+  useEffect(() => {
+    setDraftPromptMap(savedPromptMap);
+  }, [savedPromptMap, savedPromptMapSignature]);
+
+  const mergedStops = [];
+  const pushStop = (name) => {
+    const s = String(name || '').trim();
+    if (!s) return;
+    if (mergedStops.includes(s)) return;
+    mergedStops.push(s);
+  };
+
+  (Array.isArray(c.tourStopsOverride) ? c.tourStopsOverride : []).forEach(pushStop);
+  (Array.isArray(c.tourStops) ? c.tourStops : []).forEach(pushStop);
+  Object.keys(draftPromptMap || {}).forEach(pushStop);
+
+  const onSave = () => {
+    const normalized = normalizeStopPromptMap(draftPromptMap);
+    try {
+      localStorage.setItem('tourStopPromptOverrides', JSON.stringify(normalized));
+    } catch (_) {
+      // ignore
+    }
+    if (typeof c.onSaveTourStopPromptOverrides === 'function') {
+      c.onSaveTourStopPromptOverrides(normalized);
+      return;
+    }
+    if (typeof c.onClearTourStopPromptOverrides === 'function') c.onClearTourStopPromptOverrides();
+    if (typeof c.onChangeTourStopPromptOverride === 'function') {
+      Object.keys(normalized || {}).forEach((stopName) => {
+        c.onChangeTourStopPromptOverride(stopName, normalized[stopName]);
+      });
+    }
+  };
+
+  const onClear = () => {
+    const confirmed = window.confirm('确认清除全部站点提示词吗？');
+    if (!confirmed) return;
+    try {
+      localStorage.setItem('tourStopPromptOverrides', JSON.stringify({}));
+    } catch (_) {
+      // ignore
+    }
+    setDraftPromptMap({});
+    if (typeof c.onSaveTourStopPromptOverrides === 'function') {
+      c.onSaveTourStopPromptOverrides({});
+      return;
+    }
+    if (typeof c.onClearTourStopPromptOverrides === 'function') c.onClearTourStopPromptOverrides();
+  };
+
+  return (
+    <SettingsGroup title="按站点配置附加提示词">
+      <div className="settings-actions" style={{ marginBottom: 10 }}>
+        <button type="button" className="settings-action-btn settings-action-btn-danger" onClick={onClear}>
+          清除
+        </button>
+        <button type="button" className="settings-action-btn settings-action-btn-primary" onClick={onSave}>
+          保存
+        </button>
+      </div>
+
+      {!mergedStops.length ? <div className="debug-muted">当前没有可配置的站点，请先加载讲解路线或模板。</div> : null}
+
+      <div className="settings-form">
+        {mergedStops.map((stopName) => (
+          <label className="settings-field" key={stopName}>
+            <span>{stopName}</span>
+            <textarea
+              className="settings-textarea"
+              rows={3}
+              value={String(draftPromptMap[stopName] || '')}
+              onChange={(e) => {
+                const nextValue = e.target.value;
+                setDraftPromptMap((prev) => {
+                  const base = prev && typeof prev === 'object' && !Array.isArray(prev) ? prev : {};
+                  return { ...base, [stopName]: nextValue };
+                });
+              }}
+              placeholder="该站点讲解时会附加到提示词中，例如：重点突出某产品、避免某类表述、必须包含某信息。"
+            />
+          </label>
+        ))}
+      </div>
+    </SettingsGroup>
+  );
+}
+
 function TemplateTab({ tourModePanelProps }) {
   return (
     <SettingsGroup title="模板编辑">
@@ -424,7 +551,31 @@ export function SettingsPanel({
   onNextStop,
 }) {
   void [groupMode, speakerName, onChangeSpeakerName, questionPriority, onChangeQuestionPriority];
-  const [activeTab, setActiveTab] = useState('tts');
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const saved = localStorage.getItem(SETTINGS_ACTIVE_TAB_KEY);
+      return normalizeSettingsTabKey(saved);
+    } catch (_) {
+      return DEFAULT_SETTINGS_TAB;
+    }
+  });
+
+  useEffect(() => {
+    const normalized = normalizeSettingsTabKey(activeTab);
+    if (normalized !== activeTab) {
+      setActiveTab(normalized);
+      return;
+    }
+    try {
+      localStorage.setItem(SETTINGS_ACTIVE_TAB_KEY, normalized);
+    } catch (_) {
+      // ignore
+    }
+  }, [activeTab]);
+
+  const onTabChange = (nextTab) => {
+    setActiveTab(normalizeSettingsTabKey(nextTab));
+  };
 
   const tabContent = useMemo(() => {
     if (activeTab === 'tts') {
@@ -465,6 +616,9 @@ export function SettingsPanel({
     if (activeTab === 'mode') {
       return <ModeTab controlBarProps={controlBarProps} />;
     }
+    if (activeTab === 'stop_prompt') {
+      return <StopPromptTab controlBarProps={controlBarProps} />;
+    }
     return <TemplateTab tourModePanelProps={tourModePanelProps} />;
   }, [
     activeTab,
@@ -492,7 +646,7 @@ export function SettingsPanel({
           <div className="settings-title">设置</div>
         </div>
         <div className="settings-body">
-          <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
+          <TabBar activeTab={activeTab} onTabChange={onTabChange} />
           <div className="settings-tab-panel">{tabContent}</div>
         </div>
       </aside>
@@ -501,7 +655,7 @@ export function SettingsPanel({
 
   return (
     <SettingsDrawer open={open} title="设置" onClose={onClose}>
-      <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
+      <TabBar activeTab={activeTab} onTabChange={onTabChange} />
       <div className="settings-tab-panel">{tabContent}</div>
     </SettingsDrawer>
   );

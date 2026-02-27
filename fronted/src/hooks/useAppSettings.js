@@ -56,6 +56,19 @@ function normalizeTourStopDurationsOverride(value) {
   return out;
 }
 
+function normalizeTourStopPromptOverrides(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out = {};
+  for (const [k, v] of Object.entries(value)) {
+    const key = String(k || '').trim();
+    if (!key) continue;
+    const text = String(v == null ? '' : v).trim();
+    if (!text) continue;
+    out[key] = text;
+  }
+  return out;
+}
+
 function normalizeTourGuideTemplates(value) {
   return TourTemplateManager.normalizeTemplates(Array.isArray(value) ? value : []);
 }
@@ -259,7 +272,30 @@ export function useAppSettings() {
     }
   );
   const setTourStopDurationsOverride = (value) =>
-    setTourStopDurationsOverrideState(normalizeTourStopDurationsOverride(value));
+    setTourStopDurationsOverrideState((prev) => {
+      const next = typeof value === 'function' ? value(prev) : value;
+      return normalizeTourStopDurationsOverride(next);
+    });
+
+  const [tourStopPromptOverrides, setTourStopPromptOverridesState] = useLocalStorageState(
+    'tourStopPromptOverrides',
+    {},
+    {
+      serialize: (v) => JSON.stringify(normalizeTourStopPromptOverrides(v)),
+      deserialize: (raw) => {
+        try {
+          return normalizeTourStopPromptOverrides(JSON.parse(raw));
+        } catch (_) {
+          return {};
+        }
+      },
+    }
+  );
+  const setTourStopPromptOverrides = (value) =>
+    setTourStopPromptOverridesState((prev) => {
+      const next = typeof value === 'function' ? value(prev) : value;
+      return normalizeTourStopPromptOverrides(next);
+    });
 
   const [tourGuideTemplates, setTourGuideTemplatesState] = useLocalStorageState('tourGuideTemplates', [], {
     serialize: (v) => JSON.stringify(normalizeTourGuideTemplates(v)),
@@ -386,6 +422,8 @@ export function useAppSettings() {
     setTourStopsOverride,
     tourStopDurationsOverride,
     setTourStopDurationsOverride,
+    tourStopPromptOverrides,
+    setTourStopPromptOverrides,
     tourGuideTemplates,
     setTourGuideTemplates,
     tourGuideTemplateId,

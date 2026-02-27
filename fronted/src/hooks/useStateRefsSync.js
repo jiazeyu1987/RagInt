@@ -41,6 +41,8 @@ export function useStateRefsSync({
   tourStopsOverrideRef,
   tourStopDurationsOverride,
   tourStopDurationsOverrideRef,
+  tourStopPromptOverrides,
+  tourStopPromptOverridesRef,
   useAgentMode,
   useAgentModeRef,
   selectedChat,
@@ -125,7 +127,22 @@ export function useStateRefsSync({
       tourStopDurationsOverride && typeof tourStopDurationsOverride === 'object' && !Array.isArray(tourStopDurationsOverride)
         ? tourStopDurationsOverride
         : {};
-  }, [tourTemplateId, tourStopsOverride, tourStopDurationsOverride, tourTemplateIdRef, tourStopsOverrideRef, tourStopDurationsOverrideRef]);
+    tourStopPromptOverridesRef.current =
+      tourStopPromptOverrides &&
+      typeof tourStopPromptOverrides === 'object' &&
+      !Array.isArray(tourStopPromptOverrides)
+        ? tourStopPromptOverrides
+        : {};
+  }, [
+    tourTemplateId,
+    tourStopsOverride,
+    tourStopDurationsOverride,
+    tourStopPromptOverrides,
+    tourTemplateIdRef,
+    tourStopsOverrideRef,
+    tourStopDurationsOverrideRef,
+    tourStopPromptOverridesRef,
+  ]);
 
   useEffect(() => {
     useAgentModeRef.current = !!useAgentMode;
