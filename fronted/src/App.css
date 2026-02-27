@@ -18,6 +18,7 @@
   --danger: #fa5151;
   --accent-recording: #fa8c16;
   --accent-playback: #1677ff;
+  --side-panel-max-height: 670px;
 }
 
 html,
@@ -40,25 +41,27 @@ body {
 
 .container {
   width: 100%;
-  max-width: 1240px;
+  max-width: 1480px;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  padding: 14px 14px 160px;
+  padding: 14px;
 }
 
 .workspace-shell {
   display: grid;
-  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr) minmax(280px, 360px);
   gap: 14px;
   align-items: start;
+  margin-top: 2px;
+  flex: 1 1 auto;
 }
 
 .left-settings-pane {
   position: sticky;
   top: 14px;
   align-self: flex-start;
-  max-height: calc(100vh - 28px);
+  max-height: min(var(--side-panel-max-height), calc(100vh - 28px));
   overflow: auto;
 }
 
@@ -68,10 +71,17 @@ body {
   flex-direction: column;
 }
 
+.right-pane {
+  position: sticky;
+  top: 14px;
+  align-self: flex-start;
+  max-height: min(var(--side-panel-max-height), calc(100vh - 28px));
+  min-width: 0;
+}
+
 .layout {
-  display: flex;
-  gap: 14px;
-  align-items: flex-start;
+  display: block;
+  min-height: 0;
 }
 
 .home-status-bar {
@@ -206,12 +216,9 @@ body {
 }
 
 .right-panel {
-  flex: 0 0 320px;
-  width: 320px;
-  position: sticky;
-  top: 56px;
-  align-self: flex-start;
-  max-height: calc(100vh - 170px);
+  width: 100%;
+  position: static;
+  max-height: min(var(--side-panel-max-height), calc(100vh - 28px));
   overflow: hidden;
   border-radius: var(--radius);
   border: 1px solid var(--border);
@@ -294,6 +301,10 @@ body {
     max-height: none;
     overflow: visible;
   }
+  .right-pane {
+    position: static;
+    max-height: none;
+  }
   .home-status-bar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -308,9 +319,6 @@ body {
     width: 100%;
     flex: 0 0 auto;
     max-height: 300px;
-  }
-  .layout {
-    flex-direction: column;
   }
   .right-panel {
     position: static;
@@ -591,33 +599,36 @@ h1 {
 }
 
 .input-section {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  padding: 12px 12px 14px;
-  background: linear-gradient(180deg, rgba(247, 247, 247, 0) 0%, rgba(247, 247, 247, 0.92) 25%, rgba(247, 247, 247, 1) 72%);
+  position: static;
+  width: 100%;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.04);
   display: flex;
   flex-direction: column;
   gap: 10px;
-  align-items: center;
+  align-items: stretch;
 }
 
 .voice-input {
   margin: 0;
   display: flex;
   align-items: flex-end;
+  width: 100%;
 }
 
 .text-input {
-  width: min(920px, calc(100% - 56px));
+  width: 100%;
   display: flex;
   gap: 10px;
   align-items: flex-end;
 }
 
 .text-input-minimal {
-  width: min(920px, 100%);
+  width: 100%;
   align-items: center;
 }
 
@@ -691,7 +702,7 @@ h1 {
 }
 
 .quick-actions {
-  width: min(920px, 100%);
+  width: 100%;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -853,7 +864,7 @@ h1 {
 
 .settings-docked {
   width: 100%;
-  max-height: calc(100vh - 28px);
+  max-height: min(var(--side-panel-max-height), calc(100vh - 28px));
   overflow: auto;
   border-radius: var(--radius);
   border: 1px solid var(--border);
@@ -1264,7 +1275,7 @@ h1 {
 
 @media (max-width: 768px) {
   .container {
-    padding: 12px 12px 170px;
+    padding: 12px;
   }
 
   .home-status-bar {
@@ -1273,7 +1284,7 @@ h1 {
   }
 
   .text-input {
-    width: min(920px, calc(100% - 56px));
+    width: 100%;
   }
 
   .text-input button {
@@ -1287,9 +1298,9 @@ h1 {
 }
 
 .home-actions {
-  width: min(920px, 100%);
+  width: 100%;
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
 

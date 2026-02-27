@@ -32,7 +32,7 @@ export function TextInputControls({
         className={conversationEnabled ? 'stop-btn' : ''}
         onClick={onToggleConversation}
         disabled={conversationDisabled}
-        title={conversationEnabled ? '结束对话并释放麦克风' : '开始对话并保持麦克风权限'}
+        title={conversationEnabled ? '结束对话并释放麦克风' : '开始对话并保持麦克风占用'}
         aria-label={conversationEnabled ? '结束对话' : '开始对话'}
       >
         {conversationEnabled ? '结束对话' : '开始对话'}
@@ -52,7 +52,7 @@ export function TextInputControls({
         }}
         type="button"
         disabled={pttDisabled}
-        title={conversationEnabled ? '对话模式中不可用' : '按住说话，松开后识别并填入输入框'}
+        title={conversationEnabled ? '对话模式中不可用' : '按住录音，松开后识别并填入输入框'}
         aria-label={isRecording ? '录音中' : '语音输入'}
       >
         {isRecording ? '●' : '🎤'}
@@ -73,4 +73,3 @@ export function TextInputControls({
     </TextInputBar>
   );
 }
-
