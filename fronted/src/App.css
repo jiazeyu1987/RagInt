@@ -362,6 +362,63 @@ body {
   white-space: nowrap;
 }
 
+.debug-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(15, 23, 42, 0.06);
+  color: rgba(17, 24, 39, 0.92);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.debug-pill-neutral {
+  background: rgba(15, 23, 42, 0.06);
+  color: rgba(17, 24, 39, 0.92);
+}
+
+.debug-pill-ok {
+  background: rgba(7, 193, 96, 0.14);
+  border-color: rgba(7, 193, 96, 0.30);
+  color: #0b6f3a;
+}
+
+.debug-pill-warn {
+  background: rgba(250, 140, 22, 0.16);
+  border-color: rgba(250, 140, 22, 0.34);
+  color: #9a4d00;
+}
+
+.debug-pill-info {
+  background: rgba(22, 119, 255, 0.14);
+  border-color: rgba(22, 119, 255, 0.30);
+  color: #1858b8;
+}
+
+.debug-pill-danger {
+  background: rgba(239, 68, 68, 0.14);
+  border-color: rgba(239, 68, 68, 0.30);
+  color: #b42318;
+}
+
+.debug-summary-text {
+  display: inline-block;
+  max-width: 100%;
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(7, 193, 96, 0.10) 0%, rgba(22, 119, 255, 0.08) 100%);
+  border: 1px solid rgba(7, 193, 96, 0.18);
+  color: var(--text);
+  font-weight: 600;
+  white-space: normal;
+  text-align: left;
+}
+
 .debug-subtitle {
   margin-top: 10px;
   margin-bottom: 6px;

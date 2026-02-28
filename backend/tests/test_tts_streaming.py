@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import pytest
 
-from backend.api.tts_streaming import TtsStreamContext, generate_streaming_tts_audio
+from backend.api.tts_streaming import TtsStreamContext, _fallback_tts_providers, generate_streaming_tts_audio
 
 
 class _Logger:
@@ -57,10 +58,22 @@ class _Store:
 class _Tts:
     def __init__(self, chunks):
         self._chunks = list(chunks)
+        self.calls: list[str] = []
 
     def stream(self, **kwargs):  # noqa: ANN003
+        self.calls.append(str(kwargs.get("provider") or ""))
         for c in self._chunks:
             yield c
+
+
+class _FailingTts:
+    def __init__(self):
+        self.calls: list[str] = []
+
+    def stream(self, **kwargs):  # noqa: ANN003
+        provider = str(kwargs.get("provider") or "")
+        self.calls.append(provider)
+        raise RuntimeError(f"upstream_failed:{provider}")
 
 
 class _Cancel:
@@ -132,3 +145,36 @@ def test_tts_streaming_generator_emits_cancelled_during_stream(tmp_path):
     names = [e.get("name") for e in deps.event_store.events]
     assert "tts_cancelled_during_stream" in names
     assert "tts_stream_done" in names
+
+
+def test_modelscope_fallback_does_not_include_edge_or_sapi():
+    cfg = {"tts": {"edge": {"enabled": True}, "sapi": {"enabled": True}, "sovtts1": {"enabled": True}}}
+    out = _fallback_tts_providers(primary="modelscope", app_config=cfg)
+    assert out == []
+
+
+def test_flash_failure_does_not_fallback_to_sovtts1_and_keeps_upstream_error(tmp_path):
+    deps = _Deps(tmp_path, chunks=[])
+    deps.tts_service = _FailingTts()
+    ctx = TtsStreamContext(
+        deps=deps,
+        request_id="r3",
+        client_id="c3",
+        text="hello",
+        app_config={"tts": {"sovtts1": {"enabled": True}}},
+        provider="flash",
+        endpoint="/api/text_to_speech_stream",
+        segment_index=0,
+        cancel_event=deps.cancel_event,
+        t_received=0.0,
+        recording_id=None,
+        stop_index=None,
+    )
+
+    with pytest.raises(RuntimeError, match="upstream_failed:flash"):
+        list(generate_streaming_tts_audio(ctx))
+    assert deps.tts_service.calls == ["flash"]
+    names = [e.get("name") for e in deps.event_store.events]
+    assert "tts_stream_failed" in names
+    failed_evt = next(e for e in deps.event_store.events if e.get("name") == "tts_stream_failed")
+    assert "upstream_failed:flash" in str(failed_evt.get("err") or "")

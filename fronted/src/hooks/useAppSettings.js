@@ -1,7 +1,9 @@
+import { useEffect } from 'react';
 import { useLocalStorageState } from './useLocalStorageState';
 import { TourTemplateManager } from '../managers/TourTemplateManager';
 
 const ALLOWED_TTS_FETCH_CONCURRENCY = new Set([2, 4, 6, 8, 10]);
+const FLASH_VOICE_OPTIONS = new Set(['longanyang', 'longanhuan']);
 const STOP_DURATION_TEMPLATE_KEYS = ['tpl_1m', 'tpl_2m', 'tpl_3m', 'tpl_4m', 'tpl_5m'];
 const STOP_DURATION_TEMPLATE_BASE_SECONDS = {
   tpl_1m: 60,
@@ -126,6 +128,14 @@ export function useAppSettings() {
     serialize: (v) => String(v || ''),
     deserialize: (raw) => String(raw || ''),
   });
+
+  useEffect(() => {
+    const mode = String(ttsMode || '').trim().toLowerCase();
+    const voice = String(modelscopeVoice || '').trim();
+    if (mode === 'flash') {
+      if (!FLASH_VOICE_OPTIONS.has(voice)) setModelscopeVoice('longanyang');
+    }
+  }, [ttsMode, modelscopeVoice, setModelscopeVoice]);
 
   const [ttsSpeed, setTtsSpeed] = useLocalStorageState('ttsSpeed', 1.0, {
     serialize: (v) => String(Number.isFinite(Number(v)) ? Number(v) : 1.0),

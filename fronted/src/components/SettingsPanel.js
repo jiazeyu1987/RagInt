@@ -19,10 +19,34 @@ const TABS = [
 ];
 const SETTINGS_ACTIVE_TAB_KEY = 'settingsActiveTab';
 const DEFAULT_SETTINGS_TAB = 'tts';
+const MODELSCOPE_VOICE_OPTIONS = [
+  'longxiaochun',
+  'longfeicheng',
+  'longhua',
+  'longxiaoxia_v2',
+  'longxiaocheng',
+  'longlaotie',
+  'longwan',
+  'longcheng',
+  'longhua_v2',
+  'loongbella',
+  'loongstella',
+  'loongwilliam',
+  'longcheng_v2',
+  'loongsamuel',
+];
+const FLASH_VOICE_OPTIONS = ['longanyang', 'longanhuan'];
 
 function normalizeSettingsTabKey(value) {
   const key = String(value || '').trim();
   return TABS.some((tab) => tab.key === key) ? key : DEFAULT_SETTINGS_TAB;
+}
+
+function getOfficialTtsVoiceOptions(mode) {
+  const normalizedMode = String(mode || '').trim().toLowerCase();
+  if (normalizedMode === 'flash') return FLASH_VOICE_OPTIONS;
+  if (normalizedMode === 'modelscope') return MODELSCOPE_VOICE_OPTIONS;
+  return [];
 }
 
 function SettingsGroup({ title, children }) {
@@ -68,6 +92,14 @@ function TabBar({ activeTab, onTabChange }) {
 
 function TtsTab({ controlBarProps, ttsMode, modelscopeVoice, onChangeModelscopeVoice, ttsFetchConcurrency, onChangeTtsFetchConcurrency }) {
   const c = controlBarProps || {};
+  const activeTtsMode = String(ttsMode || c.ttsMode || '').trim().toLowerCase();
+  const officialVoiceOptions = useMemo(() => getOfficialTtsVoiceOptions(activeTtsMode), [activeTtsMode]);
+  const currentVoiceValue = String(modelscopeVoice || '').trim();
+  const voiceOptions = useMemo(() => {
+    if (!currentVoiceValue) return officialVoiceOptions;
+    if (officialVoiceOptions.includes(currentVoiceValue)) return officialVoiceOptions;
+    return [currentVoiceValue, ...officialVoiceOptions];
+  }, [currentVoiceValue, officialVoiceOptions]);
   return (
     <>
       <SettingsGroup title="语音开关">
@@ -113,14 +145,18 @@ function TtsTab({ controlBarProps, ttsMode, modelscopeVoice, onChangeModelscopeV
             </select>
           </label>
 
-          {String(ttsMode || c.ttsMode || '').toLowerCase() === 'modelscope' ? (
+          {(activeTtsMode === 'modelscope' || activeTtsMode === 'flash') ? (
             <label className="settings-field">
-              <span>ModelScope音色(voice id)</span>
-              <input
-                value={modelscopeVoice}
-                onChange={(e) => onChangeModelscopeVoice && onChangeModelscopeVoice(e.target.value)}
-                placeholder="例如 cosyvoice-v3-plus-myvoice-..."
-              />
+              <span>{activeTtsMode === 'flash' ? 'Flash voice id' : 'ModelScope voice id'}</span>
+              <select value={currentVoiceValue} onChange={(e) => onChangeModelscopeVoice && onChangeModelscopeVoice(e.target.value)}>
+                <option value="">Select voice id</option>
+                {voiceOptions.map((voiceId) => (
+                  <option key={voiceId} value={voiceId}>
+                    {voiceId}
+                    {voiceId === currentVoiceValue && !officialVoiceOptions.includes(voiceId) ? ' (current custom)' : ''}
+                  </option>
+                ))}
+              </select>
             </label>
           ) : null}
         </div>
@@ -342,75 +378,40 @@ function AsrTab({ controlBarProps }) {
 
 function ModeTab({ controlBarProps }) {
   const c = controlBarProps || {};
-  const zones = (c.tourMeta && Array.isArray(c.tourMeta.zones) ? c.tourMeta.zones : []).map((x) => String(x || '').trim()).filter(Boolean);
   const profiles = (c.tourMeta && Array.isArray(c.tourMeta.profiles) ? c.tourMeta.profiles : []).map((x) => String(x || '').trim()).filter(Boolean);
-  const stops = (Array.isArray(c.tourStops) && c.tourStops.length ? c.tourStops : ['无站点']).map((s) => String(s || '').trim());
+  const guideEnabled = !!c.guideEnabled;
+  const onChangeGuideEnabled = c.onChangeGuideEnabled;
+
+  useEffect(() => {
+    if (!guideEnabled && typeof onChangeGuideEnabled === 'function') {
+      onChangeGuideEnabled(true);
+    }
+  }, [guideEnabled, onChangeGuideEnabled]);
 
   return (
-    <>
-      <SettingsGroup title="讲解设置">
-        <div className="settings-form">
-          <label className="settings-toggle">
-            <input type="checkbox" checked={!!c.guideEnabled} onChange={(e) => c.onChangeGuideEnabled && c.onChangeGuideEnabled(e.target.checked)} />
-            <span>启用展厅讲解</span>
+    <SettingsGroup title="讲解设置">
+      <div className="settings-form">
+        <label className="settings-toggle">
+          <input type="checkbox" checked={!!c.continuousTour} onChange={(e) => c.onChangeContinuousTour && c.onChangeContinuousTour(e.target.checked)} />
+          <span>连续讲解</span>
+        </label>
+
+        {profiles.length ? (
+          <label className="settings-field">
+            <span>人群画像</span>
+            <select value={String(c.audienceProfile || '')} onChange={(e) => c.onChangeAudienceProfile && c.onChangeAudienceProfile(e.target.value)}>
+              {profiles.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
           </label>
-
-          {c.guideEnabled ? (
-            <label className="settings-toggle">
-              <input type="checkbox" checked={!!c.continuousTour} onChange={(e) => c.onChangeContinuousTour && c.onChangeContinuousTour(e.target.checked)} />
-              <span>连续讲解</span>
-            </label>
-          ) : null}
-
-          {zones.length ? (
-            <label className="settings-field">
-              <span>讲解路线</span>
-              <select value={String(c.tourZone || '')} onChange={(e) => c.onChangeTourZone && c.onChangeTourZone(e.target.value)}>
-                {zones.map((z) => (
-                  <option key={z} value={z}>
-                    {z}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-
-          {profiles.length ? (
-            <label className="settings-field">
-              <span>人群画像</span>
-              <select value={String(c.audienceProfile || '')} onChange={(e) => c.onChangeAudienceProfile && c.onChangeAudienceProfile(e.target.value)}>
-                {profiles.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-        </div>
-      </SettingsGroup>
-
-      <SettingsGroup title="站点控制">
-        <div className="tour-controls">
-          <select value={String(c.tourSelectedStopIndex || 0)} onChange={(e) => c.onChangeTourSelectedStopIndex && c.onChangeTourSelectedStopIndex(Number(e.target.value) || 0)}>
-            {stops.map((s, i) => (
-              <option key={`${i}_${String(s)}`} value={String(i)}>
-                {`第${i + 1}站 ${String(s || '').trim()}`}
-              </option>
-            ))}
-          </select>
-          <button type="button" className="tour-jump-btn" onClick={() => c.onJump && c.onJump()}>
-            跳转
-          </button>
-          <button type="button" className="tour-reset-btn" onClick={() => c.onReset && c.onReset()}>
-            复位
-          </button>
-        </div>
-      </SettingsGroup>
-    </>
+        ) : null}
+      </div>
+    </SettingsGroup>
   );
 }
-
 function StopPromptTab({ controlBarProps }) {
   const c = controlBarProps || {};
   const savedPromptMap = useMemo(() => {

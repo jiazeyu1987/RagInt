@@ -306,7 +306,7 @@ function AppShell() {
       maxPreGenerateCount: MAX_PRE_GENERATE_COUNT,
       fetchConcurrency: ttsFetchConcurrency,
       ttsMode,
-      ttsVoice: ttsMode === 'modelscope' ? modelscopeVoice : '',
+      ttsVoice: ttsMode === 'modelscope' || ttsMode === 'flash' ? modelscopeVoice : '',
       ttsSpeed,
       emitClientEvent: (evt) => emitClientEventExt({ ...(evt || {}), clientId: clientIdRef.current }),
       onStopIndexChange: createTtsOnStopIndexChange({
@@ -316,6 +316,8 @@ function AppShell() {
         ttsEnabledRef,
         getTourStopName,
         setTourState,
+        setLastQuestion,
+        buildTourPrompt,
         setAnswer,
         enqueueSegment: (s, meta) => {
           const mgr = ttsManagerRef.current;
@@ -1050,6 +1052,8 @@ function AppShell() {
               onPickHistoryQuestion={onPickHistoryQuestion}
               showDebugPanel={showDebugPanel}
               debugInfo={debugInfo}
+              qaCacheDebug={qaCacheDebug}
+              guideModeLabel={currentModeLabel}
               ttsEnabled={ttsEnabled}
               tourState={tourState}
               serverStatus={serverStatus}

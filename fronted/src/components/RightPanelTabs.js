@@ -10,6 +10,8 @@ export function RightPanelTabs({
   onPickHistoryQuestion,
   showDebugPanel,
   debugInfo,
+  qaCacheDebug,
+  guideModeLabel,
   ttsEnabled,
   tourState,
   serverStatus,
@@ -73,6 +75,8 @@ export function RightPanelTabs({
           <DebugPanel
             embedded
             debugInfo={debugInfo}
+            qaCacheDebug={qaCacheDebug}
+            guideModeLabel={guideModeLabel}
             ttsEnabled={ttsEnabled}
             tourState={tourState}
             serverStatus={serverStatus}

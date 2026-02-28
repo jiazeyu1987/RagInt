@@ -46,6 +46,16 @@ export function TourModePanel({
     return nameChanged || rowsChanged;
   }, [draftName, draftRows, selectedTemplate]);
 
+  const totalDurationMinutes = useMemo(() => {
+    const totalSeconds = (Array.isArray(draftRows) ? draftRows : []).reduce((sum, row) => {
+      if (!row || row.enabled === false) return sum;
+      const duration = Number(row.duration_s);
+      if (!Number.isFinite(duration) || duration <= 0) return sum;
+      return sum + duration;
+    }, 0);
+    return totalSeconds / 60;
+  }, [draftRows]);
+
   return (
     <div className="settings-block">
       <label className="settings-field" style={{ display: 'block', marginBottom: 8 }}>
@@ -125,7 +135,7 @@ export function TourModePanel({
               }}
               style={{
                 display: 'grid',
-                gridTemplateColumns: '24px minmax(140px,1fr) 78px 96px',
+                gridTemplateColumns: '24px 78px 96px minmax(140px,1fr)',
                 gap: 8,
                 alignItems: 'center',
                 marginBottom: 6,
@@ -154,10 +164,6 @@ export function TourModePanel({
               >
                 ☰
               </button>
-              <div title={String(row.name)} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                <span style={{ fontSize: 12, opacity: 0.75, marginRight: 6 }}>{i + 1}.</span>
-                {String(row.name)}
-              </div>
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, margin: 0 }}>
                 <input
                   type="checkbox"
@@ -187,11 +193,19 @@ export function TourModePanel({
                 }}
                 style={{ width: '100%' }}
               />
+              <div title={String(row.name)} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ fontSize: 12, opacity: 0.75, marginRight: 6 }}>{i + 1}.</span>
+                {String(row.name)}
+              </div>
             </div>
           ))
         ) : (
           <div style={{ fontSize: 12, opacity: 0.75 }}>暂无站点</div>
         )}
+      </div>
+
+      <div style={{ marginTop: 8, fontSize: 13, fontWeight: 600 }}>
+        总时长：{totalDurationMinutes.toFixed(1)} 分钟
       </div>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>

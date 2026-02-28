@@ -78,6 +78,7 @@ def test_emit_ask_received_event_contains_stop_id():
     emit_ask_received_event(deps=deps, parsed=p)
     evt = deps.event_store.items[-1]
     assert evt["name"] == "ask_received"
+    assert evt["request_mode"] == "tour"
     assert evt["stop_id"] == "stop_1"
     assert evt["chat_name"] == "chat1"
 
@@ -87,6 +88,15 @@ def test_resolve_conversation_name_clears_when_agent_mode():
     p = _Parsed(agent_id="a1", conversation_name="chatX", guide={})
     got = resolve_conversation_name(deps=deps, parsed=p)
     assert got == ""
+    assert "ask_request_received mode=tour agent_id=a1" in deps.logger.infos[-1]
+
+
+def test_resolve_conversation_name_logs_send_mode_for_plain_question():
+    deps = _Deps()
+    p = _Parsed(guide={}, stop_index=None, tour_action=None, action_type="问答")
+    got = resolve_conversation_name(deps=deps, parsed=p)
+    assert got == "chat1"
+    assert "ask_request_received mode=send chat=chat1" in deps.logger.infos[-1]
 
 
 def test_build_ask_input_uses_resolved_conversation_name():

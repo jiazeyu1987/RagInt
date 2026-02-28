@@ -5,11 +5,13 @@ from backend.orchestrators.conversation_orchestrator import AskInput, Conversati
 
 
 def emit_ask_received_event(*, deps, parsed) -> None:
+    request_mode = "tour" if parsed.tour_action else "send"
     deps.event_store.emit(
         request_id=parsed.request_id,
         client_id=parsed.client_id,
         kind="ask",
         name="ask_received",
+        request_mode=request_mode,
         ask_kind=parsed.kind,
         agent_id=parsed.agent_id,
         chat_name=parsed.conversation_name,
@@ -23,11 +25,18 @@ def emit_ask_received_event(*, deps, parsed) -> None:
 
 
 def resolve_conversation_name(*, deps, parsed) -> str:
+    request_mode = "tour" if parsed.tour_action else "send"
     if parsed.agent_id:
-        deps.logger.info(f"[{parsed.request_id}] 闂: {parsed.question} agent_id={parsed.agent_id}")
+        deps.logger.info(
+            f"[{parsed.request_id}] ask_request_received mode={request_mode} agent_id={parsed.agent_id} "
+            f"tour_action={parsed.tour_action or '-'} action_type={parsed.action_type or '-'}"
+        )
         return ""
     conversation_name = parsed.conversation_name
-    deps.logger.info(f"[{parsed.request_id}] 闂: {parsed.question} chat={conversation_name or 'default'}")
+    deps.logger.info(
+        f"[{parsed.request_id}] ask_request_received mode={request_mode} chat={conversation_name or 'default'} "
+        f"tour_action={parsed.tour_action or '-'} action_type={parsed.action_type or '-'}"
+    )
     return conversation_name
 
 

@@ -108,6 +108,8 @@ def parse_ask_request(*, deps, data: dict | None) -> tuple[AskRequest | None, Re
     qa_answer_target_chars = _as_int_or_none(data.get("qa_answer_target_chars"))
     qa_audio_cache_confidence_threshold = _as_float_or_none(data.get("qa_audio_cache_confidence_threshold"))
     qa_audio_cache_lookup_enabled = _as_bool_or_none(data.get("qa_audio_cache_lookup_enabled"))
+    if tour_action:
+        qa_audio_cache_lookup_enabled = False
 
     return (
         AskRequest(

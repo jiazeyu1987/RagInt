@@ -90,3 +90,18 @@ def test_parse_ask_request_parses_qa_audio_cache_lookup_enabled():
         assert err is None
         assert parsed is not None
         assert parsed.qa_audio_cache_lookup_enabled is False
+
+
+def test_parse_ask_request_disables_qa_audio_cache_lookup_for_tour_action():
+    app = Flask(__name__)
+    data = {
+        "question": "hi",
+        "qa_audio_cache_lookup_enabled": "1",
+        "guide": {"tour_action": "start", "stop_index": "0"},
+    }
+    with app.test_request_context("/api/ask", method="POST", json=data):
+        parsed, err = parse_ask_request(deps=_Deps(), data=data)
+        assert err is None
+        assert parsed is not None
+        assert parsed.tour_action == "start"
+        assert parsed.qa_audio_cache_lookup_enabled is False

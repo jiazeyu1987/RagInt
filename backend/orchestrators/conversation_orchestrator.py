@@ -387,6 +387,13 @@ class ConversationOrchestrator:
         qa_audio_lookup_enabled = bool(runtime.qa_audio_cache_enabled)
         if inp.qa_audio_cache_lookup_enabled is not None:
             qa_audio_lookup_enabled = bool(inp.qa_audio_cache_lookup_enabled)
+        request_mode = "tour" if bool(guide.get("tour_action")) else "send"
+        self._logger.info(
+            f"[{request_id}] qa_audio_cache_policy mode={request_mode} "
+            f"tour_action={str(guide.get('tour_action') or '-')} "
+            f"recording_id={'yes' if str(inp.recording_id or '').strip() else 'no'} "
+            f"lookup_enabled={qa_audio_lookup_enabled}"
+        )
 
         audio_cache_outcome = None
         if not str(inp.recording_id or "").strip():

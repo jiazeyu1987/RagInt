@@ -49,7 +49,9 @@ export function useTtsUiSync({
   useEffect(() => {
     try {
       const mgr = ttsManagerRef.current;
-      if (mgr && typeof mgr.setTtsVoice === 'function') mgr.setTtsVoice(ttsMode === 'modelscope' ? modelscopeVoice : '', 'ui_change');
+      if (mgr && typeof mgr.setTtsVoice === 'function') {
+        mgr.setTtsVoice(ttsMode === 'modelscope' || ttsMode === 'flash' ? modelscopeVoice : '', 'ui_change');
+      }
     } catch (_) {
       // ignore
     }

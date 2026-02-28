@@ -7,6 +7,8 @@ export function createTtsOnStopIndexChange({
   ttsEnabledRef,
   getTourStopName,
   setTourState,
+  setLastQuestion,
+  buildTourPrompt,
   setAnswer,
   enqueueSegment,
   enqueueAudioSegment,
@@ -66,6 +68,14 @@ export function createTtsOnStopIndexChange({
         setTourState((prev) =>
           tourStateOnTourAction(prev, { action: 'next', stopIndex: Number(nextStopIndex), stopName: stopName || '' })
         );
+      }
+    } catch (_) {
+      // ignore
+    }
+
+    try {
+      if (typeof setLastQuestion === 'function' && typeof buildTourPrompt === 'function') {
+        setLastQuestion(String(buildTourPrompt('next', Number(nextStopIndex)) || ''));
       }
     } catch (_) {
       // ignore

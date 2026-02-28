@@ -26,18 +26,11 @@ class TtsStreamContext:
 
 def _fallback_tts_providers(*, primary: str, app_config: dict) -> list[str]:
     primary_norm = str(primary or "").strip().lower()
-    out: list[str] = []
     if primary_norm in ("modelscope", "bailian", "dashscope", "flash"):
-        edge_enabled = bool((((app_config or {}).get("tts") or {}).get("edge") or {}).get("enabled", True))
-        sapi_enabled = bool((((app_config or {}).get("tts") or {}).get("sapi") or {}).get("enabled", True))
-        sovtts1_enabled = bool((((app_config or {}).get("tts") or {}).get("sovtts1") or {}).get("enabled", True))
-        if edge_enabled:
-            out.append("edge")
-        if sapi_enabled:
-            out.append("sapi")
-        if sovtts1_enabled:
-            out.append("sovtts1")
-    return out
+        # Online providers must fail fast with the original upstream error.
+        # Do not auto-fallback to any local/system TTS provider.
+        return []
+    return []
 
 
 def _should_skip_provider(*, ctx: TtsStreamContext, provider: str) -> bool:
@@ -203,8 +196,10 @@ def generate_streaming_tts_audio(ctx: TtsStreamContext) -> Iterable[bytes]:
                     continue
                 raise
 
-        if chunk_count == 0 and last_err is not None:
-            raise last_err
+        if chunk_count == 0:
+            if last_err is not None:
+                raise last_err
+            raise RuntimeError(f"tts_provider_empty_output:{selected_provider}")
 
         deps.logger.info(
             f"[{ctx.request_id}] tts_stream_done total_dt={time.perf_counter() - ctx.t_received:.3f}s bytes={total_size} chunks={chunk_count} provider={selected_provider}"
@@ -245,5 +240,6 @@ def generate_streaming_tts_audio(ctx: TtsStreamContext) -> Iterable[bytes]:
             segment_index=ctx.segment_index,
             err=str(e),
         )
+        raise
     finally:
         recorder.cleanup()

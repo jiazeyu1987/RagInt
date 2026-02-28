@@ -403,6 +403,7 @@ export class AskWorkflowManager {
       };
       const emitClientEvent = typeof this.deps.emitClientEvent === 'function' ? this.deps.emitClientEvent : null;
       const tourAction = options.tourAction ? String(options.tourAction || '').trim() : '';
+      if (tourAction) qaAudioCacheLookupEnabled = false;
       const stopIndex = options.tourAction
         ? (Number.isFinite(options.tourStopIndex)
           ? Number(options.tourStopIndex)

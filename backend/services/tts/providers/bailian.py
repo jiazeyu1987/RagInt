@@ -175,6 +175,7 @@ def stream_bailian_tts_dashscope(
     canceled = False
     backpressure_waits = 0
     suspect_stream = False
+    upstream_error_message: str | None = None
 
     additional_params = bailian_cfg.get("additional_params") or {}
     if not isinstance(additional_params, dict):
@@ -211,6 +212,8 @@ def stream_bailian_tts_dashscope(
                 q.put_nowait(None)
 
         def on_error(self, message: str):
+            nonlocal upstream_error_message
+            upstream_error_message = str(message or "").strip() or "dashscope_tts_error"
             self._logger.error(f"[{request_id}] dashscope_tts_error {message}")
             complete_event.set()
             with contextlib.suppress(Exception):
@@ -411,6 +414,8 @@ def stream_bailian_tts_dashscope(
                         logger.warning(f"[{request_id}] pcm_probe_failed {e}")
 
             yield item
+        if not canceled and upstream_error_message:
+            raise RuntimeError(upstream_error_message)
     except GeneratorExit:
         canceled = True
         stop_event.set()
