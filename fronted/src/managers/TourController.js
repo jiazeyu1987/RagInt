@@ -49,6 +49,15 @@ export class TourController {
     return { epoch, allow };
   }
 
+  _isPlaybackArchiveMode() {
+    const { playTourRecordingEnabledRef, selectedTourRecordingIdRef } = this.deps || {};
+    const recordingId =
+      playTourRecordingEnabledRef && playTourRecordingEnabledRef.current && selectedTourRecordingIdRef
+        ? String(selectedTourRecordingIdRef.current || '').trim()
+        : '';
+    return !!recordingId;
+  }
+
   async _fetchTourPlan() {
     const {
       fetchJson,
@@ -213,7 +222,7 @@ export class TourController {
     }
     if (!allow()) return;
 
-    if (continuousTourRef && continuousTourRef.current) {
+    if ((continuousTourRef && continuousTourRef.current) || this._isPlaybackArchiveMode()) {
       await this._runContinuousTour({ startIndex: stopIndex, firstAction: 'start', stopsOverride: plannedStops });
       return;
     }
@@ -408,7 +417,7 @@ export class TourController {
       const resumed = await this._resumeFromInterrupt({ stopIndex, action: 'continue', allow });
       if (qRes.resumed || resumed) {
         if (!allow()) return;
-        if (continuousTourRef && continuousTourRef.current) {
+        if ((continuousTourRef && continuousTourRef.current) || this._isPlaybackArchiveMode()) {
           // If prefetch worked, stopIndex will advance naturally as next-stop audio begins playing.
           // Fallback: if it didn't advance, restart continuous tour from next stop.
           const after = tourStateRef && tourStateRef.current ? tourStateRef.current : null;
@@ -432,7 +441,7 @@ export class TourController {
     }
     if (!allow()) return;
 
-    if (continuousTourRef && continuousTourRef.current) {
+    if ((continuousTourRef && continuousTourRef.current) || this._isPlaybackArchiveMode()) {
       await this._runContinuousTour({ startIndex: stopIndex, firstAction: 'continue' });
       return;
     }

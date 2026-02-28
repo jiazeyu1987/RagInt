@@ -168,6 +168,15 @@ export class TourPipelineManager {
     return String(promptMap[stopName] || '').trim();
   }
 
+  _hasPlaybackRecording() {
+    return !!String(this._getPlaybackRecordingId() || '').trim();
+  }
+
+  _canAutoAdvance({ allowPlaybackRecording = false } = {}) {
+    if (this._isContinuousTourEnabled()) return true;
+    return !!(allowPlaybackRecording && this._hasPlaybackRecording());
+  }
+
   _compressTailForContinuity(rawTail) {
     const tail = String(rawTail || "").trim();
     if (!tail) return "";
@@ -219,7 +228,7 @@ export class TourPipelineManager {
     const perStopPrompt = this._getPerStopPromptByIndex(idx);
     const perStopHint = perStopPrompt ? `\n\u3010\u672c\u7ad9\u9644\u52a0\u63d0\u793a\u8bcd\u3011${perStopPrompt}` : "";
 
-    const isContinuous = !!(this._isContinuousTourEnabled() && this._active);
+    const isContinuous = !!(this._canAutoAdvance({ allowPlaybackRecording: false }) && this._active);
     const tail = isContinuous ? this._compressTailForContinuity(rawTail) : rawTail;
     const tailHint = tail ? `\n\u3010\u4e0a\u4e00\u6bb5\u7ed3\u675f\u8bed\uff08\u4f9b\u627f\u63a5\uff09\u3011${tail}` : "";
     const continuityHint = isContinuous
@@ -275,7 +284,7 @@ export class TourPipelineManager {
   }
 
   maybePrefetchNextStop({ currentStopIndex, tail, enqueueSegment, ensureTtsRunning }) {
-    if (!this._isContinuousTourEnabled()) return;
+    if (!this._canAutoAdvance()) return;
     if (!this._active) return;
     this.setCurrentStopIndex(currentStopIndex);
     const stops = Array.isArray(this._getStops()) ? this._getStops() : [];
@@ -299,7 +308,7 @@ export class TourPipelineManager {
   maybePrefetchNextStopFromRecording({ recordingId, currentStopIndex, enqueueAudioSegment, ensureTtsRunning }) {
     const rid = String(recordingId || '').trim() || String(this._getPlaybackRecordingId() || '').trim();
     if (!rid) return;
-    if (!this._isContinuousTourEnabled()) return;
+    if (!this._canAutoAdvance({ allowPlaybackRecording: true })) return;
     if (!this._active) return;
     this.setCurrentStopIndex(currentStopIndex);
     const stops = Array.isArray(this._getStops()) ? this._getStops() : [];
@@ -328,7 +337,7 @@ export class TourPipelineManager {
   }
 
   maybePrefetchFromPlayback({ currentStopIndex, enqueueSegment, ensureTtsRunning }) {
-    if (!this._isContinuousTourEnabled()) return;
+    if (!this._canAutoAdvance()) return;
     if (!this._active) return;
     const cur = Number.isFinite(currentStopIndex) ? Number(currentStopIndex) : -1;
     if (cur < 0) return;
@@ -354,7 +363,7 @@ export class TourPipelineManager {
   maybePrefetchFromRecordingPlayback({ recordingId, currentStopIndex, enqueueAudioSegment, ensureTtsRunning }) {
     const rid = String(recordingId || '').trim() || String(this._getPlaybackRecordingId() || '').trim();
     if (!rid) return;
-    if (!this._isContinuousTourEnabled()) return;
+    if (!this._canAutoAdvance({ allowPlaybackRecording: true })) return;
     if (!this._active) return;
     const cur = Number.isFinite(currentStopIndex) ? Number(currentStopIndex) : -1;
     if (cur < 0) return;
@@ -383,7 +392,7 @@ export class TourPipelineManager {
     const idx = Number.isFinite(stopIndex) ? Number(stopIndex) : 0;
     const stops = Array.isArray(this._getStops()) ? this._getStops() : [];
     if (!stops.length || idx < 0 || idx >= stops.length) return;
-    if (!this._isContinuousTourEnabled()) return;
+    if (!this._canAutoAdvance()) return;
     if (!force && !this._active) return;
     if (!this._isInterruptEpochCurrent(epoch)) return;
 
@@ -442,7 +451,7 @@ export class TourPipelineManager {
 
       while (true) {
         if (ctl.signal.aborted) break;
-        if (!this._isContinuousTourEnabled()) break;
+        if (!this._canAutoAdvance()) break;
         if ((!force && !this._active) || !this._isInterruptEpochCurrent(epoch)) break;
         const { done, value } = await reader.read();
         if (done) break;
@@ -483,7 +492,7 @@ export class TourPipelineManager {
       }
 
       if (ctl.signal.aborted) return;
-      if (!this._isContinuousTourEnabled()) return;
+      if (!this._canAutoAdvance()) return;
       if ((!force && !this._active) || !this._isInterruptEpochCurrent(epoch)) return;
 
       const tailOut = String(answerText || '').trim().slice(-80);
@@ -515,7 +524,7 @@ export class TourPipelineManager {
     const stops = Array.isArray(this._getStops()) ? this._getStops() : [];
     if (!rid) return;
     if (!stops.length || idx < 0 || idx >= stops.length) return;
-    if (!this._isContinuousTourEnabled()) return;
+    if (!this._canAutoAdvance({ allowPlaybackRecording: true })) return;
     if (!this._active) return;
     if (!this._isInterruptEpochCurrent(epoch)) return;
     if (this._prefetchStore.has(idx)) return;
