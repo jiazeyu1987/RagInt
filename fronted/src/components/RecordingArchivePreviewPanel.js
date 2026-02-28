@@ -202,7 +202,7 @@ export function RecordingArchivePreviewPanel({ recordingId, ttsProvider, ttsVoic
                         style={{ width: '100%', resize: 'vertical', marginBottom: 6 }}
                         placeholder="可编辑本段文本，点击重新生成语音后生效"
                       />
-                      {seg.audio_url ? <audio controls preload="metadata" src={seg.audio_url} style={{ width: '100%' }} /> : null}
+                      {seg.audio_url ? <audio controls preload="none" src={seg.audio_url} style={{ width: '100%' }} /> : null}
                       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
                         <button type="button" className="settings-action-btn" disabled={regenBusy || !canRegen} onClick={() => regenerateSegment(seg)}>
                           {regenBusy ? '重新生成中...' : '重新生成语音'}

@@ -1,7 +1,14 @@
 // Audio/TTS helpers extracted from App.js to keep component lean.
 // These utilities intentionally depend only on browser APIs (WebAudio + fetch).
 
-export async function playWavViaDecodeAudioData(url, audioContextRef, currentAudioRef) {
+function normalizePlaybackRate(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 1.0;
+  return Math.max(0.5, Math.min(2.0, n));
+}
+
+export async function playWavViaDecodeAudioData(url, audioContextRef, currentAudioRef, opts) {
+  const playbackRate = normalizePlaybackRate(opts && opts.playbackRate);
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) throw new Error('WebAudio is not supported');
 
@@ -19,6 +26,7 @@ export async function playWavViaDecodeAudioData(url, audioContextRef, currentAud
 
   const abortController = new AbortController();
   let sourceNode = null;
+  let currentRate = playbackRate;
   currentAudioRef.current = {
     stop: () => {
       try {
@@ -28,6 +36,14 @@ export async function playWavViaDecodeAudioData(url, audioContextRef, currentAud
       }
       try {
         if (sourceNode) sourceNode.stop(0);
+      } catch (_) {
+        // ignore
+      }
+    },
+    setPlaybackRate: (next) => {
+      currentRate = normalizePlaybackRate(next);
+      try {
+        if (sourceNode) sourceNode.playbackRate.value = currentRate;
       } catch (_) {
         // ignore
       }
@@ -76,6 +92,7 @@ export async function playWavViaDecodeAudioData(url, audioContextRef, currentAud
   await new Promise((resolve, reject) => {
     sourceNode = audioCtx.createBufferSource();
     sourceNode.buffer = audioBuffer;
+    sourceNode.playbackRate.value = currentRate;
     sourceNode.connect(audioCtx.destination);
     sourceNode.onended = () => resolve();
     try {
@@ -86,7 +103,8 @@ export async function playWavViaDecodeAudioData(url, audioContextRef, currentAud
   });
 }
 
-export async function playWavBytesViaDecodeAudioData(wavBytes, audioContextRef, currentAudioRef) {
+export async function playWavBytesViaDecodeAudioData(wavBytes, audioContextRef, currentAudioRef, opts) {
+  const playbackRate = normalizePlaybackRate(opts && opts.playbackRate);
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) throw new Error('WebAudio is not supported');
 
@@ -136,10 +154,19 @@ export async function playWavBytesViaDecodeAudioData(wavBytes, audioContextRef, 
   }
 
   let sourceNode = null;
+  let currentRate = playbackRate;
   currentAudioRef.current = {
     stop: () => {
       try {
         if (sourceNode) sourceNode.stop(0);
+      } catch (_) {
+        // ignore
+      }
+    },
+    setPlaybackRate: (next) => {
+      currentRate = normalizePlaybackRate(next);
+      try {
+        if (sourceNode) sourceNode.playbackRate.value = currentRate;
       } catch (_) {
         // ignore
       }
@@ -183,6 +210,7 @@ export async function playWavBytesViaDecodeAudioData(wavBytes, audioContextRef, 
   await new Promise((resolve, reject) => {
     sourceNode = audioCtx.createBufferSource();
     sourceNode.buffer = audioBuffer;
+    sourceNode.playbackRate.value = currentRate;
     sourceNode.connect(audioCtx.destination);
     sourceNode.onended = () => resolve();
     try {
@@ -196,6 +224,7 @@ export async function playWavBytesViaDecodeAudioData(wavBytes, audioContextRef, 
 export async function playWavStreamViaWebAudio(url, audioContextRef, currentAudioRef, fallbackPlay, onFirstAudioChunk, opts) {
   const options = opts && typeof opts === 'object' ? opts : {};
   const allowRefetchFallback = options.allowRefetchFallback !== false;
+  let playbackRate = normalizePlaybackRate(options.playbackRate);
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) {
     if (fallbackPlay) return fallbackPlay();
@@ -243,7 +272,19 @@ export async function playWavStreamViaWebAudio(url, audioContextRef, currentAudi
     }
   };
 
-  currentAudioRef.current = { stop: stopPlayback };
+  currentAudioRef.current = {
+    stop: stopPlayback,
+    setPlaybackRate: (next) => {
+      playbackRate = normalizePlaybackRate(next);
+      try {
+        for (const src of sources) {
+          if (src && src.playbackRate) src.playbackRate.value = playbackRate;
+        }
+      } catch (_) {
+        // ignore
+      }
+    },
+  };
 
   const parseWavHeader = (headerBytes) => {
     const view = new DataView(headerBytes.buffer, headerBytes.byteOffset, headerBytes.byteLength);
@@ -440,10 +481,11 @@ export async function playWavStreamViaWebAudio(url, audioContextRef, currentAudi
           startAt = now + 0.06;
         }
         playbackStarted = true;
-        nextStartTime = startAt + buffer.duration;
+        nextStartTime = startAt + buffer.duration / playbackRate;
 
         const src = audioCtx.createBufferSource();
         src.buffer = buffer;
+        src.playbackRate.value = playbackRate;
         src.connect(audioCtx.destination);
         scheduledCount += 1;
         src.onended = () => {
@@ -633,7 +675,7 @@ export async function playWavStreamViaWebAudio(url, audioContextRef, currentAudi
     }
     console.warn('[TTS] WebAudio streaming failed, trying decodeAudioData fallback:', err);
     try {
-      await playWavViaDecodeAudioData(url, audioContextRef, currentAudioRef);
+      await playWavViaDecodeAudioData(url, audioContextRef, currentAudioRef, { playbackRate });
       return;
     } catch (decodeErr) {
       console.warn('[TTS] decodeAudioData fallback failed, trying <audio> fallback:', decodeErr);

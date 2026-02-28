@@ -64,8 +64,20 @@ def create_blueprint(deps):
         if not isinstance(stops, list) or not stops:
             return jsonify({"error": "stops_required"}), 400
         rid = str(data.get("recording_id") or "").strip() or f"rec_{int(time.time()*1000)}"
-        info = deps.recording_store.create(recording_id=rid, stops=[str(s or "").strip() for s in stops if str(s or "").strip()])
-        return jsonify({"recording_id": info.recording_id, "created_at_ms": info.created_at_ms})
+        raw_meta = data.get("metadata")
+        metadata = raw_meta if isinstance(raw_meta, dict) else {}
+        info = deps.recording_store.create(
+            recording_id=rid,
+            stops=[str(s or "").strip() for s in stops if str(s or "").strip()],
+            metadata=metadata,
+        )
+        return jsonify(
+            {
+                "recording_id": info.recording_id,
+                "created_at_ms": info.created_at_ms,
+                "metadata": info.metadata,
+            }
+        )
 
     @bp.route("/api/recordings/<recording_id>/finish", methods=["POST"])
     def finish_recording(recording_id: str):

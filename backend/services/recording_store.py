@@ -17,6 +17,7 @@ class RecordingInfo:
     created_at_ms: int
     finished_at_ms: int | None
     stops: list[str]
+    metadata: dict
 
 
 class RecordingStore:
@@ -52,7 +53,8 @@ class RecordingStore:
                         created_at_ms INTEGER NOT NULL,
                         finished_at_ms INTEGER,
                         stops_json TEXT NOT NULL,
-                        display_name TEXT
+                        display_name TEXT,
+                        metadata_json TEXT
                     );
                     """
                 )
@@ -61,6 +63,8 @@ class RecordingStore:
                     cols = [str(r["name"]) for r in conn.execute("PRAGMA table_info(recordings);").fetchall()]
                     if "display_name" not in cols:
                         conn.execute("ALTER TABLE recordings ADD COLUMN display_name TEXT;")
+                    if "metadata_json" not in cols:
+                        conn.execute("ALTER TABLE recordings ADD COLUMN metadata_json TEXT;")
                 except Exception:
                     pass
                 conn.execute(
@@ -113,7 +117,7 @@ class RecordingStore:
     def _now_ms(self) -> int:
         return int(time.time() * 1000)
 
-    def create(self, *, recording_id: str, stops: list[str]) -> RecordingInfo:
+    def create(self, *, recording_id: str, stops: list[str], metadata: dict | None = None) -> RecordingInfo:
         rid = str(recording_id or "").strip()
         if not rid:
             raise ValueError("recording_id_empty")
@@ -121,23 +125,30 @@ class RecordingStore:
             raise ValueError("stops_empty")
         created_at_ms = self._now_ms()
         payload = json.dumps([str(s or "").strip() for s in stops], ensure_ascii=False)
+        metadata_payload = json.dumps(metadata if isinstance(metadata, dict) else {}, ensure_ascii=False)
 
         with self._lock:
             conn = self._connect()
             try:
                 conn.execute(
                     """
-                    INSERT OR REPLACE INTO recordings (recording_id, created_at_ms, finished_at_ms, stops_json)
-                    VALUES (?, ?, NULL, ?)
+                    INSERT OR REPLACE INTO recordings (recording_id, created_at_ms, finished_at_ms, stops_json, metadata_json)
+                    VALUES (?, ?, NULL, ?, ?)
                     """,
-                    (rid, int(created_at_ms), payload),
+                    (rid, int(created_at_ms), payload, metadata_payload),
                 )
                 conn.commit()
             finally:
                 conn.close()
 
         self._logger.info(f"[REC] created recording_id={rid} stops={len(stops)}")
-        return RecordingInfo(recording_id=rid, created_at_ms=created_at_ms, finished_at_ms=None, stops=stops)
+        return RecordingInfo(
+            recording_id=rid,
+            created_at_ms=created_at_ms,
+            finished_at_ms=None,
+            stops=stops,
+            metadata=metadata if isinstance(metadata, dict) else {},
+        )
 
     def finish(self, recording_id: str) -> None:
         rid = str(recording_id or "").strip()
@@ -163,14 +174,29 @@ class RecordingStore:
             try:
                 rows = conn.execute(
                     """
-                    SELECT recording_id, created_at_ms, finished_at_ms, display_name
+                    SELECT recording_id, created_at_ms, finished_at_ms, display_name, metadata_json, stops_json
                     FROM recordings
                     ORDER BY created_at_ms DESC
                     LIMIT ?
                     """,
                     (limit,),
                 ).fetchall()
-                return [dict(r) for r in rows]
+                out = []
+                for r in rows:
+                    item = dict(r)
+                    try:
+                        item["metadata"] = json.loads(item.get("metadata_json") or "{}")
+                    except Exception:
+                        item["metadata"] = {}
+                    try:
+                        stops = json.loads(item.get("stops_json") or "[]")
+                        item["stop_count"] = len(stops) if isinstance(stops, list) else 0
+                    except Exception:
+                        item["stop_count"] = 0
+                    item.pop("metadata_json", None)
+                    item.pop("stops_json", None)
+                    out.append(item)
+                return out
             finally:
                 conn.close()
 
@@ -182,7 +208,7 @@ class RecordingStore:
             conn = self._connect()
             try:
                 row = conn.execute(
-                    "SELECT recording_id, created_at_ms, finished_at_ms, stops_json, display_name FROM recordings WHERE recording_id=?",
+                    "SELECT recording_id, created_at_ms, finished_at_ms, stops_json, display_name, metadata_json FROM recordings WHERE recording_id=?",
                     (rid,),
                 ).fetchone()
                 if not row:
@@ -192,7 +218,12 @@ class RecordingStore:
                     out["stops"] = json.loads(out.get("stops_json") or "[]")
                 except Exception:
                     out["stops"] = []
+                try:
+                    out["metadata"] = json.loads(out.get("metadata_json") or "{}")
+                except Exception:
+                    out["metadata"] = {}
                 out.pop("stops_json", None)
+                out.pop("metadata_json", None)
                 return out
             finally:
                 conn.close()

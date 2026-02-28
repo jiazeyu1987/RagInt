@@ -38,11 +38,34 @@ function safeStopCurrentAudio(currentAudioRef) {
   }
 }
 
-async function playAudioElementUrl(url, currentAudioRef) {
+async function playAudioElementUrl(url, currentAudioRef, opts) {
+  const playbackRate = Number.isFinite(Number(opts && opts.playbackRate)) ? Math.max(0.5, Math.min(2.0, Number(opts.playbackRate))) : 1.0;
   if (!url) return;
   await new Promise((resolve, reject) => {
     const audio = new Audio(url);
-    currentAudioRef.current = audio;
+    audio.playbackRate = playbackRate;
+    currentAudioRef.current = {
+      stop: () => {
+        try {
+          audio.pause();
+        } catch (_) {
+          // ignore
+        }
+        try {
+          audio.src = '';
+        } catch (_) {
+          // ignore
+        }
+      },
+      setPlaybackRate: (next) => {
+        try {
+          audio.playbackRate = Number.isFinite(Number(next)) ? Math.max(0.5, Math.min(2.0, Number(next))) : 1.0;
+        } catch (_) {
+          // ignore
+        }
+      },
+      pause: () => audio.pause(),
+    };
     audio.onended = () => resolve();
     audio.onerror = () => reject(new Error('Audio playback failed'));
     audio.play().catch(reject);
@@ -384,7 +407,6 @@ export class TtsQueueManager {
     if (cid) url.searchParams.set('client_id', cid);
     if (this._ttsProvider) url.searchParams.set('tts_provider', this._ttsProvider);
     if (this._ttsVoice) url.searchParams.set('tts_voice', this._ttsVoice);
-    if (Number.isFinite(this._ttsSpeed) && Math.abs(Number(this._ttsSpeed) - 1.0) > 1e-6) url.searchParams.set('tts_speed', String(this._ttsSpeed));
     url.searchParams.set('segment_index', String(this._segmentIndex++));
     if (this._recordingId) url.searchParams.set('recording_id', this._recordingId);
     const stopIndex = meta && Number.isFinite(meta.stopIndex) ? Number(meta.stopIndex) : null;
@@ -454,9 +476,12 @@ export class TtsQueueManager {
     if (Math.abs(val - this._ttsSpeed) < 1e-6) return;
     this._ttsSpeed = val;
     if (reason) this._log('[TTSQ] tts_speed_changed', val, reason);
-    const rid = this._requestId;
-    this.stop('tts_speed_changed');
-    if (rid) this._resetStateForRun(rid);
+    try {
+      const cur = this._currentAudioRef && this._currentAudioRef.current ? this._currentAudioRef.current : null;
+      if (cur && typeof cur.setPlaybackRate === 'function') cur.setPlaybackRate(val);
+    } catch (_) {
+      // ignore
+    }
   }
 
   setFetchConcurrency(next, reason) {
@@ -578,7 +603,9 @@ export class TtsQueueManager {
               }
             }
             try {
-              await playWavBytesViaDecodeAudioData(audioItem.wavBytes, this._audioContextRef, this._currentAudioRef);
+              await playWavBytesViaDecodeAudioData(audioItem.wavBytes, this._audioContextRef, this._currentAudioRef, {
+                playbackRate: this._ttsSpeed,
+              });
             } catch (err) {
               this._warn('[TTSQ] prefetched_wav_playback_failed_fallback_to_stream', err);
               if (audioItem.url) {
@@ -586,7 +613,7 @@ export class TtsQueueManager {
                   audioItem.url,
                   this._audioContextRef,
                   this._currentAudioRef,
-                  () => playAudioElementUrl(audioItem.url, this._currentAudioRef),
+                  () => playAudioElementUrl(audioItem.url, this._currentAudioRef, { playbackRate: this._ttsSpeed }),
                   () => {
                     if (!this._onDebug) return;
                     try {
@@ -598,30 +625,35 @@ export class TtsQueueManager {
                     } catch (_) {
                       // ignore
                     }
-                  }
+                  },
+                  { playbackRate: this._ttsSpeed }
                 );
               }
             }
           } else if (audioItem && audioItem.recorded) {
             try {
-              await playWavViaDecodeAudioData(audioItem.url, this._audioContextRef, this._currentAudioRef);
+              await playWavViaDecodeAudioData(audioItem.url, this._audioContextRef, this._currentAudioRef, {
+                playbackRate: this._ttsSpeed,
+              });
             } catch (err) {
               this._warn('[TTSQ] recorded_wav_playback_failed_fallback_to_audio', err);
-              await playAudioElementUrl(audioItem.url, this._currentAudioRef);
+              await playAudioElementUrl(audioItem.url, this._currentAudioRef, { playbackRate: this._ttsSpeed });
             }
           } else if (this._useSavedTts) {
             try {
-              await playWavViaDecodeAudioData(audioItem.url, this._audioContextRef, this._currentAudioRef);
+              await playWavViaDecodeAudioData(audioItem.url, this._audioContextRef, this._currentAudioRef, {
+                playbackRate: this._ttsSpeed,
+              });
             } catch (err) {
               this._warn('[TTSQ] saved_wav_playback_failed_fallback_to_audio', err);
-              await playAudioElementUrl(audioItem.url, this._currentAudioRef);
+              await playAudioElementUrl(audioItem.url, this._currentAudioRef, { playbackRate: this._ttsSpeed });
             }
           } else {
             await playWavStreamViaWebAudio(
               audioItem.url,
               this._audioContextRef,
               this._currentAudioRef,
-              () => playAudioElementUrl(audioItem.url, this._currentAudioRef),
+              () => playAudioElementUrl(audioItem.url, this._currentAudioRef, { playbackRate: this._ttsSpeed }),
               () => {
                 if (!this._onDebug) return;
                 try {
@@ -634,7 +666,7 @@ export class TtsQueueManager {
                   // ignore
                 }
               },
-              { allowRefetchFallback: false }
+              { allowRefetchFallback: false, playbackRate: this._ttsSpeed }
             );
           }
         } finally {

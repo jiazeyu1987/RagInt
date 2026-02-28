@@ -139,6 +139,7 @@ function AppShell() {
   const { options: tourRecordingOptions, refresh: refreshTourRecordingOptions } = useTourRecordingOptions({
     enabled: true,
     limit: 50,
+    currentPlaybackSpeed: ttsSpeed,
   });
   const { historySort, setHistorySort, historyItems, fetchHistory } = useHistoryPanel({ enabled: showHistoryPanel });
   const { debugInfo, debugRef, beginDebugRun, debugMark, debugRefresh } = useDebugRun();
@@ -474,6 +475,11 @@ function AppShell() {
     selectedTourRecordingIdRef,
     setSelectedTourRecordingId,
     refreshTourRecordingOptions,
+    getCurrentTtsProfile: () => ({
+      provider: ttsMode,
+      voice: ttsMode === 'modelscope' || ttsMode === 'flash' ? modelscopeVoice : '',
+      speed: ttsSpeed,
+    }),
   });
   const { startStatusMonitor } = useQueueStatusMonitor({
     ttsManagerRef,
@@ -949,9 +955,12 @@ function AppShell() {
     guideTemplateList.find((tpl) => String((tpl && tpl.id) || '').trim() === String(tourGuideTemplateId || '').trim()) ||
     guideTemplateList[0] ||
     null;
-  const currentTemplateName = String(
-    (selectedGuideTemplate && (selectedGuideTemplate.name || selectedGuideTemplate.id)) || '未设置'
-  );
+  const guideTemplateOptions = guideTemplateList.length
+    ? guideTemplateList.map((tpl) => ({
+        value: String((tpl && tpl.id) || ''),
+        label: String((tpl && (tpl.name || tpl.id)) || '\u6a21\u677f'),
+      }))
+    : [{ value: '', label: '\u6682\u65e0\u6a21\u677f' }];
   const templateOrderedStops =
     selectedGuideTemplate && Array.isArray(selectedGuideTemplate.stops)
       ? selectedGuideTemplate.stops
@@ -960,15 +969,28 @@ function AppShell() {
           .filter(Boolean)
       : [];
 
-  let currentModeLabel = '实时讲解';
-  if (playTourRecordingEnabled) currentModeLabel = '播放存档';
-  else if (tourRecordingEnabled) currentModeLabel = '录制讲解';
+  let currentModeLabel = '\u5b9e\u65f6\u8bb2\u89e3';
+  if (playTourRecordingEnabled) currentModeLabel = '\u64ad\u653e\u5b58\u6863';
+  else if (tourRecordingEnabled) currentModeLabel = '\u5f55\u5236\u8bb2\u89e3';
+  const currentModeValue = playTourRecordingEnabled ? 'playback' : tourRecordingEnabled ? 'recording' : 'realtime';
+  const modeOptions = [
+    { value: 'realtime', label: '\u5b9e\u65f6\u8bb2\u89e3' },
+    { value: 'recording', label: '\u5f55\u5236\u8bb2\u89e3' },
+    { value: 'playback', label: '\u64ad\u653e\u5b58\u6863' },
+  ];
+  const audienceProfileOptions = (tourMeta && Array.isArray(tourMeta.profiles) ? tourMeta.profiles : [])
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .map((item) => ({ value: item, label: item }));
+  const speedOptions = [
+    { value: '1', label: '\u6807\u51c6(1.0x)' },
+    { value: '1.25', label: '\u52a0\u5feb(1.25x)' },
+    { value: '1.5', label: '\u66f4\u5feb(1.5x)' },
+  ];
 
   const currentStopIndexFromState =
     tourState && Number.isFinite(tourState.stopIndex) && Number(tourState.stopIndex) >= 0
       ? Number(tourState.stopIndex)
-      : Number.isFinite(Number(tourSelectedStopIndex))
-      ? Number(tourSelectedStopIndex)
       : -1;
   const stopList = Array.isArray(tourStops) ? tourStops : [];
   const fallbackStopName =
@@ -997,9 +1019,32 @@ function AppShell() {
     <div className="app">
       <div className="container">
         <HomeStatusBar
-          modeLabel={currentModeLabel}
-          templateName={currentTemplateName}
-          audienceProfile={audienceProfileLabel}
+          modeValue={currentModeValue}
+          modeOptions={modeOptions}
+          onChangeMode={(value) => {
+            const nextMode = String(value || '').trim();
+            if (nextMode === 'playback') {
+              setTourRecordingEnabled(false);
+              setPlayTourRecordingEnabled(true);
+              return;
+            }
+            if (nextMode === 'recording') {
+              setPlayTourRecordingEnabled(false);
+              setTourRecordingEnabled(true);
+              return;
+            }
+            setPlayTourRecordingEnabled(false);
+            setTourRecordingEnabled(false);
+          }}
+          speedValue={String(ttsSpeed || 1)}
+          speedOptions={speedOptions}
+          onChangeSpeed={(value) => setTtsSpeed(Number(value) || 1.0)}
+          templateValue={selectedGuideTemplate ? String(selectedGuideTemplate.id || '') : ''}
+          templateOptions={guideTemplateOptions}
+          onChangeTemplate={(value) => setTourGuideTemplateId(String(value || '').trim())}
+          audienceProfileValue={audienceProfileLabel}
+          audienceProfileOptions={audienceProfileOptions}
+          onChangeAudienceProfile={(value) => setAudienceProfile(String(value || '').trim())}
           wakeWordLabel={wakeWordLabel}
           currentStopLabel={currentStopLabel}
         />

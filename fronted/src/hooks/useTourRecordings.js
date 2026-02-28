@@ -7,21 +7,34 @@ export function useTourRecordings({
   selectedTourRecordingIdRef,
   setSelectedTourRecordingId,
   refreshTourRecordingOptions,
+  getCurrentTtsProfile,
 } = {}) {
   const startTourRecordingArchive = useCallback(
     async (stops) => {
       const list = Array.isArray(stops) ? stops.map((s) => String(s || '').trim()).filter(Boolean) : [];
       if (!list.length) return '';
+      const profile = typeof getCurrentTtsProfile === 'function' ? getCurrentTtsProfile() : {};
+      const provider = String((profile && profile.provider) || '').trim();
+      const voice = String((profile && profile.voice) || '').trim();
+      const playbackSpeed = Number.isFinite(Number(profile && profile.speed)) ? Number(profile.speed) : 1.0;
       const data = await fetchJson('/api/recordings/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Client-ID': clientIdRef ? clientIdRef.current : '' },
-        body: JSON.stringify({ stops: list }),
+        body: JSON.stringify({
+          stops: list,
+          metadata: {
+            tts_provider: provider,
+            tts_voice: voice,
+            stored_audio_speed: 1.0,
+            record_playback_speed: playbackSpeed,
+          },
+        }),
       });
       const rid = String((data && data.recording_id) || '').trim();
       if (rid && activeTourRecordingIdRef) activeTourRecordingIdRef.current = rid;
       return rid;
     },
-    [activeTourRecordingIdRef, clientIdRef]
+    [activeTourRecordingIdRef, clientIdRef, getCurrentTtsProfile]
   );
 
   const finishTourRecordingArchive = useCallback(
@@ -102,4 +115,3 @@ export function useTourRecordings({
     deleteSelectedTourRecording,
   };
 }
-

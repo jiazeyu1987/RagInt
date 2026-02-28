@@ -271,6 +271,15 @@ function ArchiveTab({ controlBarProps, ttsMode, modelscopeVoice }) {
   const resolvedVoice =
     resolvedProvider.toLowerCase() === 'modelscope' || resolvedProvider.toLowerCase() === 'flash' ? String(modelscopeVoice || '').trim() : '';
   const resolvedSpeed = Number(c.ttsSpeed);
+  const selectedRecording = Array.isArray(c.tourRecordingOptions)
+    ? c.tourRecordingOptions.find((item) => String(item && item.recording_id) === String(c.selectedTourRecordingId || ''))
+    : null;
+  const selectedMeta = selectedRecording && selectedRecording.metadata && typeof selectedRecording.metadata === 'object' ? selectedRecording.metadata : {};
+  const formatSpeed = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return '--';
+    return `${n.toFixed(2)}x`;
+  };
 
   return (
     <>
@@ -310,6 +319,50 @@ function ArchiveTab({ controlBarProps, ttsMode, modelscopeVoice }) {
             </label>
           ) : null}
 
+          {c.playTourRecordingEnabled && selectedRecording ? (
+            <div className="settings-recording-meta">
+              <div className="settings-recording-meta-title">存档详情</div>
+              <div className="settings-recording-meta-grid">
+                <div className="settings-recording-meta-item">
+                  <span>编号</span>
+                  <strong>{String(selectedRecording.recording_id || '')}</strong>
+                </div>
+                <div className="settings-recording-meta-item">
+                  <span>Provider</span>
+                  <strong>{String(selectedMeta.tts_provider || '--')}</strong>
+                </div>
+                <div className="settings-recording-meta-item">
+                  <span>Voice</span>
+                  <strong>{String(selectedMeta.tts_voice || '--')}</strong>
+                </div>
+                <div className="settings-recording-meta-item">
+                  <span>原始音频</span>
+                  <strong>{formatSpeed(selectedMeta.stored_audio_speed)}</strong>
+                </div>
+                <div className="settings-recording-meta-item">
+                  <span>录制时播放</span>
+                  <strong>{formatSpeed(selectedMeta.record_playback_speed)}</strong>
+                </div>
+                <div className="settings-recording-meta-item">
+                  <span>当前播放</span>
+                  <strong>{formatSpeed(resolvedSpeed)}</strong>
+                </div>
+                <div className="settings-recording-meta-item">
+                  <span>创建时间</span>
+                  <strong>{String(selectedRecording.created_at_label || '--')}</strong>
+                </div>
+                <div className="settings-recording-meta-item">
+                  <span>结束时间</span>
+                  <strong>{String(selectedRecording.finished_at_label || '--')}</strong>
+                </div>
+                <div className="settings-recording-meta-item">
+                  <span>站点数</span>
+                  <strong>{Number(selectedRecording.stop_count || 0)}</strong>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           {c.playTourRecordingEnabled ? (
             <div className="settings-actions">
               <button type="button" className="settings-action-btn" onClick={() => c.onRenameSelectedTourRecording && c.onRenameSelectedTourRecording()}>
@@ -336,7 +389,6 @@ function ArchiveTab({ controlBarProps, ttsMode, modelscopeVoice }) {
     </>
   );
 }
-
 function AsrTab({ controlBarProps }) {
   const c = controlBarProps || {};
   return (
