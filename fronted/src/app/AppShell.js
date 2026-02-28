@@ -567,6 +567,22 @@ function AppShell() {
   };
   */
 
+  const clearExhibitChatSessions = async () => {
+    const confirmed = window.confirm('\u786e\u8ba4\u5220\u9664\u201c\u5c55\u5385\u804a\u5929\u201d\u7684\u6240\u6709 session \u5417\uff1f');
+    if (!confirmed) return;
+    try {
+      const res = await fetchJson('/api/ragflow/chats/clear_sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_name: '\u5c55\u5385\u804a\u5929' }),
+      });
+      const deleted = Number((res && res.deleted) || 0);
+      alert(`${deleted} \u4e2a session \u5df2\u5220\u9664`);
+    } catch (e) {
+      alert(String((e && e.message) || e || 'clear_chat_sessions_failed'));
+    }
+  };
+
   const { interruptCurrentRun, askQuestion } = useAskWorkflowManager({
     baseUrl: backendBase,
     getIsLoading: () => isLoading,
@@ -1073,6 +1089,7 @@ function AppShell() {
               onQuickSummary={onQuickSummary}
               onPrevStop={prevTourStop}
               onNextStop={nextTourStop}
+              onClearExhibitChatSessions={clearExhibitChatSessions}
             />
           </div>
 

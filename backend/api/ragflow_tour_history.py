@@ -20,6 +20,14 @@ def create_blueprint(deps):
     def ragflow_list_chats():
         return jsonify(deps.ragflow_service.list_chats())
 
+    @bp.route("/api/ragflow/chats/clear_sessions", methods=["POST"])
+    def ragflow_clear_chat_sessions():
+        data = request.get_json(silent=True) or {}
+        chat_name = str((data.get("chat_name") if isinstance(data, dict) else "") or "").strip()
+        result = deps.ragflow_service.clear_chat_sessions(chat_name)
+        status = 200 if result.get("ok") else 500
+        return jsonify(result), status
+
     @bp.route("/api/ragflow/agents", methods=["GET"])
     def ragflow_list_agents():
         res = deps.ragflow_service.list_agents()

@@ -75,6 +75,37 @@ class RagflowService:
         self._sessions = {}
         self._lock = threading.Lock()
 
+    def _api_request(self, *, method: str, path: str, json_body: dict | None = None, timeout: int = 15):
+        cfg = self._last_loaded_cfg if self._last_loaded_cfg is not None else self.load_config()
+        api_key = (cfg.get("api_key") or "").strip()
+        base_url = (cfg.get("base_url") or "http://127.0.0.1").strip().rstrip("/")
+        if not api_key or api_key in ["YOUR_RAGFLOW_API_KEY_HERE", "your_api_key_here"]:
+            raise RuntimeError("ragflow_api_key_invalid")
+        url = f"{base_url}{path}"
+        headers = {"Authorization": f"Bearer {api_key}"}
+        resp = requests.request(method=method.upper(), url=url, headers=headers, json=json_body, timeout=timeout)
+        resp.raise_for_status()
+        if not resp.content:
+            return {}
+        try:
+            return resp.json()
+        except Exception:
+            return {"ok": True, "text": resp.text}
+
+    @staticmethod
+    def _extract_data_list(payload):
+        if isinstance(payload, dict):
+            data = payload.get("data")
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict):
+                docs = data.get("docs")
+                if isinstance(docs, list):
+                    return docs
+        if isinstance(payload, list):
+            return payload
+        return []
+
     def load_config(self, *, force: bool = False) -> dict:
         """
         Load JSON config from disk with a best-effort mtime cache.
@@ -193,3 +224,75 @@ class RagflowService:
         with self._lock:
             self._sessions[name] = sess
         return sess
+
+    def clear_chat_sessions(self, chat_name: str) -> dict:
+        if not self.client:
+            return {"ok": False, "deleted": 0, "chat_name": str(chat_name or ""), "error": "ragflow_not_initialized"}
+
+        name = str(chat_name or self.default_chat_name or "").strip()
+        if not name:
+            return {"ok": False, "deleted": 0, "chat_name": "", "error": "chat_name_required"}
+
+        chat = find_chat_by_name(self.client, name)
+        if not chat:
+            with self._lock:
+                self._sessions.pop(name, None)
+            return {"ok": True, "deleted": 0, "chat_name": name, "session_ids": [], "chat_found": False}
+
+        chat_id = getattr(chat, "id", None) if not isinstance(chat, dict) else chat.get("id")
+        if not chat_id:
+            return {"ok": False, "deleted": 0, "chat_name": name, "error": "chat_id_missing"}
+
+        payload = self._api_request(method="GET", path=f"/api/v1/chats/{chat_id}/sessions")
+        session_items = self._extract_data_list(payload)
+        session_ids: list[str] = []
+        for item in session_items:
+            session_id = None
+            if isinstance(item, dict):
+                session_id = item.get("id") or item.get("session_id")
+            else:
+                session_id = getattr(item, "id", None)
+            sid = str(session_id or "").strip()
+            if not sid:
+                continue
+            session_ids.append(sid)
+
+        delete_payload = {"ids": session_ids} if session_ids else None
+        delete_resp = self._api_request(method="DELETE", path=f"/api/v1/chats/{chat_id}/sessions", json_body=delete_payload)
+
+        with self._lock:
+            self._sessions.pop(name, None)
+
+        if isinstance(delete_resp, dict) and delete_resp.get("code") not in (None, 0):
+            self._logger.warning(
+                "ragflow_clear_chat_sessions_failed chat=%s chat_id=%s total=%s resp=%s",
+                name,
+                chat_id,
+                len(session_items),
+                delete_resp,
+            )
+            return {
+                "ok": False,
+                "deleted": 0,
+                "chat_name": name,
+                "chat_id": str(chat_id),
+                "chat_found": True,
+                "session_ids": session_ids,
+                "error": "ragflow_delete_session_failed",
+                "upstream": delete_resp,
+            }
+
+        self._logger.info(
+            "ragflow_clear_chat_sessions chat=%s chat_id=%s deleted=%s",
+            name,
+            chat_id,
+            len(session_ids),
+        )
+        return {
+            "ok": True,
+            "deleted": len(session_ids),
+            "chat_name": name,
+            "chat_id": str(chat_id),
+            "chat_found": True,
+            "session_ids": session_ids,
+        }

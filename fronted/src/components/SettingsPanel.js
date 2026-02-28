@@ -165,16 +165,23 @@ function TtsTab({ controlBarProps, ttsMode, modelscopeVoice, onChangeModelscopeV
   );
 }
 
-function DebugTab({ showHistoryPanel, onChangeShowHistoryPanel, showDebugPanel, onChangeShowDebugPanel, controlBarProps }) {
+function DebugTab({
+  showHistoryPanel,
+  onChangeShowHistoryPanel,
+  showDebugPanel,
+  onChangeShowDebugPanel,
+  controlBarProps,
+  onClearExhibitChatSessions,
+}) {
   const c = controlBarProps || {};
   const stateText =
     c.tourState && c.tourState.mode
-      ? `${c.tourState.mode}${Number.isFinite(c.tourState.stopIndex) ? ` / 第${Number(c.tourState.stopIndex) + 1}站` : ''}`
+      ? `${c.tourState.mode}${Number.isFinite(c.tourState.stopIndex) ? ` / \u7b2c${Number(c.tourState.stopIndex) + 1}\u7ad9` : ''}`
       : 'unknown';
 
   return (
     <>
-      <SettingsGroup title="面板开关">
+      <SettingsGroup title={'\u9762\u677f\u5f00\u5173'}>
         <SettingsToggles
           showHistoryPanel={showHistoryPanel}
           onChangeShowHistoryPanel={onChangeShowHistoryPanel}
@@ -182,16 +189,23 @@ function DebugTab({ showHistoryPanel, onChangeShowHistoryPanel, showDebugPanel, 
           onChangeShowDebugPanel={onChangeShowDebugPanel}
         />
       </SettingsGroup>
-      <SettingsGroup title="状态快照">
+      <SettingsGroup title={'\u72b6\u6001\u5feb\u7167'}>
         <div className="settings-form">
           <div className="settings-field">
-            <span>讲解状态机</span>
+            <span>{'\u8bb2\u89e3\u72b6\u6001\u673a'}</span>
             <div>{stateText}</div>
           </div>
           <div className="settings-field">
-            <span>当前意图</span>
+            <span>{'\u5f53\u524d\u610f\u56fe'}</span>
             <div>{(c.currentIntent && c.currentIntent.intent) || 'none'}</div>
           </div>
+        </div>
+      </SettingsGroup>
+      <SettingsGroup title="Session">
+        <div className="settings-actions">
+          <button type="button" className="settings-action-btn settings-action-btn-danger" onClick={onClearExhibitChatSessions}>
+            {'\u5220\u9664\u5c55\u5385\u804a\u5929\u6240\u6709 session'}
+          </button>
         </div>
       </SettingsGroup>
     </>
@@ -602,6 +616,7 @@ export function SettingsPanel({
   onQuickSummary,
   onPrevStop,
   onNextStop,
+  onClearExhibitChatSessions,
 }) {
   void [groupMode, speakerName, onChangeSpeakerName, questionPriority, onChangeQuestionPriority];
   const [activeTab, setActiveTab] = useState(() => {
@@ -651,6 +666,7 @@ export function SettingsPanel({
           showDebugPanel={showDebugPanel}
           onChangeShowDebugPanel={onChangeShowDebugPanel}
           controlBarProps={controlBarProps}
+          onClearExhibitChatSessions={onClearExhibitChatSessions}
         />
       );
     }
@@ -689,6 +705,7 @@ export function SettingsPanel({
     onQuickSummary,
     onPrevStop,
     onNextStop,
+    onClearExhibitChatSessions,
     tourModePanelProps,
   ]);
 
