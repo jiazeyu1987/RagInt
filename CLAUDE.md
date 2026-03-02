@@ -30,25 +30,26 @@ backend/
 ├── __main__.py              # Entry point for `python -m backend`
 ├── app.py                   # Flask app factory (create_app)
 ├── app_deps.py              # Dependency injection container
+├── bootstrap.py             # Dependency building, blueprint registration, VoiceKit setup
 ├── api/                     # Flask blueprints (API endpoints)
-│   ├── speech.py           # /api/ask, /api/speech_to_text, /api/cancel
-│   ├── tts.py              # /api/text_to_speech, /api/text_to_speech_stream
+│   ├── speech.py           # Core speech pipeline (ASR → RAG → TTS)
+│   ├── speech_*.py         # Speech pipeline modules (pipeline, handlers, request, cancel, etc.)
+│   ├── tts.py              # TTS streaming and non-streaming endpoints
 │   ├── system.py           # /health, /api/status, /api/events
 │   ├── tour_control.py     # /api/tour/plan, /api/tour/stops, /api/tour/meta
 │   ├── tour_command.py     # /api/tour/command (parse and execute)
 │   ├── ragflow_tour_history.py  # /api/ragflow/history
-│   ├── ops.py              # /api/ops/* (operations, selling points)
+│   ├── ops.py              # /api/ops/* (operations data)
 │   ├── selling_points.py   # /api/selling_points
-│   ├── wake_word.py        # /api/wake_word
-│   ├── breakpoint.py       # /api/breakpoint
-│   ├── recordings.py       # /api/recordings
-│   └── offline.py          # /api/offline/*
+│   ├── breakpoint.py       # /api/breakpoint (resume points)
+│   ├── recordings.py       # /api/recordings (tour recordings)
+│   ├── offline.py          # /api/offline/* (offline scripts/audio)
+│   ├── qa_audio_cache.py   # /api/qa_audio_cache (cached Q&A audio)
+│   └── request_context.py  # Request context management
 ├── services/
-│   ├── asr_service.py      # ASRService (FunASR, DashScope)
 │   ├── tts_service.py      # TTSSvc (orchestrates TTS providers)
-│   ├── tts/
-│   │   ├── registry.py     # Provider routing (sovtts1/2, edge, sapi, bailian)
-│   │   └── providers/      # Individual TTS implementations
+│   ├── edge_tts_service.py # Edge TTS provider
+│   ├── sapi_tts.py         # Windows SAPI TTS
 │   ├── ragflow_service.py  # RagflowService (chat mode)
 │   ├── ragflow_agent_service.py  # RagflowAgentService (agent mode)
 │   ├── intent_service.py   # Intent classification
@@ -60,21 +61,15 @@ backend/
 │   ├── request_registry.py # RequestRegistry (cancellation, rate limiting)
 │   ├── selling_points_store.py  # Selling points per stop
 │   ├── ops_store.py        # Operations data store
-│   ├── wake_word_service.py  # Wake word detection
 │   ├── recording_store.py  # Tour recording storage
 │   ├── breakpoint_store.py # Breakpoint (resume) storage
 │   ├── config_service.py   # Config loading from ragflow_config.json
 │   ├── env_overrides.py    # Environment variable overrides
 │   ├── safety_filter.py    # Sensitive word filtering
-│   └── question_normalizer.py  # Text normalization
-├── orchestrators/
-│   ├── conversation_orchestrator.py  # Main ask workflow (streaming)
-│   └── guide_prompt.py     # Tour guide prompt generation
-├── infra/
-│   ├── cancellation.py     # CancellationRegistry, cancel events
-│   ├── event_store.py      # EventStore, RedisEventStore (metrics/timeline)
-│   ├── ask_timings.py      # AskTimings (performance tracking)
-│   └── redis_client.py     # Redis client wrapper
+│   ├── question_normalizer.py  # Text normalization
+│   ├── audio_utils.py      # Audio processing utilities
+│   ├── offline_script_service.py  # Offline script handling
+│   └── qa_audio_*.py       # Q&A audio cache pipeline/matcher/utils
 └── data/
     └── qa_history.db        # SQLite database
 ```
@@ -215,7 +210,18 @@ python cv_stream.py       # Streaming
 
 ### Testing
 
-**Note:** The `test/` directory exists but is currently empty.
+**Frontend tests** (React Testing Library):
+```bash
+cd fronted
+npm test
+```
+
+Test files exist for:
+- `managers/TourController.test.js` - Tour navigation logic tests
+- `managers/TourPipelineManager.test.js` - Tour prefetch pipeline tests
+- `managers/RunCoordinator.test.js` - Run coordination logic tests
+
+**Note:** No backend test directory exists currently.
 
 ## Configuration
 
@@ -282,40 +288,42 @@ The Flask backend provides these main endpoints:
 | `/api/ragflow/history` | GET | RAGFlow conversation history |
 | `/api/breakpoint` | GET/POST/DELETE | Tour breakpoints (resume) |
 | `/api/recordings` | GET/POST | Tour recordings |
-| `/api/office/script` | GET/POST | Offline scripts |
+| `/api/offline/script` | GET/POST | Offline scripts |
 | `/api/offline/audio` | GET | Offline audio segments |
-| `/api/wake_word` | POST | Detect wake word in audio |
+| `/api/qa_audio_cache/*` | GET/POST | Q&A audio cache management |
 | `/api/ops/*` | GET | Operations data |
 | `/api/status` | GET | Request status & timing metrics |
 | `/api/events` | GET | Request events/logs (SSE) |
 | `/api/client_events` | POST | Client-side event ingestion |
+| `/api/config` | GET | RAGFlow config cache |
 
 ### Advanced Backend Features
 
+- **Speech Pipeline** (`speech.py` + `speech_*.py`): Modular ASR → RAG → TTS pipeline with cancellation, telemetry, and recording support
 - **Cancellation Registry** (`request_registry.py`): Track and cancel active requests by `client_id` or `request_id`
-- **Event Store** (`event_store.py`): Timeline tracking for performance monitoring (in-memory or Redis)
-- **Rate Limiting**: Per-client rate limits for ASR (6 req/3s) and ASK endpoints
-- **Text Cleaning**: Semantic chunking with TTS buffer optimization (in `ragflow_demo/text_cleaner.py`)
+- **Rate Limiting**: Per-client rate limits for ASR and ASK endpoints
+- **Text Cleaning**: Semantic chunking with TTS buffer optimization (`ragflow_demo/text_cleaner.py`)
 - **Intent Classification** (`intent_service.py`): Detect question types (greeting, tour_control, etc.)
 - **History Management** (`history_store.py`): SQLite-based Q&A history with frequency tracking
 - **Safety Filter** (`safety_filter.py`): Sensitive word filtering
-- **Guide Prompt** (`guide_prompt.py`): Tour guide prompt generation with style and duration controls
+- **Q&A Audio Cache** (`qa_audio_cache_*.py`): Audio caching for frequently asked questions
+- **Tour Planning** (`tour_planner.py`): Multi-zone, multi-profile tour route planning with duration control
 
 ## Frontend Features
 
-- **Dual Input**: Voice recording (with VAD) and text input
+- **Dual Input**: Voice recording (with VAD via VoiceKit) and text input
 - **Dual Output**: Text display and TTS audio playback
 - **Tour Mode**: Guided exhibition tour with 10 configurable stops
-- **Group Mode**: Question queue for multiple speakers
 - **Agent Mode**: RAGFlow agent vs. chat conversation selection
 - **TTS Queue**: Pre-generation and buffering for smooth playback
 - **Debug Panel**: Real-time timing metrics and event logs
-- **Wake Word**: Hands-free voice activation
 - **Tour Recording**: Record and replay tour guides
 - **Selling Points**: Display key selling points per stop
 - **Offline Scripts**: Pre-recorded audio script playback
 - **Responsive Design**: Desktop and mobile support
 - **Local Storage**: Persistent settings (TTS mode, tour preferences)
+- **Breakpoint Sync**: Resume tour from interruption point
+- **Q&A Audio Cache**: Panel for managing cached audio responses
 
 ### TTS Manager (Frontend)
 
@@ -358,15 +366,16 @@ RagflowAgentService → RAGFlow SDK → streaming SSE → Frontend (text chunks)
 ### 3. Text → TTS Pipeline
 ```
 Frontend (text segment) → /api/text_to_speech_stream → TTSSvc.stream() →
-registry.stream_tts() → provider selection → streaming audio → Frontend playback
+TTS providers (edge_tts_service.py, sapi_tts.py, etc.) → streaming audio → Frontend playback
 ```
 
-**Provider routing** (`tts/registry.py`):
-- `sovtts1`: GPT-SoVITS V1 (api.py, port 9882)
-- `sovtts2`: GPT-SoVITS V2 (api_v2.py, port 9880)
+**TTS Providers** (configured in `tts_service.py`):
+- `local` / `sovtts2`: GPT-SoVITS V2 (port 9880)
+- `sovtts1`: GPT-SoVITS V1 (port 9882)
 - `edge`: Microsoft Edge TTS (zh-CN-XiaoxiaoNeural)
 - `sapi`: Windows SAPI
 - `bailian`: Alibaba DashScope (cosyvoice-v3-plus)
+- `modelscope`: ModelScope TTS (default)
 
 ### 4. Tour Prefetch Pipeline
 ```
@@ -545,16 +554,16 @@ All services are configured via `ragflow_demo/ragflow_config.json`:
 
 ### Modifying TTS Providers
 
-TTS providers are implemented in `backend/services/tts/providers/`:
-- `local_gpt_sovits.py`: GPT-SoVITS V1/V2
-- `edge.py`: Microsoft Edge TTS
-- `sapi.py`: Windows SAPI
-- `bailian.py`: Alibaba DashScope
+TTS providers are implemented in `backend/services/`:
+- `tts_service.py`: Main TTS orchestration service
+- `edge_tts_service.py`: Microsoft Edge TTS
+- `sapi_tts.py`: Windows SAPI
+- GPT-SoVITS providers configured via `ragflow_config.json` (local, sovtts1, sovtts2)
 
 To add a new provider:
-1. Create provider function returning audio generator
-2. Add routing logic in `tts/registry.py:stream_tts()`
-3. Update config schema in `ragflow_config.json`
+1. Create provider service/module in `backend/services/`
+2. Update `tts_service.py` to route to new provider
+3. Add configuration section in `ragflow_config.json`
 
 ## File Naming Convention
 
@@ -606,19 +615,18 @@ To add a new provider:
 
 ## Known Limitations
 
-- Test directory is empty (no automated tests)
+- Limited automated tests (frontend has some test files for managers)
 - No production deployment configuration
 - Simple error handling (errors exposed directly)
 - Limited monitoring/metrics collection
 - No authentication/authorization
-- No fixed Q&A pairs implementation yet (planned for 100% accuracy on common questions)
+- Q&A audio cache classifier needs proper setup
 
 ## Recent Enhancements (from git log)
 
 Based on recent commits:
 - Tour recording and playback functionality
 - Breakpoint (resume) support for tour interruption
-- Wake word detection for hands-free activation
 - Selling points per tour stop
 - Offline script playback
 - Tour command parsing (e.g., "跳到第3个展厅")
@@ -626,3 +634,4 @@ Based on recent commits:
 - Multiple TTS provider support with fallback
 - Improved interrupt handling and cancellation
 - Tour templates and customizable stops
+- Q&A history deletion optimizations
