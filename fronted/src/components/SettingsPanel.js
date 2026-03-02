@@ -474,6 +474,18 @@ function ModeTab({ controlBarProps }) {
             </select>
           </label>
         ) : null}
+
+        <label className="settings-field">
+          <span>全局前置提示词</span>
+          <textarea
+            className="settings-textarea"
+            rows={4}
+            value={String(c.globalPromptPrefix || '')}
+            onChange={(e) => c.onChangeGlobalPromptPrefix && c.onChangeGlobalPromptPrefix(e.target.value)}
+            placeholder="例如：这是一份展厅讲解稿撰写任务，不是导航或指路请求。请生成用于语音播报的讲解稿正文，不要提供任何路线指引。"
+          />
+          <span className="settings-field-hint">该提示词会附加到所有展厅提示词的最前面，用于覆盖系统默认的导航意图</span>
+        </label>
       </div>
     </SettingsGroup>
   );

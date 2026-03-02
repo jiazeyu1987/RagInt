@@ -383,6 +383,11 @@ export function useAppSettings() {
     deserialize: (raw) => String(raw) === '1',
   });
 
+  const [globalPromptPrefix, setGlobalPromptPrefix] = useLocalStorageState('globalPromptPrefix', '', {
+    serialize: (v) => String(v || ''),
+    deserialize: (raw) => String(raw || ''),
+  });
+
   return {
     ttsMode,
     setTtsMode,
@@ -450,5 +455,7 @@ export function useAppSettings() {
     setWakeWordCooldownMs,
     wakeWordStrict,
     setWakeWordStrict,
+    globalPromptPrefix,
+    setGlobalPromptPrefix,
   };
 }

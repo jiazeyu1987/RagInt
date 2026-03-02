@@ -119,6 +119,8 @@ export function useControlBarProps({
   setTourSelectedStopIndex,
   jumpTourStop,
   resetTour,
+  globalPromptPrefix,
+  setGlobalPromptPrefix,
 } = {}) {
   const onChangeTourRecordingEnabled = useCallback(
     (checked) => {
@@ -392,6 +394,8 @@ export function useControlBarProps({
       onChangeTourSelectedStopIndex: setTourSelectedStopIndex,
       onJump: onJumpSelectedStop,
       onReset: resetTour,
+      globalPromptPrefix,
+      onChangeGlobalPromptPrefix: setGlobalPromptPrefix,
     }),
     [
       agentOptions,
@@ -467,6 +471,8 @@ export function useControlBarProps({
       onChangeTourStopPromptOverride,
       onSaveTourStopPromptOverrides,
       onClearTourStopPromptOverrides,
+      globalPromptPrefix,
+      setGlobalPromptPrefix,
     ]
   );
 }

@@ -231,6 +231,7 @@ export class AskWorkflowManager {
       selectedTourRecordingIdRef,
       activeTourRecordingIdRef,
       finishTourRecordingArchive,
+      globalPromptPrefixRef,
     } = this.deps;
 
     const options = opts && typeof opts === 'object' ? opts : {};
@@ -607,6 +608,7 @@ export class AskWorkflowManager {
             continuous: !!options.continuous,
             audience_profile: String((audienceProfileRef && audienceProfileRef.current) || ''),
             style: String((guideStyleRef && guideStyleRef.current) || 'friendly'),
+            prompt_prefix: String((globalPromptPrefixRef && globalPromptPrefixRef.current) || ''),
           },
         }),
         signal: abortController.signal,

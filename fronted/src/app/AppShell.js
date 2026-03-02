@@ -130,6 +130,8 @@ function AppShell() {
     setWakeWordCooldownMs,
     wakeWordStrict,
     setWakeWordStrict,
+    globalPromptPrefix,
+    setGlobalPromptPrefix,
   } = useAppSettings();
   const [chatOptions, setChatOptions] = useState([]);
   const [selectedChat, setSelectedChat] = useState('展厅聊天');
@@ -250,6 +252,7 @@ function AppShell() {
   const groupModeRef = useRef(groupMode);
   const queueRef = useRef([]);
   const lastSpeakerRef = useRef('');
+  const globalPromptPrefixRef = useRef(globalPromptPrefix);
 
   const interruptEpochRef = useRef(0);
   const interruptManagerRef = useRef(null);
@@ -445,6 +448,8 @@ function AppShell() {
     groupModeRef,
     questionQueue,
     queueRef,
+    globalPromptPrefix,
+    globalPromptPrefixRef,
   });
 
   const getTourStopName = (index) => {
@@ -637,6 +642,7 @@ function AppShell() {
     getHistorySort: () => historySort,
     fetchHistory,
     runCoordinatorRef,
+    globalPromptPrefixRef,
   });
 
   const {
@@ -929,6 +935,8 @@ function AppShell() {
     setTourSelectedStopIndex,
     jumpTourStop,
     resetTour,
+    globalPromptPrefix,
+    setGlobalPromptPrefix,
   });
 
   const tourModePanelProps = useTourModePanelProps({
