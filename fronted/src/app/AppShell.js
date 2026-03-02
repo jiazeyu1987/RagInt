@@ -695,6 +695,8 @@ function AppShell() {
       askQuestion,
       getTourPipeline,
       interruptCurrentRun,
+      useAgentModeRef,
+      selectedChatRef,
       setTourState,
       getTourStopName,
       setAnswer,

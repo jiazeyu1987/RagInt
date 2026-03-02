@@ -28,6 +28,14 @@ def create_blueprint(deps):
         status = 200 if result.get("ok") else 500
         return jsonify(result), status
 
+    @bp.route("/api/ragflow/chats/new_session", methods=["POST"])
+    def ragflow_create_chat_session():
+        data = request.get_json(silent=True) or {}
+        chat_name = str((data.get("chat_name") if isinstance(data, dict) else "") or "").strip()
+        result = deps.ragflow_service.create_new_session(chat_name)
+        status = 200 if result.get("ok") else 500
+        return jsonify(result), status
+
     @bp.route("/api/ragflow/agents", methods=["GET"])
     def ragflow_list_agents():
         res = deps.ragflow_service.list_agents()

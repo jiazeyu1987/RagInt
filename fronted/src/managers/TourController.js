@@ -170,6 +170,9 @@ export class TourController {
       setTourStops,
       activeTourRecordingIdRef,
       interruptCurrentRun,
+      fetchJson,
+      useAgentModeRef,
+      selectedChatRef,
     } = this.deps;
     this._ensurePreferredAudioContext();
     try {
@@ -185,6 +188,21 @@ export class TourController {
     } catch (_) {
       // ignore
     }
+
+    try {
+      const useAgentMode = !!(useAgentModeRef && useAgentModeRef.current);
+      const chatName = String((selectedChatRef && selectedChatRef.current) || '').trim();
+      if (!useAgentMode && chatName && typeof fetchJson === 'function') {
+        await fetchJson('/api/ragflow/chats/new_session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_name: chatName }),
+        });
+      }
+    } catch (_) {
+      // ignore session bootstrap failure and continue tour flow
+    }
+    if (!allow()) return;
 
     let plannedStops = null;
     try {

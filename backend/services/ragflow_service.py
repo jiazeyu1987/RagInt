@@ -21,6 +21,14 @@ def _ragflow_chat_to_dict(chat):
     return {"id": None, "name": str(chat)}
 
 
+def _ragflow_session_to_dict(session):
+    if session is None:
+        return None
+    if isinstance(session, dict):
+        return {"id": session.get("id"), "name": session.get("name") or session.get("title")}
+    return {"id": getattr(session, "id", None), "name": getattr(session, "name", None) or getattr(session, "title", None)}
+
+
 def find_dataset_by_name(client, dataset_name):
     if not dataset_name:
         return None
@@ -224,6 +232,30 @@ class RagflowService:
         with self._lock:
             self._sessions[name] = sess
         return sess
+
+    def create_new_session(self, chat_name: str) -> dict:
+        if not self.client:
+            return {"ok": False, "chat_name": str(chat_name or ""), "error": "ragflow_not_initialized"}
+
+        name = str(chat_name or self.default_chat_name or "").strip()
+        if not name:
+            return {"ok": False, "chat_name": "", "error": "chat_name_required"}
+
+        chat = find_chat_by_name(self.client, name)
+        if not chat:
+            chat = self.client.create_chat(name=name, dataset_ids=[self.dataset_id] if self.dataset_id else [])
+
+        sess = chat.create_session("Chat Session")
+        with self._lock:
+            self._sessions[name] = sess
+
+        sess_info = _ragflow_session_to_dict(sess) or {}
+        return {
+            "ok": True,
+            "chat_name": name,
+            "session_id": sess_info.get("id"),
+            "session_name": sess_info.get("name"),
+        }
 
     def clear_chat_sessions(self, chat_name: str) -> dict:
         if not self.client:

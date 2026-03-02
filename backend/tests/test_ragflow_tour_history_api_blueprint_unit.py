@@ -7,7 +7,8 @@ from backend.api.ragflow_tour_history import create_blueprint
 
 class _RagflowService:
     def __init__(self):
-        self.calls: list[str] = []
+        self.clear_calls: list[str] = []
+        self.new_session_calls: list[str] = []
 
     def list_chats(self):
         return {"chats": [], "default": None}
@@ -16,8 +17,12 @@ class _RagflowService:
         return {"agents": [], "default": None}
 
     def clear_chat_sessions(self, chat_name: str):
-        self.calls.append(str(chat_name))
+        self.clear_calls.append(str(chat_name))
         return {"ok": True, "deleted": 3, "chat_name": str(chat_name)}
+
+    def create_new_session(self, chat_name: str):
+        self.new_session_calls.append(str(chat_name))
+        return {"ok": True, "chat_name": str(chat_name), "session_id": "s_new"}
 
 
 class _Logger:
@@ -72,3 +77,13 @@ def test_ragflow_clear_chat_sessions_route():
     assert data["ok"] is True
     assert data["deleted"] == 3
     assert data["chat_name"] == "展厅聊天"
+
+
+def test_ragflow_create_chat_session_route():
+    client = _app().test_client()
+    resp = client.post("/api/ragflow/chats/new_session", json={"chat_name": "展厅聊天"})
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["chat_name"] == "展厅聊天"
+    assert data["session_id"] == "s_new"

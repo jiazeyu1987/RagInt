@@ -108,23 +108,17 @@ def _maybe_stream_fast_intent(
     safety_block_msg: str,
     logger,
 ):
-    if intent.intent not in ("direction", "complaint", "chitchat") or float(intent.confidence) < 0.78:
+    if intent.intent not in ("complaint", "chitchat") or float(intent.confidence) < 0.78:
         return None
 
-    if intent.intent == "direction":
-        fast_answer = (
-            "我可以帮你指路～\n"
-            "请告诉我你要去的目标位置（例如：某展位/厕所/出口/前台），以及你现在大概在什么位置（例如：入口/某展区）。\n"
-            "我会给你最短路线，并提示沿途的明显标识。"
-        )
-    elif intent.intent == "complaint":
+    if intent.intent == "complaint":
         fast_answer = (
             "非常抱歉给你带来不好的体验。\n"
-            "为了尽快帮你解决，请告诉我：发生了什么、在什么位置/哪个环节、以及你希望的处理方式。\n"
+            "为了尽快帮你解决，请告诉我：发生了什么、在什么位置、哪个环节，以及你希望的处理方式。\n"
             "如果需要，我也可以引导你到服务台或联系现场工作人员。"
         )
     else:
-        fast_answer = "你好！我在～你可以直接问我展厅/产品相关问题，或说“开始讲解”。"
+        fast_answer = "你好！我在。你可以直接问我展厅、产品相关问题，或说“开始讲解”。"
 
     fast_answer = _trim_answer_for_constraints(
         fast_answer, apply_qa_constraints=apply_qa_constraints, qa_max_answer_chars=qa_max_answer_chars

@@ -10,6 +10,9 @@ class _Chat:
         self.id = chat_id
         self.name = name
 
+    def create_session(self, name: str):
+        return {"id": f"{self.id}_session_new", "name": name}
+
 
 class _Client:
     def list_chats(self):
@@ -47,3 +50,16 @@ def test_clear_chat_sessions_uses_bulk_delete_endpoint():
         ("GET", "/api/v1/chats/chat_1/sessions", None),
         ("DELETE", "/api/v1/chats/chat_1/sessions", {"ids": ["s1", "s2"]}),
     ]
+
+
+def test_create_new_session_replaces_cached_session():
+    svc = RagflowService(Path("dummy.json"), logger=_Logger())
+    svc.client = _Client()
+    svc._sessions["展厅聊天"] = {"id": "old_session"}
+
+    result = svc.create_new_session("展厅聊天")
+
+    assert result["ok"] is True
+    assert result["chat_name"] == "展厅聊天"
+    assert result["session_id"] == "chat_1_session_new"
+    assert svc._sessions["展厅聊天"]["id"] == "chat_1_session_new"
