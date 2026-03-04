@@ -4,6 +4,7 @@ import time
 
 from flask import Blueprint, Response, jsonify, request
 
+from backend.api.http_responses import bad_request_json
 from backend.api.ragflow_config_cache import get_ragflow_config
 from backend.api.request_validators import json_body_dict
 from backend.api.speech_cancel import handle_cancel_request
@@ -25,6 +26,12 @@ from backend.api.speech_pipeline import (
     run_request_middlewares,
 )
 from backend.api.speech_request import parse_ask_request
+from backend.services.asr_text_filter import (
+    DEFAULT_ASR_FILTER_CHAT_NAME,
+    build_asr_filter_prompt,
+    parse_asr_filter_response,
+    stringify_domain_terms,
+)
 
 
 def create_blueprint(deps):
@@ -37,6 +44,65 @@ def create_blueprint(deps):
 
     # NOTE: `/api/speech_to_text` (upload ASR) has been removed.
     # All realtime ASR is handled via VoiceKit WebSocket: `/voicekit/ws/asr`.
+
+    @bp.route("/api/asr/filter", methods=["POST"])
+    def api_asr_filter():
+        data = json_body_dict(request, silent=False)
+        text = str(data.get("text") or "").strip()
+        if not text:
+            return bad_request_json(error="text_required")
+
+        prompt_template = str(data.get("prompt") or "").strip()
+        if not prompt_template:
+            return jsonify(
+                {
+                    "ok": True,
+                    "text": text,
+                    "original_text": text,
+                    "filtered": False,
+                    "used_fallback": True,
+                    "reason": "prompt_empty",
+                }
+            )
+
+        chat_name = str(data.get("chat_name") or "").strip() or DEFAULT_ASR_FILTER_CHAT_NAME
+        domain_terms_text = stringify_domain_terms(data.get("domain_terms"))
+        prompt = build_asr_filter_prompt(
+            prompt_template=prompt_template,
+            asr_text=text,
+            domain_terms_text=domain_terms_text,
+        )
+
+        try:
+            raw_output = deps.ragflow_service.ask_chat(
+                chat_name=chat_name,
+                question=prompt,
+            )
+            parsed_text = parse_asr_filter_response(raw_text=raw_output, fallback_text="")
+            corrected_text = parsed_text or text
+            return jsonify(
+                {
+                    "ok": True,
+                    "text": corrected_text,
+                    "original_text": text,
+                    "filtered": corrected_text != text,
+                    "used_fallback": not bool(parsed_text),
+                    "chat_name": chat_name,
+                }
+            )
+        except Exception as e:
+            deps.logger.warning("asr_filter_failed chat=%s err=%s", chat_name, e, exc_info=True)
+            return jsonify(
+                {
+                    "ok": True,
+                    "text": text,
+                    "original_text": text,
+                    "filtered": False,
+                    "used_fallback": True,
+                    "chat_name": chat_name,
+                    "error": str(e),
+                }
+            )
 
     @bp.route("/api/ask", methods=["POST"])
     def ask_question():

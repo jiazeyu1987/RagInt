@@ -4,7 +4,12 @@ import {
   decodeAndConvertToWav16kMono as decodeAndConvertToWav16kMonoExt,
   unlockAudio as unlockAudioExt,
 } from '../audio/ttsAudio';
-import { cancelRequest as cancelBackendRequestExt, emitClientEvent as emitClientEventExt, fetchJson } from '../api/backendClient';
+import {
+  cancelRequest as cancelBackendRequestExt,
+  emitClientEvent as emitClientEventExt,
+  fetchJson,
+  filterAsrText as filterAsrTextExt,
+} from '../api/backendClient';
 import { InterruptManager } from '../managers/InterruptManager';
 import { createTtsOnStopIndexChange } from '../managers/createTtsOnStopIndexChange';
 import { createOrGetTtsManager } from '../managers/createTtsManager';
@@ -38,6 +43,7 @@ import { useUiActions } from '../hooks/useUiActions';
 import { useTourRecordingOptions } from '../hooks/useTourRecordingOptions';
 import { useTourRecordings } from '../hooks/useTourRecordings';
 import { getBackendBase } from '../config/backend';
+import { WAKE_HOLD_MS } from '../config/features';
 import { parseTourCommand } from '../api/tourCommand';
 
 const TOUR_BTN_MODE = {
@@ -57,9 +63,49 @@ function reduceTourButtonState(state, event) {
   return state;
 }
 
+function parseWakeWordList(raw) {
+  return String(raw || '')
+    .split(/[,\uFF0C;]/g)
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
+}
+
+function buildAsrFilterDomainTerms({ domainTermsText, wakeWordText }) {
+  const terms = String(domainTermsText || '').trim();
+  const wakeWords = parseWakeWordList(wakeWordText);
+  if (!wakeWords.length) return terms;
+  return [terms, wakeWords.join(',')].filter(Boolean).join(',');
+}
+
+function resolveWakeWordMatch(text, wakeWords, strict) {
+  const source = String(text || '').trim();
+  if (!source) return null;
+  for (const rawWord of wakeWords || []) {
+    const word = String(rawWord || '').trim();
+    if (!word) continue;
+    const idx = source.indexOf(word);
+    if (idx < 0) continue;
+    if (strict) {
+      if (idx === 0) return { word, index: idx };
+      continue;
+    }
+    if (idx <= 2) return { word, index: idx };
+  }
+  return null;
+}
+
+function stripWakeWordPrefix(text, match) {
+  const source = String(text || '').trim();
+  if (!source) return '';
+  if (!match || !match.word) return source;
+  const start = Math.max(0, Number(match.index) || 0);
+  const end = start + String(match.word).length;
+  return source.slice(end).replace(/^[\s，,。！？!?:：;；、-]+/, '').trim();
+}
+
 function AppShell() {
   const backendBase = getBackendBase();
-  const [inputText, setInputText] = useState('');
+  const [inputText, setInputTextState] = useState('');
   const [lastQuestion, setLastQuestion] = useState('');
   const [answer, setAnswer] = useState('');
   const [answerCacheMeta, setAnswerCacheMeta] = useState({ hit: false, type: '' });
@@ -132,6 +178,14 @@ function AppShell() {
     setWakeWordStrict,
     globalPromptPrefix,
     setGlobalPromptPrefix,
+    asrTextFilterEnabled,
+    setAsrTextFilterEnabled,
+    asrTextFilterChatName,
+    setAsrTextFilterChatName,
+    asrTextFilterTerms,
+    setAsrTextFilterTerms,
+    asrTextFilterPrompt,
+    setAsrTextFilterPrompt,
   } = useAppSettings();
   const [chatOptions, setChatOptions] = useState([]);
   const [selectedChat, setSelectedChat] = useState('展厅聊天');
@@ -253,6 +307,8 @@ function AppShell() {
   const queueRef = useRef([]);
   const lastSpeakerRef = useRef('');
   const globalPromptPrefixRef = useRef(globalPromptPrefix);
+  const pendingAsrFinalTextRef = useRef('');
+  const wakeWordHoldUntilRef = useRef(0);
 
   const interruptEpochRef = useRef(0);
   const interruptManagerRef = useRef(null);
@@ -296,6 +352,99 @@ function AppShell() {
 
   const POINTER_SUPPORTED = typeof window !== 'undefined' && 'PointerEvent' in window;
   const MIN_RECORD_MS = 900;
+
+  const showTransientQueueStatus = (message, durationMs = 2000) => {
+    const text = String(message || '').trim();
+    if (!text) return;
+    setQueueStatus(text);
+    try {
+      window.clearTimeout(window.__wakeWordStatusTimer);
+    } catch (_) {
+      // ignore
+    }
+    window.__wakeWordStatusTimer = window.setTimeout(() => setQueueStatus(''), durationMs);
+  };
+
+  const setInputText = (next) => {
+    pendingAsrFinalTextRef.current = '';
+    setInputTextState(next);
+  };
+
+  const setInputTextFromAsr = (next) => {
+    setInputTextState(next);
+  };
+
+  const handleAsrFinalText = (text) => {
+    pendingAsrFinalTextRef.current = String(text || '').trim();
+  };
+
+  const preprocessVoiceText = async ({ text, trigger } = {}) => {
+    const originalText = String(text || '').trim();
+    const normalizedTrigger = String(trigger || '').trim().toLowerCase();
+    const pendingAsrText = String(pendingAsrFinalTextRef.current || '').trim();
+    const looksLikePendingAsrText =
+      !!originalText &&
+      !!pendingAsrText &&
+      originalText === pendingAsrText &&
+      (normalizedTrigger === 'text' || normalizedTrigger === 'wake_word' || normalizedTrigger === 'voice');
+
+    if (!looksLikePendingAsrText) return originalText;
+    pendingAsrFinalTextRef.current = '';
+
+    const wakeWords = wakeWordEnabled ? parseWakeWordList(wakeWord) : [];
+    const holdActive = Date.now() < Number(wakeWordHoldUntilRef.current || 0);
+    let correctedText = originalText;
+
+    if (asrTextFilterEnabled) {
+      const prompt = String(asrTextFilterPrompt || '').trim();
+      const chatName = String(asrTextFilterChatName || '').trim();
+      const domainTerms = buildAsrFilterDomainTerms({
+        domainTermsText: asrTextFilterTerms,
+        wakeWordText: wakeWordEnabled ? wakeWord : '',
+      });
+      if (prompt && chatName) {
+        try {
+          setQueueStatus('正在纠正语音文本...');
+          const res = await filterAsrTextExt({
+            text: originalText,
+            prompt,
+            chatName,
+            domainTerms,
+          });
+          correctedText = String((res && res.text) || '').trim() || originalText;
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.warn('[ASR_FILTER] failed', e);
+          correctedText = originalText;
+        } finally {
+          setQueueStatus('');
+        }
+      }
+    }
+
+    let finalText = correctedText;
+    if (wakeWords.length) {
+      const wakeMatch = resolveWakeWordMatch(correctedText, wakeWords, !!wakeWordStrict);
+      if (wakeMatch) {
+        finalText = stripWakeWordPrefix(correctedText, wakeMatch);
+        wakeWordHoldUntilRef.current = Date.now() + WAKE_HOLD_MS;
+        if (!finalText) {
+          setInputTextState('');
+          showTransientQueueStatus('已唤醒');
+          return '';
+        }
+      } else if (!holdActive) {
+        setInputTextState('');
+        showTransientQueueStatus('未检测到唤醒词');
+        return '';
+      } else if (finalText) {
+        wakeWordHoldUntilRef.current = Date.now() + WAKE_HOLD_MS;
+      }
+    }
+
+    setInputTextState(finalText);
+    return finalText;
+  };
 
   const getTtsManager = () =>
     createOrGetTtsManager({
@@ -704,6 +853,7 @@ function AppShell() {
     runCoordinatorDeps: {
       interruptCurrentRun,
       askQuestion,
+      preprocessVoiceText,
       getIsLoading: () => isLoading,
       ttsEnabledRef,
       audioContextRef,
@@ -742,7 +892,7 @@ function AppShell() {
     baseUrl: backendBase,
     minRecordMs: MIN_RECORD_MS,
     clientIdRef,
-    setInputText,
+    setInputText: setInputTextFromAsr,
     setIsLoading,
     decodeAndConvertToWav16kMono,
     unlockAudio,
@@ -755,6 +905,7 @@ function AppShell() {
     wakeWordCooldownMs,
     askQuestion,
     submitUserText,
+    onAsrFinalText: handleAsrFinalText,
     setQueueStatus,
     inputText,
     groupMode,
@@ -808,7 +959,7 @@ function AppShell() {
     wasTourActiveRef.current = active;
   }, [isLoading, tourState, askAbortRef, currentAudioRef, ttsManagerRef]);
 
-  const submitDisabled = !String(inputText || '').trim() || (useAgentMode && !selectedAgentId);
+  const submitDisabled = isRecording || !String(inputText || '').trim() || (useAgentMode && !selectedAgentId);
   const interruptDisabled =
     !isLoading && !((ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false) || currentAudioRef.current);
   const tourToggleLabel =
@@ -939,6 +1090,14 @@ function AppShell() {
     resetTour,
     globalPromptPrefix,
     setGlobalPromptPrefix,
+    asrTextFilterEnabled,
+    setAsrTextFilterEnabled,
+    asrTextFilterChatName,
+    setAsrTextFilterChatName,
+    asrTextFilterTerms,
+    setAsrTextFilterTerms,
+    asrTextFilterPrompt,
+    setAsrTextFilterPrompt,
   });
 
   const tourModePanelProps = useTourModePanelProps({

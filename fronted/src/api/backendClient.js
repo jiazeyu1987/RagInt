@@ -72,3 +72,16 @@ export async function emitClientEvent({ requestId, clientId, kind, name, level, 
   }
 }
 
+export async function filterAsrText({ text, prompt, chatName, domainTerms } = {}) {
+  return fetchJson('/api/asr/filter', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text: String(text || ''),
+      prompt: String(prompt || ''),
+      chat_name: String(chatName || ''),
+      domain_terms: String(domainTerms || ''),
+    }),
+  });
+}
+

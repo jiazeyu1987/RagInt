@@ -18,6 +18,7 @@ export function useVoiceConversationControls({
   wakeWordCooldownMs,
   askQuestion,
   submitUserText,
+  onAsrFinalText,
   setQueueStatus,
   inputText,
   groupMode,
@@ -77,6 +78,7 @@ export function useVoiceConversationControls({
       wakeWordStrict,
       wakeWordCooldownMs,
       onWakeWordFeedback: wakeWordFeedback,
+      onAsrFinalText,
       askQuestion,
       submitText: wakeWordSubmitText,
     });

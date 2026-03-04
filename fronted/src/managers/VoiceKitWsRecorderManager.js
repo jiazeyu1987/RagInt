@@ -49,7 +49,9 @@ export class VoiceKitWsRecorderManager {
     this._stopping = false;
     this._finalReceived = false;
     this._stopGraceTimer = null;
-    this._stopGraceMs = 220;
+    this._finalWaitTimer = null;
+    this._stopGraceMs = 480;
+    this._finalWaitMs = 1500;
   }
 
   get isRecording() {
@@ -91,6 +93,14 @@ export class VoiceKitWsRecorderManager {
         // ignore
       }
       this._stopGraceTimer = null;
+    }
+    if (this._finalWaitTimer) {
+      try {
+        clearTimeout(this._finalWaitTimer);
+      } catch (_) {
+        // ignore
+      }
+      this._finalWaitTimer = null;
     }
     this._stopping = false;
     this._finalReceived = false;
@@ -158,7 +168,16 @@ export class VoiceKitWsRecorderManager {
         if (this._onFinalText) this._onFinalText(text, msg);
         this._finalReceived = true;
         if (this._stopping && !this._continuous) {
+          if (this._finalWaitTimer) {
+            try {
+              clearTimeout(this._finalWaitTimer);
+            } catch (_) {
+              // ignore
+            }
+            this._finalWaitTimer = null;
+          }
           this._disposeWs();
+          this._setRecording(false);
         }
       },
       onError: (e, msg) => {
@@ -229,7 +248,22 @@ export class VoiceKitWsRecorderManager {
       this._wsReady = false;
       this._frameQueue = [];
       this._stopMicOnly();
-      this._setRecording(false);
+      if (this._finalReceived || this._continuous) {
+        this._setRecording(false);
+        return;
+      }
+      if (this._finalWaitTimer) {
+        try {
+          clearTimeout(this._finalWaitTimer);
+        } catch (_) {
+          // ignore
+        }
+      }
+      this._finalWaitTimer = setTimeout(() => {
+        this._finalWaitTimer = null;
+        this._disposeWs();
+        this._setRecording(false);
+      }, this._finalWaitMs);
     }, this._stopGraceMs);
   }
 

@@ -29,6 +29,67 @@ def _ragflow_session_to_dict(session):
     return {"id": getattr(session, "id", None), "name": getattr(session, "name", None) or getattr(session, "title", None)}
 
 
+def _ragflow_response_text(resp) -> str:
+    def _to_text(value) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (dict, list)):
+            try:
+                return json.dumps(value, ensure_ascii=False)
+            except Exception:
+                return str(value)
+        return str(value)
+
+    def _chunk_text(chunk) -> str:
+        if chunk is None:
+            return ""
+        if isinstance(chunk, str):
+            return chunk
+        for attr in ("content", "answer", "text"):
+            if hasattr(chunk, attr):
+                txt = _to_text(getattr(chunk, attr))
+                if txt:
+                    return txt
+        if isinstance(chunk, dict):
+            for key in ("answer", "content", "text"):
+                if chunk.get(key):
+                    return _to_text(chunk.get(key))
+            return _to_text(chunk)
+        return _to_text(chunk)
+
+    if isinstance(resp, str):
+        return resp
+    if hasattr(resp, "content"):
+        return _to_text(getattr(resp, "content"))
+    if isinstance(resp, dict):
+        for key in ("answer", "content", "text"):
+            if key in resp and resp.get(key):
+                return _to_text(resp.get(key))
+    if hasattr(resp, "__iter__"):
+        parts: list[str] = []
+        current = ""
+        for chunk in resp:
+            txt = _chunk_text(chunk)
+            if not txt:
+                continue
+            if not current:
+                current = txt
+                continue
+            if txt.startswith(current):
+                current = txt
+                continue
+            if current.startswith(txt):
+                continue
+            parts.append(current)
+            current = txt
+        if current:
+            parts.append(current)
+        return "".join(parts)
+    return str(resp or "")
+
+
 def find_dataset_by_name(client, dataset_name):
     if not dataset_name:
         return None
@@ -232,6 +293,78 @@ class RagflowService:
         with self._lock:
             self._sessions[name] = sess
         return sess
+
+    def ask_chat(self, chat_name: str, question: str) -> str:
+        if not self.client:
+            raise RuntimeError("ragflow_not_initialized")
+
+        name = str(chat_name or "").strip()
+        prompt = str(question or "").strip()
+        if not name:
+            raise RuntimeError("chat_name_required")
+        if not prompt:
+            return ""
+
+        sess = self.get_session(name)
+        if not sess:
+            raise RuntimeError(f"ragflow_session_unavailable:{name}")
+        if not hasattr(sess, "ask"):
+            raise RuntimeError(f"ragflow_session_ask_unsupported:{name}")
+
+        resp = sess.ask(prompt, stream=False)
+        return _ragflow_response_text(resp).strip()
+
+    def ask_chat_once(
+        self,
+        chat_name: str,
+        question: str,
+        *,
+        create_if_missing: bool = False,
+        session_name: str = "One Shot Session",
+    ) -> str:
+        if not self.client:
+            raise RuntimeError("ragflow_not_initialized")
+
+        name = str(chat_name or "").strip()
+        prompt = str(question or "").strip()
+        if not name:
+            raise RuntimeError("chat_name_required")
+        if not prompt:
+            return ""
+
+        chat = find_chat_by_name(self.client, name)
+        if not chat and create_if_missing:
+            chat = self.client.create_chat(name=name, dataset_ids=[self.dataset_id] if self.dataset_id else [])
+        if not chat:
+            raise RuntimeError(f"ragflow_chat_not_found:{name}")
+
+        chat_id = getattr(chat, "id", None) if not isinstance(chat, dict) else chat.get("id")
+        if not hasattr(chat, "create_session"):
+            raise RuntimeError(f"ragflow_chat_session_unsupported:{name}")
+
+        sess = chat.create_session(str(session_name or "One Shot Session"))
+        sess_info = _ragflow_session_to_dict(sess) or {}
+        session_id = str(sess_info.get("id") or "").strip()
+
+        try:
+            resp = sess.ask(prompt, stream=False)
+            return _ragflow_response_text(resp).strip()
+        finally:
+            if chat_id and session_id:
+                try:
+                    self._api_request(
+                        method="DELETE",
+                        path=f"/api/v1/chats/{chat_id}/sessions",
+                        json_body={"ids": [session_id]},
+                    )
+                except Exception as e:
+                    self._logger.warning(
+                        "ragflow_delete_one_shot_session_failed chat=%s chat_id=%s session_id=%s err=%s",
+                        name,
+                        chat_id,
+                        session_id,
+                        e,
+                    )
 
     def create_new_session(self, chat_name: str) -> dict:
         if not self.client:

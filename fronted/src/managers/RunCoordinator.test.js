@@ -21,13 +21,15 @@ describe('RunCoordinator', () => {
     expect(askQuestion).not.toHaveBeenCalled();
   });
 
-  test('submitUserText asks normally and prepares run for non-group text', async () => {
+  test('submitUserText preprocesses text before asking', async () => {
     const askQuestion = jest.fn().mockResolvedValue('');
     const beginDebugRun = jest.fn();
     const setInputText = jest.fn();
+    const preprocessVoiceText = jest.fn().mockResolvedValue('介绍一下指引导丝');
     const c = new RunCoordinator({
       askQuestion,
       beginDebugRun,
+      preprocessVoiceText,
       setInputText,
       ttsEnabledRef: { current: false },
       audioContextRef: { current: null },
@@ -39,7 +41,7 @@ describe('RunCoordinator', () => {
     });
 
     const res = await c.submitUserText({
-      text: '介绍一下展厅',
+      text: '介绍一下指引导致',
       trigger: 'text',
       useAgentMode: false,
       selectedAgentId: '',
@@ -47,9 +49,10 @@ describe('RunCoordinator', () => {
     });
 
     expect(res).toEqual({ ok: true, kind: 'asked' });
+    expect(preprocessVoiceText).toHaveBeenCalledWith({ text: '介绍一下指引导致', trigger: 'text' });
     expect(beginDebugRun).toHaveBeenCalledWith('text');
     expect(setInputText).toHaveBeenCalledWith('');
-    expect(askQuestion).toHaveBeenCalledWith('介绍一下展厅', undefined);
+    expect(askQuestion).toHaveBeenCalledWith('介绍一下指引导丝', undefined);
   });
 
   test('submitUserText in group mode enqueues then asks when idle', async () => {

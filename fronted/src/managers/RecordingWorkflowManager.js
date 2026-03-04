@@ -20,6 +20,8 @@ export class RecordingWorkflowManager {
 
     this._recorder = null;
     this._pendingFinalText = [];
+    this._pendingStopTimer = null;
+    this._recordStartedAtMs = 0;
   }
 
   setDeps(next = {}) {
@@ -102,6 +104,27 @@ export class RecordingWorkflowManager {
         // ignore
       }
     }
+  }
+
+  _clearPendingStopTimer() {
+    if (!this._pendingStopTimer) return;
+    try {
+      clearTimeout(this._pendingStopTimer);
+    } catch (_) {
+      // ignore
+    }
+    this._pendingStopTimer = null;
+  }
+
+  _stopRecorderNow() {
+    this._clearPendingStopTimer();
+    if (!this._recorder) return;
+    try {
+      this._recorder.stop();
+    } catch (_) {
+      // ignore
+    }
+    this._recordStartedAtMs = 0;
   }
 
   _snapshotBaseText() {
@@ -239,6 +262,8 @@ export class RecordingWorkflowManager {
 
     this._snapshotBaseText();
     this._setLoading(true);
+    this._clearPendingStopTimer();
+    this._recordStartedAtMs = Date.now();
     this._wsRequireWakeActive = !!this._wsRequireWake && !!safeTrim(this._deps.wakeWord);
     const holdActive = Date.now() < (Number(this._wakeHoldUntilMs) || 0);
     this._wsAwakened = holdActive ? true : !this._wsRequireWakeActive;
@@ -276,10 +301,17 @@ export class RecordingWorkflowManager {
       }
     }
 
-    try {
-      this._recorder.stop();
-    } catch (_) {
-      // ignore
+    const minRecordMs = Math.max(0, Math.round(Number(this._deps.minRecordMs) || 0));
+    const elapsedMs = this._recordStartedAtMs > 0 ? Date.now() - this._recordStartedAtMs : minRecordMs;
+    const remainingMs = Math.max(0, minRecordMs - elapsedMs);
+    if (remainingMs > 0) {
+      this._clearPendingStopTimer();
+      this._pendingStopTimer = setTimeout(() => {
+        this._pendingStopTimer = null;
+        this._stopRecorderNow();
+      }, remainingMs);
+    } else {
+      this._stopRecorderNow();
     }
 
     if (this._wsRequireWakeActive && !this._wsAwakened && typeof onWakeWordFeedback === 'function') {
@@ -322,11 +354,13 @@ export class RecordingWorkflowManager {
   }
 
   cancel() {
+    this._clearPendingStopTimer();
     try {
       if (this._recorder && this._recorder.isRecording) this._recorder.cancel();
     } catch (_) {
       // ignore
     }
+    this._recordStartedAtMs = 0;
     this._setLoading(false);
   }
 

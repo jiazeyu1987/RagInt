@@ -29,6 +29,21 @@ export class RunCoordinator {
     return askQuestion(text, opts);
   }
 
+  async preprocessText(text, trigger) {
+    const originalText = String(text || '').trim();
+    if (!originalText) return '';
+    const { preprocessVoiceText } = this.deps;
+    if (typeof preprocessVoiceText !== 'function') return originalText;
+    try {
+      const nextText = await preprocessVoiceText({ text: originalText, trigger });
+      return String(nextText || '').trim() || originalText;
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('[RUN] preprocess text failed', e);
+      return originalText;
+    }
+  }
+
   prepareAsk(trigger) {
     const { ttsEnabledRef, audioContextRef, unlockAudio, beginDebugRun, setInputText } = this.deps;
     try {
@@ -163,6 +178,8 @@ export class RunCoordinator {
     const q = String(text || '').trim();
     if (!q) return { ok: false, kind: 'empty' };
     if (useAgentMode && !selectedAgentId) return { ok: false, kind: 'missing_agent' };
+    const finalText = await this.preprocessText(q, trigger);
+    if (!finalText) return { ok: false, kind: 'empty' };
 
     // Voice tour commands (next/prev/jump/restart/...) take precedence when guide is enabled.
     try {
@@ -172,7 +189,7 @@ export class RunCoordinator {
         const stops = typeof getTourStops === 'function' ? getTourStops() : [];
         const res = await parseTourCommand({
           clientId: clientIdRef ? clientIdRef.current : '',
-          text: q,
+          text: finalText,
           stops: Array.isArray(stops) ? stops : [],
         });
         if (res && res.intent === 'tour_command' && res.action && Number(res.confidence || 0) >= 0.75) {
@@ -200,7 +217,7 @@ export class RunCoordinator {
 
     if (groupMode) {
       const active = this._isActiveRun();
-      const item = this.enqueueQuestion({ speaker: speakerName, text: q, priority });
+      const item = this.enqueueQuestion({ speaker: speakerName, text: finalText, priority });
       if (item && item.priority === 'high' && active) {
         this.interrupt(RUN_REASON.HIGH_PRIORITY);
         this.removeQueuedQuestion(item.id);
@@ -217,7 +234,7 @@ export class RunCoordinator {
     }
 
     this.prepareAsk(trigger || 'text');
-    await this.ask(q);
+    await this.ask(finalText);
     return { ok: true, kind: 'asked' };
   }
 

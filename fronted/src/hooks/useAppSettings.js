@@ -1,6 +1,11 @@
 import { useEffect } from 'react';
 import { useLocalStorageState } from './useLocalStorageState';
 import { TourTemplateManager } from '../managers/TourTemplateManager';
+import {
+  DEFAULT_ASR_FILTER_CHAT_NAME,
+  DEFAULT_ASR_FILTER_PROMPT,
+  DEFAULT_ASR_FILTER_TERMS,
+} from '../config/asrFilter';
 
 const ALLOWED_TTS_FETCH_CONCURRENCY = new Set([2, 4, 6, 8, 10]);
 const FLASH_VOICE_OPTIONS = new Set(['longanyang', 'longanhuan']);
@@ -388,6 +393,34 @@ export function useAppSettings() {
     deserialize: (raw) => String(raw || ''),
   });
 
+  const [asrTextFilterEnabled, setAsrTextFilterEnabled] = useLocalStorageState('asrTextFilterEnabled', false, {
+    serialize: (v) => (v ? '1' : '0'),
+    deserialize: (raw) => String(raw) !== '0',
+  });
+
+  const [asrTextFilterChatName, setAsrTextFilterChatName] = useLocalStorageState(
+    'asrTextFilterChatName',
+    DEFAULT_ASR_FILTER_CHAT_NAME,
+    {
+      serialize: (v) => String(v || DEFAULT_ASR_FILTER_CHAT_NAME),
+      deserialize: (raw) => String(raw || DEFAULT_ASR_FILTER_CHAT_NAME),
+    }
+  );
+
+  const [asrTextFilterTerms, setAsrTextFilterTerms] = useLocalStorageState('asrTextFilterTerms', DEFAULT_ASR_FILTER_TERMS, {
+    serialize: (v) => String(v || ''),
+    deserialize: (raw) => String(raw || DEFAULT_ASR_FILTER_TERMS),
+  });
+
+  const [asrTextFilterPrompt, setAsrTextFilterPrompt] = useLocalStorageState(
+    'asrTextFilterPrompt',
+    DEFAULT_ASR_FILTER_PROMPT,
+    {
+      serialize: (v) => String(v || ''),
+      deserialize: (raw) => String(raw || DEFAULT_ASR_FILTER_PROMPT),
+    }
+  );
+
   return {
     ttsMode,
     setTtsMode,
@@ -457,5 +490,13 @@ export function useAppSettings() {
     setWakeWordStrict,
     globalPromptPrefix,
     setGlobalPromptPrefix,
+    asrTextFilterEnabled,
+    setAsrTextFilterEnabled,
+    asrTextFilterChatName,
+    setAsrTextFilterChatName,
+    asrTextFilterTerms,
+    setAsrTextFilterTerms,
+    asrTextFilterPrompt,
+    setAsrTextFilterPrompt,
   };
 }

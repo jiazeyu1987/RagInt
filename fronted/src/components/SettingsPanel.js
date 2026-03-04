@@ -406,39 +406,92 @@ function ArchiveTab({ controlBarProps, ttsMode, modelscopeVoice }) {
 function AsrTab({ controlBarProps }) {
   const c = controlBarProps || {};
   return (
-    <SettingsGroup title="唤醒词设置">
-      <div className="settings-form">
-        <label className="settings-toggle">
-          <input type="checkbox" checked={!!c.wakeWordEnabled} onChange={(e) => c.onChangeWakeWordEnabled && c.onChangeWakeWordEnabled(e.target.checked)} />
-          <span>启用唤醒词</span>
-        </label>
-
-        {c.wakeWordEnabled ? (
-          <label className="settings-field">
-            <span>唤醒词</span>
-            <input value={String(c.wakeWord || '')} onChange={(e) => c.onChangeWakeWord && c.onChangeWakeWord(e.target.value)} placeholder="例如：你好小D" />
-          </label>
-        ) : null}
-
-        {c.wakeWordEnabled ? (
-          <label className="settings-field">
-            <span>冷却时间(ms)</span>
-            <input
-              value={String(c.wakeWordCooldownMs || '')}
-              onChange={(e) => c.onChangeWakeWordCooldownMs && c.onChangeWakeWordCooldownMs(Number(e.target.value) || 0)}
-              placeholder="5000"
-            />
-          </label>
-        ) : null}
-
-        {c.wakeWordEnabled ? (
+    <>
+      <SettingsGroup title="唤醒词设置">
+        <div className="settings-form">
           <label className="settings-toggle">
-            <input type="checkbox" checked={!!c.wakeWordStrict} onChange={(e) => c.onChangeWakeWordStrict && c.onChangeWakeWordStrict(e.target.checked)} />
-            <span>严格匹配</span>
+            <input type="checkbox" checked={!!c.wakeWordEnabled} onChange={(e) => c.onChangeWakeWordEnabled && c.onChangeWakeWordEnabled(e.target.checked)} />
+            <span>启用唤醒词</span>
           </label>
-        ) : null}
-      </div>
-    </SettingsGroup>
+
+          {c.wakeWordEnabled ? (
+            <label className="settings-field">
+              <span>唤醒词</span>
+              <input value={String(c.wakeWord || '')} onChange={(e) => c.onChangeWakeWord && c.onChangeWakeWord(e.target.value)} placeholder="例如：你好小D" />
+            </label>
+          ) : null}
+
+          {c.wakeWordEnabled ? (
+            <label className="settings-field">
+              <span>冷却时间(ms)</span>
+              <input
+                value={String(c.wakeWordCooldownMs || '')}
+                onChange={(e) => c.onChangeWakeWordCooldownMs && c.onChangeWakeWordCooldownMs(Number(e.target.value) || 0)}
+                placeholder="5000"
+              />
+            </label>
+          ) : null}
+
+          {c.wakeWordEnabled ? (
+            <label className="settings-toggle">
+              <input type="checkbox" checked={!!c.wakeWordStrict} onChange={(e) => c.onChangeWakeWordStrict && c.onChangeWakeWordStrict(e.target.checked)} />
+              <span>严格匹配</span>
+            </label>
+          ) : null}
+        </div>
+      </SettingsGroup>
+
+      <SettingsGroup title="ASR纠错过滤">
+        <div className="settings-form">
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={!!c.asrTextFilterEnabled}
+              onChange={(e) => c.onChangeAsrTextFilterEnabled && c.onChangeAsrTextFilterEnabled(e.target.checked)}
+            />
+            <span>使用语音模型优化</span>
+          </label>
+
+          {c.asrTextFilterEnabled ? (
+            <label className="settings-field">
+              <span>Ragflow 对话名</span>
+              <input
+                value={String(c.asrTextFilterChatName || '')}
+                onChange={(e) => c.onChangeAsrTextFilterChatName && c.onChangeAsrTextFilterChatName(e.target.value)}
+                placeholder="语音模型"
+              />
+            </label>
+          ) : null}
+
+          {c.asrTextFilterEnabled ? (
+            <label className="settings-field">
+              <span>领域术语列表</span>
+              <textarea
+                className="settings-textarea"
+                rows={2}
+                value={String(c.asrTextFilterTerms || '')}
+                onChange={(e) => c.onChangeAsrTextFilterTerms && c.onChangeAsrTextFilterTerms(e.target.value)}
+                placeholder="例如：指引导丝,指引导管"
+              />
+            </label>
+          ) : null}
+
+          {c.asrTextFilterEnabled ? (
+            <label className="settings-field">
+              <span>纠错提示词</span>
+              <textarea
+                className="settings-textarea"
+                rows={14}
+                value={String(c.asrTextFilterPrompt || '')}
+                onChange={(e) => c.onChangeAsrTextFilterPrompt && c.onChangeAsrTextFilterPrompt(e.target.value)}
+                placeholder="使用 {ASR的语音输入} 和 {领域片段} 作为变量"
+              />
+              <span className="settings-field-hint">打开时，ASR 文本会先经过语音模型优化后再发送；关闭时，直接发送原始转写文本。</span>
+            </label>
+          ) : null}
+        </div>
+      </SettingsGroup>
+    </>
   );
 }
 

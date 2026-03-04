@@ -121,6 +121,14 @@ export function useControlBarProps({
   resetTour,
   globalPromptPrefix,
   setGlobalPromptPrefix,
+  asrTextFilterEnabled,
+  setAsrTextFilterEnabled,
+  asrTextFilterChatName,
+  setAsrTextFilterChatName,
+  asrTextFilterTerms,
+  setAsrTextFilterTerms,
+  asrTextFilterPrompt,
+  setAsrTextFilterPrompt,
 } = {}) {
   const onChangeTourRecordingEnabled = useCallback(
     (checked) => {
@@ -396,6 +404,14 @@ export function useControlBarProps({
       onReset: resetTour,
       globalPromptPrefix,
       onChangeGlobalPromptPrefix: setGlobalPromptPrefix,
+      asrTextFilterEnabled,
+      onChangeAsrTextFilterEnabled: setAsrTextFilterEnabled,
+      asrTextFilterChatName,
+      onChangeAsrTextFilterChatName: setAsrTextFilterChatName,
+      asrTextFilterTerms,
+      onChangeAsrTextFilterTerms: setAsrTextFilterTerms,
+      asrTextFilterPrompt,
+      onChangeAsrTextFilterPrompt: setAsrTextFilterPrompt,
     }),
     [
       agentOptions,
@@ -473,6 +489,14 @@ export function useControlBarProps({
       onClearTourStopPromptOverrides,
       globalPromptPrefix,
       setGlobalPromptPrefix,
+      asrTextFilterEnabled,
+      setAsrTextFilterEnabled,
+      asrTextFilterChatName,
+      setAsrTextFilterChatName,
+      asrTextFilterTerms,
+      setAsrTextFilterTerms,
+      asrTextFilterPrompt,
+      setAsrTextFilterPrompt,
     ]
   );
 }
