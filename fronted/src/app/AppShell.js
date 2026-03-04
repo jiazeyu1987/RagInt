@@ -114,6 +114,7 @@ function AppShell() {
   const [queueStatus, setQueueStatus] = useState('');
   const [tourButtonState, setTourButtonState] = useState({ started: false, mode: TOUR_BTN_MODE.START });
   const [ttsEnabled, setTtsEnabled] = useState(true);
+  const clientId = useClientId();
   const {
     ttsMode,
     setTtsMode,
@@ -168,6 +169,10 @@ function AppShell() {
     setTourGuideTemplates,
     tourGuideTemplateId,
     setTourGuideTemplateId,
+    tourStopDurationTemplateKey,
+    setTourStopDurationTemplateKey,
+    tourStopDurationTemplates,
+    setTourStopDurationTemplates,
     wakeWordEnabled,
     setWakeWordEnabled,
     wakeWord,
@@ -186,7 +191,15 @@ function AppShell() {
     setAsrTextFilterTerms,
     asrTextFilterPrompt,
     setAsrTextFilterPrompt,
-  } = useAppSettings();
+    settingsActiveTab,
+    setSettingsActiveTab,
+    asrMinRecordMs,
+    setAsrMinRecordMs,
+    asrStopGraceMs,
+    setAsrStopGraceMs,
+    asrFinalWaitMs,
+    setAsrFinalWaitMs,
+  } = useAppSettings(clientId);
   const [chatOptions, setChatOptions] = useState([]);
   const [selectedChat, setSelectedChat] = useState('展厅聊天');
   const [agentOptions, setAgentOptions] = useState([]);
@@ -199,7 +212,6 @@ function AppShell() {
   });
   const { historySort, setHistorySort, historyItems, fetchHistory } = useHistoryPanel({ enabled: showHistoryPanel });
   const { debugInfo, debugRef, beginDebugRun, debugMark, debugRefresh } = useDebugRun();
-  const clientId = useClientId();
   const [tourStops, setTourStops] = useState([]);
   const [tourStopDurations, setTourStopDurations] = useState([]); // aligned with tourStops
   const [tourStopTargetChars, setTourStopTargetChars] = useState([]); // aligned with tourStops
@@ -351,7 +363,6 @@ function AppShell() {
   const runCoordinatorRef = useRef(null);
 
   const POINTER_SUPPORTED = typeof window !== 'undefined' && 'PointerEvent' in window;
-  const MIN_RECORD_MS = 900;
 
   const showTransientQueueStatus = (message, durationMs = 2000) => {
     const text = String(message || '').trim();
@@ -890,7 +901,9 @@ function AppShell() {
     submitTextAuto,
   } = useVoiceConversationControls({
     baseUrl: backendBase,
-    minRecordMs: MIN_RECORD_MS,
+    minRecordMs: asrMinRecordMs,
+    asrStopGraceMs,
+    asrFinalWaitMs,
     clientIdRef,
     setInputText: setInputTextFromAsr,
     setIsLoading,
@@ -1084,6 +1097,10 @@ function AppShell() {
     setTourStopDurationsOverride,
     tourStopPromptOverrides,
     setTourStopPromptOverrides,
+    tourStopDurationTemplateKey,
+    setTourStopDurationTemplateKey,
+    tourStopDurationTemplates,
+    setTourStopDurationTemplates,
     tourSelectedStopIndex,
     setTourSelectedStopIndex,
     jumpTourStop,
@@ -1098,6 +1115,12 @@ function AppShell() {
     setAsrTextFilterTerms,
     asrTextFilterPrompt,
     setAsrTextFilterPrompt,
+    asrMinRecordMs,
+    setAsrMinRecordMs,
+    asrStopGraceMs,
+    setAsrStopGraceMs,
+    asrFinalWaitMs,
+    setAsrFinalWaitMs,
   });
 
   const tourModePanelProps = useTourModePanelProps({
@@ -1259,6 +1282,8 @@ function AppShell() {
               onPrevStop={prevTourStop}
               onNextStop={nextTourStop}
               onClearExhibitChatSessions={clearExhibitChatSessions}
+              activeTab={settingsActiveTab}
+              onChangeActiveTab={setSettingsActiveTab}
             />
           </div>
 

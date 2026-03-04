@@ -159,6 +159,8 @@ export class RecordingWorkflowManager {
       clientId,
       requestId: `asrws_${Date.now()}_${Math.random().toString(16).slice(2)}`,
       sampleRate: 16000,
+      stopGraceMs: Number(this._deps.asrStopGraceMs) || 480,
+      finalWaitMs: Number(this._deps.asrFinalWaitMs) || 1500,
       startPayload: requireWake
         ? {
             wake_word_enabled: true,

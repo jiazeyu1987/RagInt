@@ -39,6 +39,7 @@ def _build_state_backend():
 
 
 def _build_stores(*, data_dir: Path, logger):
+    from backend.services.app_settings_store import AppSettingsStore
     from backend.services.breakpoint_store import BreakpointStore
     from backend.services.history_store import HistoryStore
     from backend.services.ops_store import OpsStore
@@ -60,7 +61,8 @@ def _build_stores(*, data_dir: Path, logger):
         _env_path("RAGINT_SELLING_POINTS_DB_PATH", data_dir / "selling_points.db"), logger=logger
     )
     ops_store = OpsStore(_env_path("RAGINT_OPS_DB_PATH", data_dir / "ops.db"), logger=logger)
-    return history_store, qa_audio_cache_store, breakpoint_store, recording_store, tour_control_store, selling_points_store, ops_store
+    app_settings_store = AppSettingsStore(_env_path("RAGINT_APP_SETTINGS_DB_PATH", data_dir / "app_settings.db"), logger=logger)
+    return history_store, qa_audio_cache_store, breakpoint_store, recording_store, tour_control_store, selling_points_store, ops_store, app_settings_store
 
 
 def _build_services(*, logger):
@@ -103,6 +105,7 @@ def build_deps(*, base_dir: Path, config_path: Path, logger) -> AppDeps:
         tour_control_store,
         selling_points_store,
         ops_store,
+        app_settings_store,
     ) = _build_stores(
         data_dir=data_dir, logger=logger
     )
@@ -139,6 +142,7 @@ def build_deps(*, base_dir: Path, config_path: Path, logger) -> AppDeps:
         ops_store=ops_store,
         qa_audio_cache_store=qa_audio_cache_store,
         qa_audio_matcher=qa_audio_matcher,
+        app_settings_store=app_settings_store,
     )
 
 
@@ -155,6 +159,7 @@ def init_ragflow(*, deps: AppDeps, logger) -> bool:
 
 def register_blueprints(*, app: Flask, deps: AppDeps) -> None:
     from backend.api.breakpoint import create_blueprint as create_breakpoint_blueprint
+    from backend.api.app_settings import create_blueprint as create_app_settings_blueprint
     from backend.api.offline import create_blueprint as create_offline_blueprint
     from backend.api.ops import create_blueprint as create_ops_blueprint
     from backend.api.qa_audio_cache import create_blueprint as create_qa_audio_cache_blueprint
@@ -170,6 +175,7 @@ def register_blueprints(*, app: Flask, deps: AppDeps) -> None:
     app.register_blueprint(create_ragflow_tour_history_blueprint(deps))
     app.register_blueprint(create_offline_blueprint(deps))
     app.register_blueprint(create_system_blueprint(deps))
+    app.register_blueprint(create_app_settings_blueprint(deps))
     app.register_blueprint(create_breakpoint_blueprint(deps))
     app.register_blueprint(create_tour_control_blueprint(deps))
     app.register_blueprint(create_tour_command_blueprint(deps))

@@ -129,6 +129,12 @@ export function useControlBarProps({
   setAsrTextFilterTerms,
   asrTextFilterPrompt,
   setAsrTextFilterPrompt,
+  asrMinRecordMs,
+  setAsrMinRecordMs,
+  asrStopGraceMs,
+  setAsrStopGraceMs,
+  asrFinalWaitMs,
+  setAsrFinalWaitMs,
 } = {}) {
   const onChangeTourRecordingEnabled = useCallback(
     (checked) => {
@@ -412,6 +418,12 @@ export function useControlBarProps({
       onChangeAsrTextFilterTerms: setAsrTextFilterTerms,
       asrTextFilterPrompt,
       onChangeAsrTextFilterPrompt: setAsrTextFilterPrompt,
+      asrMinRecordMs,
+      onChangeAsrMinRecordMs: setAsrMinRecordMs,
+      asrStopGraceMs,
+      onChangeAsrStopGraceMs: setAsrStopGraceMs,
+      asrFinalWaitMs,
+      onChangeAsrFinalWaitMs: setAsrFinalWaitMs,
     }),
     [
       agentOptions,
@@ -497,6 +509,12 @@ export function useControlBarProps({
       setAsrTextFilterTerms,
       asrTextFilterPrompt,
       setAsrTextFilterPrompt,
+      asrMinRecordMs,
+      setAsrMinRecordMs,
+      asrStopGraceMs,
+      setAsrStopGraceMs,
+      asrFinalWaitMs,
+      setAsrFinalWaitMs,
     ]
   );
 }

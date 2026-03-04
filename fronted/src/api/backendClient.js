@@ -85,3 +85,24 @@ export async function filterAsrText({ text, prompt, chatName, domainTerms } = {}
   });
 }
 
+export async function fetchAppSettings({ clientId } = {}) {
+  return fetchJson('/api/app_settings', {
+    method: 'GET',
+    headers: { 'X-Client-ID': String(clientId || '').trim() },
+  });
+}
+
+export async function saveAppSettings({ clientId, settings } = {}) {
+  return fetchJson('/api/app_settings', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Client-ID': String(clientId || '').trim(),
+    },
+    body: JSON.stringify({
+      client_id: String(clientId || '').trim(),
+      settings: settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {},
+    }),
+  });
+}
+

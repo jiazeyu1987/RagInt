@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { fetchJson } from '../api/backendClient';
 
 export function useTourBootstrap({
@@ -8,21 +8,44 @@ export function useTourBootstrap({
   setTourStops,
   setTourSelectedStopIndex,
 } = {}) {
+  const startedRef = useRef(false);
+  const settersRef = useRef({
+    setTourMeta,
+    setTourZone,
+    setAudienceProfile,
+    setTourStops,
+    setTourSelectedStopIndex,
+  });
+
   useEffect(() => {
+    settersRef.current = {
+      setTourMeta,
+      setTourZone,
+      setAudienceProfile,
+      setTourStops,
+      setTourSelectedStopIndex,
+    };
+  }, [setAudienceProfile, setTourMeta, setTourSelectedStopIndex, setTourStops, setTourZone]);
+
+  useEffect(() => {
+    if (startedRef.current) return () => {};
+    startedRef.current = true;
+
     let cancelled = false;
     (async () => {
       try {
         const meta = await fetchJson('/api/tour/meta');
         if (cancelled) return;
         if (meta && typeof meta === 'object') {
-          if (typeof setTourMeta === 'function') setTourMeta(meta);
+          const nextSetters = settersRef.current || {};
+          if (typeof nextSetters.setTourMeta === 'function') nextSetters.setTourMeta(meta);
           const zones = Array.isArray(meta.zones) ? meta.zones : [];
           const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
-          if (typeof setTourZone === 'function') {
-            setTourZone((prev) => (prev ? prev : String(meta.default_zone || zones[0] || '默认路线')));
+          if (typeof nextSetters.setTourZone === 'function') {
+            nextSetters.setTourZone((prev) => (prev ? prev : String(meta.default_zone || zones[0] || '默认路线')));
           }
-          if (typeof setAudienceProfile === 'function') {
-            setAudienceProfile((prev) => (prev ? prev : String(meta.default_profile || profiles[0] || '大众')));
+          if (typeof nextSetters.setAudienceProfile === 'function') {
+            nextSetters.setAudienceProfile((prev) => (prev ? prev : String(meta.default_profile || profiles[0] || '大众')));
           }
         }
 
@@ -33,21 +56,24 @@ export function useTourBootstrap({
               .map((s) => String(s || '').trim())
               .filter(Boolean)
           : [];
-        if (typeof setTourStops === 'function') setTourStops(stops);
-        if (stops.length && typeof setTourSelectedStopIndex === 'function') {
-          setTourSelectedStopIndex((prev) => {
+
+        const nextSetters = settersRef.current || {};
+        if (typeof nextSetters.setTourStops === 'function') nextSetters.setTourStops(stops);
+        if (stops.length && typeof nextSetters.setTourSelectedStopIndex === 'function') {
+          nextSetters.setTourSelectedStopIndex((prev) => {
             const n = Number(prev);
             if (!Number.isFinite(n)) return 0;
             return Math.max(0, Math.min(n, stops.length - 1));
           });
         }
       } catch (_) {
-        if (!cancelled && typeof setTourStops === 'function') setTourStops([]);
+        const nextSetters = settersRef.current || {};
+        if (!cancelled && typeof nextSetters.setTourStops === 'function') nextSetters.setTourStops([]);
       }
     })();
+
     return () => {
       cancelled = true;
     };
-  }, [setTourMeta, setTourZone, setAudienceProfile, setTourStops, setTourSelectedStopIndex]);
+  }, []);
 }
-

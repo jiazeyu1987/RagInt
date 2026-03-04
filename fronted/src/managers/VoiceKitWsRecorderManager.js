@@ -17,6 +17,8 @@ export class VoiceKitWsRecorderManager {
     clientId,
     requestId,
     sampleRate = 16000,
+    stopGraceMs = 480,
+    finalWaitMs = 1500,
     continuous = false,
     label,
     startPayload,
@@ -46,12 +48,13 @@ export class VoiceKitWsRecorderManager {
     this._wsReady = false;
     this._frameQueue = [];
     this._isRecording = false;
+    this._stopRequested = false;
     this._stopping = false;
     this._finalReceived = false;
     this._stopGraceTimer = null;
     this._finalWaitTimer = null;
-    this._stopGraceMs = 480;
-    this._finalWaitMs = 1500;
+    this._stopGraceMs = Math.max(0, Number(stopGraceMs) || 480);
+    this._finalWaitMs = Math.max(200, Number(finalWaitMs) || 1500);
   }
 
   get isRecording() {
@@ -102,6 +105,7 @@ export class VoiceKitWsRecorderManager {
       }
       this._finalWaitTimer = null;
     }
+    this._stopRequested = false;
     this._stopping = false;
     this._finalReceived = false;
     this._setRecording(false);
@@ -181,7 +185,7 @@ export class VoiceKitWsRecorderManager {
         }
       },
       onError: (e, msg) => {
-        if (!this._stopping) this._fail(String(e || 'ws_error'), msg);
+        if (!this._stopRequested && !this._stopping) this._fail(String(e || 'ws_error'), msg);
       },
     });
     this._mgr = mgr;
@@ -226,8 +230,8 @@ export class VoiceKitWsRecorderManager {
 
   stop() {
     if (!this._mgr || !this._recorder) return;
-    if (this._stopping) return;
-    this._stopping = true;
+    if (this._stopRequested || this._stopping) return;
+    this._stopRequested = true;
 
     // Stop grace: keep sending a tiny tail to reduce "release too fast -> missing last syllables".
     if (this._stopGraceTimer) {
@@ -240,6 +244,7 @@ export class VoiceKitWsRecorderManager {
     }
     this._stopGraceTimer = setTimeout(() => {
       this._stopGraceTimer = null;
+      this._stopping = true;
       try {
         if (this._mgr) this._mgr.stopHoldToTalk();
       } catch (_) {

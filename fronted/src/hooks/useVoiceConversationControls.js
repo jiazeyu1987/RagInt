@@ -4,6 +4,8 @@ import { useVoiceInputManager } from './useVoiceInputManager';
 export function useVoiceConversationControls({
   baseUrl,
   minRecordMs = 900,
+  asrStopGraceMs = 480,
+  asrFinalWaitMs = 1500,
   clientIdRef,
   setInputText,
   setIsLoading,
@@ -65,6 +67,8 @@ export function useVoiceConversationControls({
     useVoiceInputManager({
       baseUrl,
       minRecordMs,
+      asrStopGraceMs,
+      asrFinalWaitMs,
       clientIdRef,
       setInputText,
       setIsLoading,

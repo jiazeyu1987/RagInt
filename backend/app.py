@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import contextlib
 import logging
 import os
 import sys
@@ -21,65 +20,6 @@ import backend.bootstrap as bootstrap
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-
-
-class _DashscopeByeNoiseFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool:
-        try:
-            msg = record.getMessage()
-        except Exception:
-            return True
-        if "opcode=8" in msg and "Bye" in msg and ("goodbye" in msg.lower() or "websocket closed" in msg.lower()):
-            return False
-        if "Websocket connected" in msg:
-            return False
-        if "SpeechSynthesizerObjectPool" in msg and "renew synthesizer after" in msg:
-            return False
-        return True
-
-
-class _AccessNoiseFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool:
-        try:
-            msg = record.getMessage()
-        except Exception:
-            return True
-        if "GET /api/status" in msg:
-            return False
-        if "GET /api/events" in msg:
-            return False
-        return True
-
-
-def _install_log_filters() -> None:
-    with contextlib.suppress(Exception):
-        access_filter = _AccessNoiseFilter()
-        bye_filter = _DashscopeByeNoiseFilter()
-
-        root = logging.getLogger()
-        root.addFilter(access_filter)
-        root.addFilter(bye_filter)
-        for h in list(getattr(root, "handlers", []) or []):
-            h.addFilter(access_filter)
-            h.addFilter(bye_filter)
-
-        for name in ("werkzeug", "werkzeug.serving"):
-            lg = logging.getLogger(name)
-            lg.addFilter(access_filter)
-            for h in list(getattr(lg, "handlers", []) or []):
-                h.addFilter(access_filter)
-
-
-for _name in (
-    "dashscope.audio.tts_v2.speech_synthesizer",
-    "dashscope",
-    "websocket",
-    "websocket._logging",
-    "websocket._app",
-):
-    with contextlib.suppress(Exception):
-        logging.getLogger(_name).addFilter(_DashscopeByeNoiseFilter())
-        logging.getLogger(_name).setLevel(logging.WARNING)
 
 
 def _parse_bool(value: str | None, default: bool = False) -> bool:
@@ -119,16 +59,6 @@ def _parse_cors_origins(raw: str | None) -> list[str]:
 
 
 def create_app() -> Flask:
-    _install_log_filters()
-
-    with contextlib.suppress(Exception):
-        from logging import NullHandler as _NullHandler  # type: ignore
-
-        _ws_logger = logging.getLogger("websocket")
-        for _h in list(_ws_logger.handlers):
-            if not isinstance(_h, _NullHandler):
-                _ws_logger.removeHandler(_h)
-
     app = Flask(__name__)
 
     repo_root = Path(__file__).resolve().parent.parent

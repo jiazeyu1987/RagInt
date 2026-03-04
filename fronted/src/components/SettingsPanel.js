@@ -17,7 +17,6 @@ const TABS = [
   { key: 'stop_prompt', label: '站点提示词' },
   { key: 'template', label: '模板编辑' },
 ];
-const SETTINGS_ACTIVE_TAB_KEY = 'settingsActiveTab';
 const DEFAULT_SETTINGS_TAB = 'tts';
 const MODELSCOPE_VOICE_OPTIONS = [
   'longxiaochun',
@@ -438,6 +437,42 @@ function AsrTab({ controlBarProps }) {
               <span>严格匹配</span>
             </label>
           ) : null}
+
+          <label className="settings-field">
+            <span>最短录音时长(ms)</span>
+            <input
+              type="number"
+              min="200"
+              step="50"
+              value={String(c.asrMinRecordMs || 900)}
+              onChange={(e) => c.onChangeAsrMinRecordMs && c.onChangeAsrMinRecordMs(Number(e.target.value) || 0)}
+              placeholder="900"
+            />
+          </label>
+
+          <label className="settings-field">
+            <span>松开尾音补偿(ms)</span>
+            <input
+              type="number"
+              min="0"
+              step="20"
+              value={String(c.asrStopGraceMs || 480)}
+              onChange={(e) => c.onChangeAsrStopGraceMs && c.onChangeAsrStopGraceMs(Number(e.target.value) || 0)}
+              placeholder="480"
+            />
+          </label>
+
+          <label className="settings-field">
+            <span>等待最终识别(ms)</span>
+            <input
+              type="number"
+              min="200"
+              step="50"
+              value={String(c.asrFinalWaitMs || 1500)}
+              onChange={(e) => c.onChangeAsrFinalWaitMs && c.onChangeAsrFinalWaitMs(Number(e.target.value) || 0)}
+              placeholder="1500"
+            />
+          </label>
         </div>
       </SettingsGroup>
 
@@ -546,17 +581,7 @@ function ModeTab({ controlBarProps }) {
 function StopPromptTab({ controlBarProps }) {
   const c = controlBarProps || {};
   const savedPromptMap = useMemo(() => {
-    const src = c.tourStopPromptOverrides;
-    const normalizedFromState = normalizeStopPromptMap(src);
-    if (Object.keys(normalizedFromState).length) return normalizedFromState;
-    try {
-      const raw = localStorage.getItem('tourStopPromptOverrides');
-      if (!raw) return {};
-      return normalizeStopPromptMap(JSON.parse(raw));
-    } catch (_) {
-      // ignore
-    }
-    return {};
+    return normalizeStopPromptMap(c.tourStopPromptOverrides);
   }, [c.tourStopPromptOverrides]);
   const [draftPromptMap, setDraftPromptMap] = useState(savedPromptMap);
   const savedPromptMapSignature = useMemo(() => JSON.stringify(savedPromptMap || {}), [savedPromptMap]);
@@ -579,11 +604,6 @@ function StopPromptTab({ controlBarProps }) {
 
   const onSave = () => {
     const normalized = normalizeStopPromptMap(draftPromptMap);
-    try {
-      localStorage.setItem('tourStopPromptOverrides', JSON.stringify(normalized));
-    } catch (_) {
-      // ignore
-    }
     if (typeof c.onSaveTourStopPromptOverrides === 'function') {
       c.onSaveTourStopPromptOverrides(normalized);
       return;
@@ -599,11 +619,6 @@ function StopPromptTab({ controlBarProps }) {
   const onClear = () => {
     const confirmed = window.confirm('确认清除全部站点提示词吗？');
     if (!confirmed) return;
-    try {
-      localStorage.setItem('tourStopPromptOverrides', JSON.stringify({}));
-    } catch (_) {
-      // ignore
-    }
     setDraftPromptMap({});
     if (typeof c.onSaveTourStopPromptOverrides === 'function') {
       c.onSaveTourStopPromptOverrides({});
@@ -682,36 +697,18 @@ export function SettingsPanel({
   onPrevStop,
   onNextStop,
   onClearExhibitChatSessions,
+  activeTab,
+  onChangeActiveTab,
 }) {
   void [groupMode, speakerName, onChangeSpeakerName, questionPriority, onChangeQuestionPriority];
-  const [activeTab, setActiveTab] = useState(() => {
-    try {
-      const saved = localStorage.getItem(SETTINGS_ACTIVE_TAB_KEY);
-      return normalizeSettingsTabKey(saved);
-    } catch (_) {
-      return DEFAULT_SETTINGS_TAB;
-    }
-  });
-
-  useEffect(() => {
-    const normalized = normalizeSettingsTabKey(activeTab);
-    if (normalized !== activeTab) {
-      setActiveTab(normalized);
-      return;
-    }
-    try {
-      localStorage.setItem(SETTINGS_ACTIVE_TAB_KEY, normalized);
-    } catch (_) {
-      // ignore
-    }
-  }, [activeTab]);
+  const resolvedActiveTab = normalizeSettingsTabKey(activeTab);
 
   const onTabChange = (nextTab) => {
-    setActiveTab(normalizeSettingsTabKey(nextTab));
+    if (typeof onChangeActiveTab === 'function') onChangeActiveTab(normalizeSettingsTabKey(nextTab));
   };
 
   const tabContent = useMemo(() => {
-    if (activeTab === 'tts') {
+    if (resolvedActiveTab === 'tts') {
       return (
         <TtsTab
           controlBarProps={controlBarProps}
@@ -723,7 +720,7 @@ export function SettingsPanel({
         />
       );
     }
-    if (activeTab === 'debug') {
+    if (resolvedActiveTab === 'debug') {
       return (
         <DebugTab
           showHistoryPanel={showHistoryPanel}
@@ -735,27 +732,27 @@ export function SettingsPanel({
         />
       );
     }
-    if (activeTab === 'ops') {
+    if (resolvedActiveTab === 'ops') {
       return <OpsTab stagePanelProps={stagePanelProps} onQuickSummary={onQuickSummary} onPrevStop={onPrevStop} onNextStop={onNextStop} />;
     }
-    if (activeTab === 'qa') {
+    if (resolvedActiveTab === 'qa') {
       return <QaTab controlBarProps={controlBarProps} />;
     }
-    if (activeTab === 'archive') {
+    if (resolvedActiveTab === 'archive') {
       return <ArchiveTab controlBarProps={controlBarProps} ttsMode={ttsMode} modelscopeVoice={modelscopeVoice} />;
     }
-    if (activeTab === 'asr') {
+    if (resolvedActiveTab === 'asr') {
       return <AsrTab controlBarProps={controlBarProps} />;
     }
-    if (activeTab === 'mode') {
+    if (resolvedActiveTab === 'mode') {
       return <ModeTab controlBarProps={controlBarProps} />;
     }
-    if (activeTab === 'stop_prompt') {
+    if (resolvedActiveTab === 'stop_prompt') {
       return <StopPromptTab controlBarProps={controlBarProps} />;
     }
     return <TemplateTab tourModePanelProps={tourModePanelProps} />;
   }, [
-    activeTab,
+    resolvedActiveTab,
     controlBarProps,
     ttsMode,
     modelscopeVoice,
@@ -781,7 +778,7 @@ export function SettingsPanel({
           <div className="settings-title">设置</div>
         </div>
         <div className="settings-body">
-          <TabBar activeTab={activeTab} onTabChange={onTabChange} />
+          <TabBar activeTab={resolvedActiveTab} onTabChange={onTabChange} />
           <div className="settings-tab-panel">{tabContent}</div>
         </div>
       </aside>
@@ -790,7 +787,7 @@ export function SettingsPanel({
 
   return (
     <SettingsDrawer open={open} title="设置" onClose={onClose}>
-      <TabBar activeTab={activeTab} onTabChange={onTabChange} />
+      <TabBar activeTab={resolvedActiveTab} onTabChange={onTabChange} />
       <div className="settings-tab-panel">{tabContent}</div>
     </SettingsDrawer>
   );

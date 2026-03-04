@@ -5,6 +5,8 @@ import { VOICE_DEBUG, WAKE_HOLD_MS } from '../config/features';
 export function useVoiceInputManager({
   baseUrl,
   minRecordMs = 900,
+  asrStopGraceMs = 480,
+  asrFinalWaitMs = 1500,
   clientIdRef,
   setInputText,
   getInputText,
@@ -84,6 +86,8 @@ export function useVoiceInputManager({
       audioContextRef,
       // Wake word is judged after ASR correction on the frontend.
       wsRequireWake: false,
+      asrStopGraceMs,
+      asrFinalWaitMs,
       wakeWord,
       wakeWordStrict,
       wakeWordCooldownMs,
@@ -95,6 +99,8 @@ export function useVoiceInputManager({
     manager.setRecordingDeps(deps);
   }, [
     audioContextRef,
+    asrFinalWaitMs,
+    asrStopGraceMs,
     baseUrl,
     clientIdRef,
     decodeAndConvertToWav16kMono,

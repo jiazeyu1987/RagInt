@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { useLocalStorageState } from './useLocalStorageState';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { fetchAppSettings, saveAppSettings } from '../api/backendClient';
 import { TourTemplateManager } from '../managers/TourTemplateManager';
 import {
   DEFAULT_ASR_FILTER_CHAT_NAME,
@@ -8,6 +8,7 @@ import {
 } from '../config/asrFilter';
 
 const ALLOWED_TTS_FETCH_CONCURRENCY = new Set([2, 4, 6, 8, 10]);
+const ALLOWED_TTS_MODES = new Set(['sovtts1', 'sovtts2', 'modelscope', 'flash', 'sapi', 'edge']);
 const FLASH_VOICE_OPTIONS = new Set(['longanyang', 'longanhuan']);
 const STOP_DURATION_TEMPLATE_KEYS = ['tpl_1m', 'tpl_2m', 'tpl_3m', 'tpl_4m', 'tpl_5m'];
 const STOP_DURATION_TEMPLATE_BASE_SECONDS = {
@@ -17,6 +18,44 @@ const STOP_DURATION_TEMPLATE_BASE_SECONDS = {
   tpl_4m: 240,
   tpl_5m: 300,
 };
+const DEFAULT_SETTINGS_TAB = 'tts';
+
+function normalizeBoolean(value, defaultValue = false) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  const text = String(value == null ? '' : value).trim().toLowerCase();
+  if (!text) return !!defaultValue;
+  if (text === '1' || text === 'true' || text === 'yes' || text === 'on') return true;
+  if (text === '0' || text === 'false' || text === 'no' || text === 'off') return false;
+  return !!defaultValue;
+}
+
+function normalizeInteger(value, fallback, { min = null, max = null } = {}) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  let out = Math.round(n);
+  if (Number.isFinite(min)) out = Math.max(Number(min), out);
+  if (Number.isFinite(max)) out = Math.min(Number(max), out);
+  return out;
+}
+
+function normalizeNumber(value, fallback, { min = null, max = null } = {}) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  let out = n;
+  if (Number.isFinite(min)) out = Math.max(Number(min), out);
+  if (Number.isFinite(max)) out = Math.min(Number(max), out);
+  return out;
+}
+
+function normalizeTtsMode(value) {
+  const mode = String(value || 'modelscope')
+    .trim()
+    .toLowerCase();
+  if (mode === 'online') return 'modelscope';
+  if (mode === 'local') return 'sovtts1';
+  return ALLOWED_TTS_MODES.has(mode) ? mode : 'modelscope';
+}
 
 function normalizeTtsFetchConcurrency(value) {
   const n = Number(value);
@@ -46,6 +85,11 @@ function normalizeQaAudioCacheConfidenceThreshold(value) {
   const n = Number(s);
   if (!Number.isFinite(n)) return '0.85';
   return String(Math.max(0, Math.min(1, n)));
+}
+
+function normalizeStringList(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item || '').trim()).filter(Boolean);
 }
 
 function normalizeTourStopDurationsOverride(value) {
@@ -115,388 +159,364 @@ function normalizeTourStopDurationTemplates(value) {
   return out;
 }
 
-export function useAppSettings() {
-  const [ttsMode, setTtsMode] = useLocalStorageState('ttsMode', 'modelscope', {
-    serialize: (v) => String(v || 'modelscope'),
-    deserialize: (raw) => {
-      const m = String(raw || 'modelscope')
-        .trim()
-        .toLowerCase();
-      if (m === 'online') return 'modelscope'; // backward compat
-      if (m === 'local') return 'sovtts1'; // backward compat
-      if (m === 'sovtts1' || m === 'sovtts2' || m === 'modelscope' || m === 'flash' || m === 'sapi' || m === 'edge') return m;
-      return 'modelscope';
-    },
-  });
+function normalizeSettingsTabKey(value) {
+  const key = String(value || '').trim();
+  return key || DEFAULT_SETTINGS_TAB;
+}
 
-  const [modelscopeVoice, setModelscopeVoice] = useLocalStorageState('ttsModelscopeVoice', '', {
-    serialize: (v) => String(v || ''),
-    deserialize: (raw) => String(raw || ''),
-  });
+function buildDefaultSettings() {
+  return {
+    ttsMode: 'modelscope',
+    modelscopeVoice: '',
+    ttsSpeed: 1.0,
+    ttsFetchConcurrency: 4,
+    guideEnabled: true,
+    continuousTour: false,
+    tourRecordingEnabled: false,
+    playTourRecordingEnabled: false,
+    selectedTourRecordingId: '',
+    guideDuration: '10',
+    guideStyle: 'friendly',
+    qaAnswerTargetChars: '10',
+    qaAudioCacheConfidenceThreshold: '0.85',
+    qaAudioCacheLookupEnabled: true,
+    showHistoryPanel: false,
+    showDebugPanel: false,
+    tourZone: '',
+    audienceProfile: '',
+    groupMode: false,
+    speakerName: '观众A',
+    tourSelectedStopIndex: 0,
+    tourTemplateId: '',
+    tourStopsOverride: [],
+    tourStopDurationsOverride: {},
+    tourStopPromptOverrides: {},
+    tourGuideTemplates: [],
+    tourGuideTemplateId: '',
+    tourStopDurationTemplateKey: STOP_DURATION_TEMPLATE_KEYS[0],
+    tourStopDurationTemplates: buildDefaultTourStopDurationTemplates(),
+    wakeWordEnabled: false,
+    wakeWord: '你好小D',
+    wakeWordCooldownMs: 5000,
+    wakeWordStrict: false,
+    globalPromptPrefix: '',
+    asrTextFilterEnabled: false,
+    asrTextFilterChatName: DEFAULT_ASR_FILTER_CHAT_NAME,
+    asrTextFilterTerms: DEFAULT_ASR_FILTER_TERMS,
+    asrTextFilterPrompt: DEFAULT_ASR_FILTER_PROMPT,
+    settingsActiveTab: DEFAULT_SETTINGS_TAB,
+    asrMinRecordMs: 900,
+    asrStopGraceMs: 480,
+    asrFinalWaitMs: 1500,
+  };
+}
 
-  useEffect(() => {
-    const mode = String(ttsMode || '').trim().toLowerCase();
-    const voice = String(modelscopeVoice || '').trim();
-    if (mode === 'flash') {
-      if (!FLASH_VOICE_OPTIONS.has(voice)) setModelscopeVoice('longanyang');
-    }
-  }, [ttsMode, modelscopeVoice, setModelscopeVoice]);
-
-  const [ttsSpeed, setTtsSpeed] = useLocalStorageState('ttsSpeed', 1.0, {
-    serialize: (v) => String(Number.isFinite(Number(v)) ? Number(v) : 1.0),
-    deserialize: (raw) => {
-      const n = Number(raw);
-      return Number.isFinite(n) ? n : 1.0;
-    },
-  });
-
-  const [ttsFetchConcurrency, setTtsFetchConcurrency] = useLocalStorageState('ttsFetchConcurrency', 4, {
-    serialize: (v) => String(normalizeTtsFetchConcurrency(v)),
-    deserialize: (raw) => normalizeTtsFetchConcurrency(raw),
-  });
-
-  const [guideEnabled, setGuideEnabled] = useLocalStorageState('guideEnabled', true, {
-    serialize: (v) => (v ? '1' : '0'),
-    deserialize: (raw) => String(raw) === '1',
-  });
-
-  const [continuousTour, setContinuousTour] = useLocalStorageState('continuousTour', false, {
-    serialize: (v) => (v ? '1' : '0'),
-    deserialize: (raw) => String(raw) === '1',
-  });
-
-  const [tourRecordingEnabled, setTourRecordingEnabled] = useLocalStorageState('tourRecordingEnabled', false, {
-    serialize: (v) => (v ? '1' : '0'),
-    deserialize: (raw) => String(raw) === '1',
-  });
-
-  const [playTourRecordingEnabled, setPlayTourRecordingEnabled] = useLocalStorageState('playTourRecordingEnabled', false, {
-    serialize: (v) => (v ? '1' : '0'),
-    deserialize: (raw) => String(raw) === '1',
-  });
-
-  const [selectedTourRecordingId, setSelectedTourRecordingId] = useLocalStorageState('selectedTourRecordingId', '', {
-    serialize: (v) => String(v || ''),
-    deserialize: (raw) => String(raw || ''),
-  });
-
-  const [guideDuration, setGuideDurationState] = useLocalStorageState('guideDuration', '10', {
-    serialize: (v) => normalizeGuideDuration(v),
-    deserialize: (raw) => normalizeGuideDuration(raw),
-  });
-  const setGuideDuration = (value) => setGuideDurationState(normalizeGuideDuration(value));
-
-  const [guideStyle, setGuideStyle] = useLocalStorageState('guideStyle', 'friendly', {
-    serialize: (v) => String(v || 'friendly'),
-    deserialize: (raw) => String(raw || 'friendly'),
-  });
-
-  const [qaAnswerTargetChars, setQaAnswerTargetCharsState] = useLocalStorageState('qaAnswerTargetChars', '10', {
-    serialize: (v) => normalizeQaAnswerTargetChars(v),
-    deserialize: (raw) => normalizeQaAnswerTargetChars(raw),
-  });
-  const setQaAnswerTargetChars = (value) => setQaAnswerTargetCharsState(normalizeQaAnswerTargetChars(value));
-
-  const [qaAudioCacheConfidenceThreshold, setQaAudioCacheConfidenceThresholdState] = useLocalStorageState(
-    'qaAudioCacheConfidenceThreshold',
-    '0.85',
-    {
-      serialize: (v) => normalizeQaAudioCacheConfidenceThreshold(v),
-      deserialize: (raw) => normalizeQaAudioCacheConfidenceThreshold(raw),
-    }
-  );
-  const setQaAudioCacheConfidenceThreshold = (value) =>
-    setQaAudioCacheConfidenceThresholdState(normalizeQaAudioCacheConfidenceThreshold(value));
-
-  const [qaAudioCacheLookupEnabled, setQaAudioCacheLookupEnabled] = useLocalStorageState(
-    'qaAudioCacheLookupEnabled',
-    true,
-    {
-      serialize: (v) => (v ? '1' : '0'),
-      deserialize: (raw) => String(raw) !== '0',
-    }
-  );
-
-  const [showHistoryPanel, setShowHistoryPanel] = useLocalStorageState('uiShowHistory', false, {
-    serialize: (v) => (v ? '1' : '0'),
-    deserialize: (raw) => String(raw) === '1',
-  });
-
-  const [showDebugPanel, setShowDebugPanel] = useLocalStorageState('uiShowDebug', false, {
-    serialize: (v) => (v ? '1' : '0'),
-    deserialize: (raw) => String(raw) === '1',
-  });
-
-  const [tourZone, setTourZone] = useLocalStorageState('tourZone', '', {
-    serialize: (v) => String(v || ''),
-    deserialize: (raw) => String(raw || ''),
-  });
-
-  const [audienceProfile, setAudienceProfile] = useLocalStorageState('audienceProfile', '', {
-    serialize: (v) => String(v || ''),
-    deserialize: (raw) => String(raw || ''),
-  });
-
-  const [groupMode, setGroupMode] = useLocalStorageState('groupMode', false, {
-    serialize: (v) => (v ? '1' : '0'),
-    deserialize: (raw) => String(raw) === '1',
-  });
-
-  const [speakerName, setSpeakerName] = useLocalStorageState('speakerName', '观众A', {
-    serialize: (v) => String(v || '观众A'),
-    deserialize: (raw) => String(raw || '观众A'),
-  });
-
-  const [tourSelectedStopIndex, setTourSelectedStopIndex] = useLocalStorageState('tourSelectedStopIndex', 0, {
-    serialize: (v) => String(Number.isFinite(Number(v)) ? Number(v) : 0),
-    deserialize: (raw) => {
-      const n = Number(raw);
-      return Number.isFinite(n) ? n : 0;
-    },
-  });
-
-  const [tourTemplateId, setTourTemplateId] = useLocalStorageState('tourTemplateId', '', {
-    serialize: (v) => String(v || ''),
-    deserialize: (raw) => String(raw || ''),
-  });
-
-  const [tourStopsOverride, setTourStopsOverride] = useLocalStorageState('tourStopsOverride', [], {
-    serialize: (v) => JSON.stringify(Array.isArray(v) ? v : []),
-    deserialize: (raw) => {
-      try {
-        const arr = JSON.parse(raw);
-        return Array.isArray(arr) ? arr.map((x) => String(x || '').trim()).filter(Boolean) : [];
-      } catch (_) {
-        return [];
-      }
-    },
-  });
-
-  const [tourStopDurationsOverride, setTourStopDurationsOverrideState] = useLocalStorageState(
-    'tourStopDurationsOverride',
-    {},
-    {
-      serialize: (v) => JSON.stringify(normalizeTourStopDurationsOverride(v)),
-      deserialize: (raw) => {
-        try {
-          return normalizeTourStopDurationsOverride(JSON.parse(raw));
-        } catch (_) {
-          return {};
-        }
-      },
-    }
-  );
-  const setTourStopDurationsOverride = (value) =>
-    setTourStopDurationsOverrideState((prev) => {
-      const next = typeof value === 'function' ? value(prev) : value;
-      return normalizeTourStopDurationsOverride(next);
-    });
-
-  const [tourStopPromptOverrides, setTourStopPromptOverridesState] = useLocalStorageState(
-    'tourStopPromptOverrides',
-    {},
-    {
-      serialize: (v) => JSON.stringify(normalizeTourStopPromptOverrides(v)),
-      deserialize: (raw) => {
-        try {
-          return normalizeTourStopPromptOverrides(JSON.parse(raw));
-        } catch (_) {
-          return {};
-        }
-      },
-    }
-  );
-  const setTourStopPromptOverrides = (value) =>
-    setTourStopPromptOverridesState((prev) => {
-      const next = typeof value === 'function' ? value(prev) : value;
-      return normalizeTourStopPromptOverrides(next);
-    });
-
-  const [tourGuideTemplates, setTourGuideTemplatesState] = useLocalStorageState('tourGuideTemplates', [], {
-    serialize: (v) => JSON.stringify(normalizeTourGuideTemplates(v)),
-    deserialize: (raw) => {
-      try {
-        return normalizeTourGuideTemplates(JSON.parse(raw));
-      } catch (_) {
-        return [];
-      }
-    },
-  });
-  const setTourGuideTemplates = (value) =>
-    setTourGuideTemplatesState((prev) => {
-      const next = typeof value === 'function' ? value(prev) : value;
-      return normalizeTourGuideTemplates(next);
-    });
-
-  const [tourGuideTemplateId, setTourGuideTemplateId] = useLocalStorageState('tourGuideTemplateId', '', {
-    serialize: (v) => String(v || ''),
-    deserialize: (raw) => String(raw || ''),
-  });
-
-  const [tourStopDurationTemplateKey, setTourStopDurationTemplateKeyState] = useLocalStorageState(
-    'tourStopDurationTemplateKey',
-    STOP_DURATION_TEMPLATE_KEYS[0],
-    {
-      serialize: (v) => normalizeTourStopDurationTemplateKey(v),
-      deserialize: (raw) => normalizeTourStopDurationTemplateKey(raw),
-    }
-  );
-  const setTourStopDurationTemplateKey = (value) =>
-    setTourStopDurationTemplateKeyState(normalizeTourStopDurationTemplateKey(value));
-
-  const [tourStopDurationTemplates, setTourStopDurationTemplatesState] = useLocalStorageState(
-    'tourStopDurationTemplates',
-    buildDefaultTourStopDurationTemplates(),
-    {
-      serialize: (v) => JSON.stringify(normalizeTourStopDurationTemplates(v)),
-      deserialize: (raw) => {
-        try {
-          return normalizeTourStopDurationTemplates(JSON.parse(raw));
-        } catch (_) {
-          return buildDefaultTourStopDurationTemplates();
-        }
-      },
-    }
-  );
-  const setTourStopDurationTemplates = (value) =>
-    setTourStopDurationTemplatesState((prev) => {
-      const next = typeof value === 'function' ? value(prev) : value;
-      return normalizeTourStopDurationTemplates(next);
-    });
-
-  const [wakeWordEnabled, setWakeWordEnabled] = useLocalStorageState('wakeWordEnabled', false, {
-    serialize: (v) => (v ? '1' : '0'),
-    deserialize: (raw) => String(raw) === '1',
-  });
-
-  const [wakeWord, setWakeWord] = useLocalStorageState('wakeWord', '你好小R', {
-    serialize: (v) => String(v || '你好小R'),
-    deserialize: (raw) => String(raw || '你好小R'),
-  });
-
-  const [wakeWordCooldownMs, setWakeWordCooldownMs] = useLocalStorageState('wakeWordCooldownMs', 5000, {
-    serialize: (v) => String(Number.isFinite(Number(v)) ? Number(v) : 5000),
-    deserialize: (raw) => {
-      const n = Number(raw);
-      return Number.isFinite(n) ? n : 5000;
-    },
-  });
-
-  // Default to non-strict to better match real ASR behavior (often includes leading filler like "嗯/啊").
-  const [wakeWordStrict, setWakeWordStrict] = useLocalStorageState('wakeWordStrict', false, {
-    serialize: (v) => (v ? '1' : '0'),
-    deserialize: (raw) => String(raw) === '1',
-  });
-
-  const [globalPromptPrefix, setGlobalPromptPrefix] = useLocalStorageState('globalPromptPrefix', '', {
-    serialize: (v) => String(v || ''),
-    deserialize: (raw) => String(raw || ''),
-  });
-
-  const [asrTextFilterEnabled, setAsrTextFilterEnabled] = useLocalStorageState('asrTextFilterEnabled', false, {
-    serialize: (v) => (v ? '1' : '0'),
-    deserialize: (raw) => String(raw) !== '0',
-  });
-
-  const [asrTextFilterChatName, setAsrTextFilterChatName] = useLocalStorageState(
-    'asrTextFilterChatName',
-    DEFAULT_ASR_FILTER_CHAT_NAME,
-    {
-      serialize: (v) => String(v || DEFAULT_ASR_FILTER_CHAT_NAME),
-      deserialize: (raw) => String(raw || DEFAULT_ASR_FILTER_CHAT_NAME),
-    }
-  );
-
-  const [asrTextFilterTerms, setAsrTextFilterTerms] = useLocalStorageState('asrTextFilterTerms', DEFAULT_ASR_FILTER_TERMS, {
-    serialize: (v) => String(v || ''),
-    deserialize: (raw) => String(raw || DEFAULT_ASR_FILTER_TERMS),
-  });
-
-  const [asrTextFilterPrompt, setAsrTextFilterPrompt] = useLocalStorageState(
-    'asrTextFilterPrompt',
-    DEFAULT_ASR_FILTER_PROMPT,
-    {
-      serialize: (v) => String(v || ''),
-      deserialize: (raw) => String(raw || DEFAULT_ASR_FILTER_PROMPT),
-    }
-  );
+function normalizeAppSettings(value) {
+  const defaults = buildDefaultSettings();
+  const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const ttsMode = normalizeTtsMode(raw.ttsMode);
+  let modelscopeVoice = String(raw.modelscopeVoice == null ? defaults.modelscopeVoice : raw.modelscopeVoice).trim();
+  if (ttsMode === 'flash' && !FLASH_VOICE_OPTIONS.has(modelscopeVoice)) {
+    modelscopeVoice = 'longanyang';
+  }
 
   return {
     ttsMode,
-    setTtsMode,
     modelscopeVoice,
+    ttsSpeed: normalizeNumber(raw.ttsSpeed, defaults.ttsSpeed, { min: 0.5, max: 3 }),
+    ttsFetchConcurrency: normalizeTtsFetchConcurrency(raw.ttsFetchConcurrency),
+    guideEnabled: normalizeBoolean(raw.guideEnabled, defaults.guideEnabled),
+    continuousTour: normalizeBoolean(raw.continuousTour, defaults.continuousTour),
+    tourRecordingEnabled: normalizeBoolean(raw.tourRecordingEnabled, defaults.tourRecordingEnabled),
+    playTourRecordingEnabled: normalizeBoolean(raw.playTourRecordingEnabled, defaults.playTourRecordingEnabled),
+    selectedTourRecordingId: String(raw.selectedTourRecordingId == null ? defaults.selectedTourRecordingId : raw.selectedTourRecordingId),
+    guideDuration: normalizeGuideDuration(raw.guideDuration),
+    guideStyle: String(raw.guideStyle == null ? defaults.guideStyle : raw.guideStyle).trim() || defaults.guideStyle,
+    qaAnswerTargetChars: normalizeQaAnswerTargetChars(raw.qaAnswerTargetChars),
+    qaAudioCacheConfidenceThreshold: normalizeQaAudioCacheConfidenceThreshold(raw.qaAudioCacheConfidenceThreshold),
+    qaAudioCacheLookupEnabled: normalizeBoolean(raw.qaAudioCacheLookupEnabled, defaults.qaAudioCacheLookupEnabled),
+    showHistoryPanel: normalizeBoolean(raw.showHistoryPanel, defaults.showHistoryPanel),
+    showDebugPanel: normalizeBoolean(raw.showDebugPanel, defaults.showDebugPanel),
+    tourZone: String(raw.tourZone == null ? defaults.tourZone : raw.tourZone),
+    audienceProfile: String(raw.audienceProfile == null ? defaults.audienceProfile : raw.audienceProfile),
+    groupMode: normalizeBoolean(raw.groupMode, defaults.groupMode),
+    speakerName: String(raw.speakerName == null ? defaults.speakerName : raw.speakerName) || defaults.speakerName,
+    tourSelectedStopIndex: normalizeInteger(raw.tourSelectedStopIndex, defaults.tourSelectedStopIndex, { min: 0 }),
+    tourTemplateId: String(raw.tourTemplateId == null ? defaults.tourTemplateId : raw.tourTemplateId),
+    tourStopsOverride: normalizeStringList(raw.tourStopsOverride),
+    tourStopDurationsOverride: normalizeTourStopDurationsOverride(raw.tourStopDurationsOverride),
+    tourStopPromptOverrides: normalizeTourStopPromptOverrides(raw.tourStopPromptOverrides),
+    tourGuideTemplates: normalizeTourGuideTemplates(raw.tourGuideTemplates),
+    tourGuideTemplateId: String(raw.tourGuideTemplateId == null ? defaults.tourGuideTemplateId : raw.tourGuideTemplateId),
+    tourStopDurationTemplateKey: normalizeTourStopDurationTemplateKey(raw.tourStopDurationTemplateKey),
+    tourStopDurationTemplates: normalizeTourStopDurationTemplates(raw.tourStopDurationTemplates),
+    wakeWordEnabled: normalizeBoolean(raw.wakeWordEnabled, defaults.wakeWordEnabled),
+    wakeWord: String(raw.wakeWord == null ? defaults.wakeWord : raw.wakeWord) || defaults.wakeWord,
+    wakeWordCooldownMs: normalizeInteger(raw.wakeWordCooldownMs, defaults.wakeWordCooldownMs, { min: 0, max: 120000 }),
+    wakeWordStrict: normalizeBoolean(raw.wakeWordStrict, defaults.wakeWordStrict),
+    globalPromptPrefix: String(raw.globalPromptPrefix == null ? defaults.globalPromptPrefix : raw.globalPromptPrefix),
+    asrTextFilterEnabled: normalizeBoolean(raw.asrTextFilterEnabled, defaults.asrTextFilterEnabled),
+    asrTextFilterChatName:
+      String(raw.asrTextFilterChatName == null ? defaults.asrTextFilterChatName : raw.asrTextFilterChatName).trim() ||
+      defaults.asrTextFilterChatName,
+    asrTextFilterTerms: String(raw.asrTextFilterTerms == null ? defaults.asrTextFilterTerms : raw.asrTextFilterTerms),
+    asrTextFilterPrompt:
+      String(raw.asrTextFilterPrompt == null ? defaults.asrTextFilterPrompt : raw.asrTextFilterPrompt) || defaults.asrTextFilterPrompt,
+    settingsActiveTab: normalizeSettingsTabKey(raw.settingsActiveTab),
+    asrMinRecordMs: normalizeInteger(raw.asrMinRecordMs, defaults.asrMinRecordMs, { min: 200, max: 10000 }),
+    asrStopGraceMs: normalizeInteger(raw.asrStopGraceMs, defaults.asrStopGraceMs, { min: 0, max: 5000 }),
+    asrFinalWaitMs: normalizeInteger(raw.asrFinalWaitMs, defaults.asrFinalWaitMs, { min: 200, max: 10000 }),
+  };
+}
+
+function readLegacySettingsFromLocalStorage() {
+  if (typeof window === 'undefined' || !window.localStorage) return {};
+  const read = (key) => {
+    try {
+      return window.localStorage.getItem(key);
+    } catch (_) {
+      return null;
+    }
+  };
+  const readJson = (key, fallback) => {
+    const raw = read(key);
+    if (!raw) return fallback;
+    try {
+      return JSON.parse(raw);
+    } catch (_) {
+      return fallback;
+    }
+  };
+
+  const out = {};
+  const assign = (field, key, transform = (value) => value) => {
+    const raw = read(key);
+    if (raw == null) return;
+    out[field] = transform(raw);
+  };
+
+  assign('ttsMode', 'ttsMode');
+  assign('modelscopeVoice', 'ttsModelscopeVoice');
+  assign('ttsSpeed', 'ttsSpeed', Number);
+  assign('ttsFetchConcurrency', 'ttsFetchConcurrency', Number);
+  assign('guideEnabled', 'guideEnabled');
+  assign('continuousTour', 'continuousTour');
+  assign('tourRecordingEnabled', 'tourRecordingEnabled');
+  assign('playTourRecordingEnabled', 'playTourRecordingEnabled');
+  assign('selectedTourRecordingId', 'selectedTourRecordingId');
+  assign('guideDuration', 'guideDuration');
+  assign('guideStyle', 'guideStyle');
+  assign('qaAnswerTargetChars', 'qaAnswerTargetChars');
+  assign('qaAudioCacheConfidenceThreshold', 'qaAudioCacheConfidenceThreshold');
+  assign('qaAudioCacheLookupEnabled', 'qaAudioCacheLookupEnabled');
+  assign('showHistoryPanel', 'uiShowHistory');
+  assign('showDebugPanel', 'uiShowDebug');
+  assign('tourZone', 'tourZone');
+  assign('audienceProfile', 'audienceProfile');
+  assign('groupMode', 'groupMode');
+  assign('speakerName', 'speakerName');
+  assign('tourSelectedStopIndex', 'tourSelectedStopIndex', Number);
+  assign('tourTemplateId', 'tourTemplateId');
+  assign('tourGuideTemplateId', 'tourGuideTemplateId');
+  assign('tourStopDurationTemplateKey', 'tourStopDurationTemplateKey');
+  assign('wakeWordEnabled', 'wakeWordEnabled');
+  assign('wakeWord', 'wakeWord');
+  assign('wakeWordCooldownMs', 'wakeWordCooldownMs', Number);
+  assign('wakeWordStrict', 'wakeWordStrict');
+  assign('globalPromptPrefix', 'globalPromptPrefix');
+  assign('asrTextFilterEnabled', 'asrTextFilterEnabled');
+  assign('asrTextFilterChatName', 'asrTextFilterChatName');
+  assign('asrTextFilterTerms', 'asrTextFilterTerms');
+  assign('asrTextFilterPrompt', 'asrTextFilterPrompt');
+  assign('settingsActiveTab', 'settingsActiveTab');
+
+  out.tourStopsOverride = readJson('tourStopsOverride', []);
+  out.tourStopDurationsOverride = readJson('tourStopDurationsOverride', {});
+  out.tourStopPromptOverrides = readJson('tourStopPromptOverrides', {});
+  out.tourGuideTemplates = readJson('tourGuideTemplates', []);
+  out.tourStopDurationTemplates = readJson('tourStopDurationTemplates', buildDefaultTourStopDurationTemplates());
+  return out;
+}
+
+export function useAppSettings(clientId) {
+  const [settings, setSettings] = useState(() => buildDefaultSettings());
+  const [settingsReady, setSettingsReady] = useState(false);
+  const lastSavedJsonRef = useRef('');
+  const saveTimerRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSettingsReady(false);
+
+    (async () => {
+      try {
+        const res = await fetchAppSettings({ clientId });
+        const serverSettings = (res && res.settings) || {};
+        const hasServerSettings = !!(serverSettings && typeof serverSettings === 'object' && Object.keys(serverSettings).length);
+        const next = hasServerSettings ? normalizeAppSettings(serverSettings) : normalizeAppSettings(readLegacySettingsFromLocalStorage());
+        if (cancelled) return;
+        lastSavedJsonRef.current = hasServerSettings ? JSON.stringify(next) : '';
+        setSettings(next);
+      } catch (_) {
+        if (cancelled) return;
+        setSettings((prev) => normalizeAppSettings(prev));
+        lastSavedJsonRef.current = '';
+      } finally {
+        if (!cancelled) setSettingsReady(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
+
+  useEffect(() => {
+    return () => {
+      if (!saveTimerRef.current) return;
+      try {
+        clearTimeout(saveTimerRef.current);
+      } catch (_) {
+        // ignore
+      }
+      saveTimerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!settingsReady) return;
+    const serialized = JSON.stringify(settings);
+    if (serialized === lastSavedJsonRef.current) return;
+
+    if (saveTimerRef.current) {
+      try {
+        clearTimeout(saveTimerRef.current);
+      } catch (_) {
+        // ignore
+      }
+      saveTimerRef.current = null;
+    }
+
+    saveTimerRef.current = window.setTimeout(async () => {
+      try {
+        await saveAppSettings({ clientId, settings });
+        lastSavedJsonRef.current = serialized;
+      } catch (_) {
+        // ignore
+      } finally {
+        saveTimerRef.current = null;
+      }
+    }, 300);
+
+    return () => {
+      if (!saveTimerRef.current) return;
+      try {
+        clearTimeout(saveTimerRef.current);
+      } catch (_) {
+        // ignore
+      }
+      saveTimerRef.current = null;
+    };
+  }, [clientId, settings, settingsReady]);
+
+  const updateSetting = useCallback((key, valueOrUpdater) => {
+    setSettings((prev) => {
+      const base = normalizeAppSettings(prev);
+      const nextValue = typeof valueOrUpdater === 'function' ? valueOrUpdater(base[key]) : valueOrUpdater;
+      return normalizeAppSettings({ ...base, [key]: nextValue });
+    });
+  }, []);
+
+  const setTtsMode = useCallback((value) => updateSetting('ttsMode', value), [updateSetting]);
+  const setModelscopeVoice = useCallback((value) => updateSetting('modelscopeVoice', value), [updateSetting]);
+  const setTtsSpeed = useCallback((value) => updateSetting('ttsSpeed', value), [updateSetting]);
+  const setTtsFetchConcurrency = useCallback((value) => updateSetting('ttsFetchConcurrency', value), [updateSetting]);
+  const setGuideEnabled = useCallback((value) => updateSetting('guideEnabled', value), [updateSetting]);
+  const setContinuousTour = useCallback((value) => updateSetting('continuousTour', value), [updateSetting]);
+  const setTourRecordingEnabled = useCallback((value) => updateSetting('tourRecordingEnabled', value), [updateSetting]);
+  const setPlayTourRecordingEnabled = useCallback((value) => updateSetting('playTourRecordingEnabled', value), [updateSetting]);
+  const setSelectedTourRecordingId = useCallback((value) => updateSetting('selectedTourRecordingId', value), [updateSetting]);
+  const setGuideDuration = useCallback((value) => updateSetting('guideDuration', value), [updateSetting]);
+  const setGuideStyle = useCallback((value) => updateSetting('guideStyle', value), [updateSetting]);
+  const setQaAnswerTargetChars = useCallback((value) => updateSetting('qaAnswerTargetChars', value), [updateSetting]);
+  const setQaAudioCacheConfidenceThreshold = useCallback(
+    (value) => updateSetting('qaAudioCacheConfidenceThreshold', value),
+    [updateSetting]
+  );
+  const setQaAudioCacheLookupEnabled = useCallback((value) => updateSetting('qaAudioCacheLookupEnabled', value), [updateSetting]);
+  const setShowHistoryPanel = useCallback((value) => updateSetting('showHistoryPanel', value), [updateSetting]);
+  const setShowDebugPanel = useCallback((value) => updateSetting('showDebugPanel', value), [updateSetting]);
+  const setTourZone = useCallback((value) => updateSetting('tourZone', value), [updateSetting]);
+  const setAudienceProfile = useCallback((value) => updateSetting('audienceProfile', value), [updateSetting]);
+  const setGroupMode = useCallback((value) => updateSetting('groupMode', value), [updateSetting]);
+  const setSpeakerName = useCallback((value) => updateSetting('speakerName', value), [updateSetting]);
+  const setTourSelectedStopIndex = useCallback((value) => updateSetting('tourSelectedStopIndex', value), [updateSetting]);
+  const setTourTemplateId = useCallback((value) => updateSetting('tourTemplateId', value), [updateSetting]);
+  const setTourStopsOverride = useCallback((value) => updateSetting('tourStopsOverride', value), [updateSetting]);
+  const setTourStopDurationsOverride = useCallback((value) => updateSetting('tourStopDurationsOverride', value), [updateSetting]);
+  const setTourStopPromptOverrides = useCallback((value) => updateSetting('tourStopPromptOverrides', value), [updateSetting]);
+  const setTourGuideTemplates = useCallback((value) => updateSetting('tourGuideTemplates', value), [updateSetting]);
+  const setTourGuideTemplateId = useCallback((value) => updateSetting('tourGuideTemplateId', value), [updateSetting]);
+  const setTourStopDurationTemplateKey = useCallback((value) => updateSetting('tourStopDurationTemplateKey', value), [updateSetting]);
+  const setTourStopDurationTemplates = useCallback((value) => updateSetting('tourStopDurationTemplates', value), [updateSetting]);
+  const setWakeWordEnabled = useCallback((value) => updateSetting('wakeWordEnabled', value), [updateSetting]);
+  const setWakeWord = useCallback((value) => updateSetting('wakeWord', value), [updateSetting]);
+  const setWakeWordCooldownMs = useCallback((value) => updateSetting('wakeWordCooldownMs', value), [updateSetting]);
+  const setWakeWordStrict = useCallback((value) => updateSetting('wakeWordStrict', value), [updateSetting]);
+  const setGlobalPromptPrefix = useCallback((value) => updateSetting('globalPromptPrefix', value), [updateSetting]);
+  const setAsrTextFilterEnabled = useCallback((value) => updateSetting('asrTextFilterEnabled', value), [updateSetting]);
+  const setAsrTextFilterChatName = useCallback((value) => updateSetting('asrTextFilterChatName', value), [updateSetting]);
+  const setAsrTextFilterTerms = useCallback((value) => updateSetting('asrTextFilterTerms', value), [updateSetting]);
+  const setAsrTextFilterPrompt = useCallback((value) => updateSetting('asrTextFilterPrompt', value), [updateSetting]);
+  const setSettingsActiveTab = useCallback((value) => updateSetting('settingsActiveTab', value), [updateSetting]);
+  const setAsrMinRecordMs = useCallback((value) => updateSetting('asrMinRecordMs', value), [updateSetting]);
+  const setAsrStopGraceMs = useCallback((value) => updateSetting('asrStopGraceMs', value), [updateSetting]);
+  const setAsrFinalWaitMs = useCallback((value) => updateSetting('asrFinalWaitMs', value), [updateSetting]);
+
+  return {
+    ...settings,
+    settingsReady,
+    setTtsMode,
     setModelscopeVoice,
-    ttsSpeed,
     setTtsSpeed,
-    ttsFetchConcurrency,
     setTtsFetchConcurrency,
-    guideEnabled,
     setGuideEnabled,
-    continuousTour,
     setContinuousTour,
-    tourRecordingEnabled,
     setTourRecordingEnabled,
-    playTourRecordingEnabled,
     setPlayTourRecordingEnabled,
-    selectedTourRecordingId,
     setSelectedTourRecordingId,
-    guideDuration,
     setGuideDuration,
-    guideStyle,
     setGuideStyle,
-    qaAnswerTargetChars,
     setQaAnswerTargetChars,
-    qaAudioCacheConfidenceThreshold,
     setQaAudioCacheConfidenceThreshold,
-    qaAudioCacheLookupEnabled,
     setQaAudioCacheLookupEnabled,
-    showHistoryPanel,
     setShowHistoryPanel,
-    showDebugPanel,
     setShowDebugPanel,
-    tourZone,
     setTourZone,
-    audienceProfile,
     setAudienceProfile,
-    groupMode,
     setGroupMode,
-    speakerName,
     setSpeakerName,
-    tourSelectedStopIndex,
     setTourSelectedStopIndex,
-    tourTemplateId,
     setTourTemplateId,
-    tourStopsOverride,
     setTourStopsOverride,
-    tourStopDurationsOverride,
     setTourStopDurationsOverride,
-    tourStopPromptOverrides,
     setTourStopPromptOverrides,
-    tourGuideTemplates,
     setTourGuideTemplates,
-    tourGuideTemplateId,
     setTourGuideTemplateId,
-    tourStopDurationTemplateKey,
     setTourStopDurationTemplateKey,
-    tourStopDurationTemplates,
     setTourStopDurationTemplates,
-    wakeWordEnabled,
     setWakeWordEnabled,
-    wakeWord,
     setWakeWord,
-    wakeWordCooldownMs,
     setWakeWordCooldownMs,
-    wakeWordStrict,
     setWakeWordStrict,
-    globalPromptPrefix,
     setGlobalPromptPrefix,
-    asrTextFilterEnabled,
     setAsrTextFilterEnabled,
-    asrTextFilterChatName,
     setAsrTextFilterChatName,
-    asrTextFilterTerms,
     setAsrTextFilterTerms,
-    asrTextFilterPrompt,
     setAsrTextFilterPrompt,
+    setSettingsActiveTab,
+    setAsrMinRecordMs,
+    setAsrStopGraceMs,
+    setAsrFinalWaitMs,
   };
 }
