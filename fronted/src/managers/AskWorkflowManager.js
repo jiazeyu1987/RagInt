@@ -403,6 +403,8 @@ export class AskWorkflowManager {
         }
       };
       const emitClientEvent = typeof this.deps.emitClientEvent === 'function' ? this.deps.emitClientEvent : null;
+      const consumePendingAsrClientEvents =
+        typeof this.deps.consumePendingAsrClientEvents === 'function' ? this.deps.consumePendingAsrClientEvents : null;
       const tourAction = options.tourAction ? String(options.tourAction || '').trim() : '';
       if (tourAction) qaAudioCacheLookupEnabled = false;
       const stopIndex = options.tourAction
@@ -453,6 +455,25 @@ export class AskWorkflowManager {
             name: 'nav_arrived',
             fields: { stop_index: stopIndex, stop_id: `stop_${stopIndex}`, tour_action: tourAction, mode: 'skipped' },
           });
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      if (emitClientEvent && consumePendingAsrClientEvents) {
+        try {
+          const bufferedAsrEvents = consumePendingAsrClientEvents();
+          for (const evt of bufferedAsrEvents || []) {
+            const fields = evt && evt.fields && typeof evt.fields === 'object' ? evt.fields : {};
+            const eventName = String((evt && evt.name) || '').trim();
+            if (!eventName) continue;
+            emitClientEvent({
+              requestId,
+              kind: 'voice',
+              name: `asr_${eventName}`,
+              fields,
+            });
+          }
         } catch (_) {
           // ignore
         }

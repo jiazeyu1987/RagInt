@@ -9,6 +9,8 @@ import {
 
 const ALLOWED_TTS_FETCH_CONCURRENCY = new Set([2, 4, 6, 8, 10]);
 const ALLOWED_TTS_MODES = new Set(['sovtts1', 'sovtts2', 'modelscope', 'flash', 'sapi', 'edge']);
+const ALLOWED_ASR_PROVIDER_TYPES = new Set(['voicekit_ws']);
+const ALLOWED_ASR_FINAL_TIMEOUT_STRATEGIES = new Set(['keep_partial', 'keep_input', 'clear_input']);
 const FLASH_VOICE_OPTIONS = new Set(['longanyang', 'longanhuan']);
 const STOP_DURATION_TEMPLATE_KEYS = ['tpl_1m', 'tpl_2m', 'tpl_3m', 'tpl_4m', 'tpl_5m'];
 const STOP_DURATION_TEMPLATE_BASE_SECONDS = {
@@ -61,6 +63,20 @@ function normalizeTtsFetchConcurrency(value) {
   const n = Number(value);
   if (ALLOWED_TTS_FETCH_CONCURRENCY.has(n)) return n;
   return 4;
+}
+
+function normalizeAsrProviderType(value) {
+  const providerType = String(value || 'voicekit_ws')
+    .trim()
+    .toLowerCase();
+  return ALLOWED_ASR_PROVIDER_TYPES.has(providerType) ? providerType : 'voicekit_ws';
+}
+
+function normalizeAsrFinalTimeoutStrategy(value) {
+  const strategy = String(value || 'keep_partial')
+    .trim()
+    .toLowerCase();
+  return ALLOWED_ASR_FINAL_TIMEOUT_STRATEGIES.has(strategy) ? strategy : 'keep_partial';
 }
 
 function normalizeGuideDuration(value) {
@@ -208,6 +224,8 @@ function buildDefaultSettings() {
     asrMinRecordMs: 900,
     asrStopGraceMs: 480,
     asrFinalWaitMs: 1500,
+    asrProviderType: 'voicekit_ws',
+    asrFinalTimeoutStrategy: 'keep_partial',
   };
 }
 
@@ -266,6 +284,8 @@ function normalizeAppSettings(value) {
     asrMinRecordMs: normalizeInteger(raw.asrMinRecordMs, defaults.asrMinRecordMs, { min: 200, max: 10000 }),
     asrStopGraceMs: normalizeInteger(raw.asrStopGraceMs, defaults.asrStopGraceMs, { min: 0, max: 5000 }),
     asrFinalWaitMs: normalizeInteger(raw.asrFinalWaitMs, defaults.asrFinalWaitMs, { min: 200, max: 10000 }),
+    asrProviderType: normalizeAsrProviderType(raw.asrProviderType),
+    asrFinalTimeoutStrategy: normalizeAsrFinalTimeoutStrategy(raw.asrFinalTimeoutStrategy),
   };
 }
 
@@ -329,6 +349,8 @@ function readLegacySettingsFromLocalStorage() {
   assign('asrTextFilterTerms', 'asrTextFilterTerms');
   assign('asrTextFilterPrompt', 'asrTextFilterPrompt');
   assign('settingsActiveTab', 'settingsActiveTab');
+  assign('asrProviderType', 'asrProviderType');
+  assign('asrFinalTimeoutStrategy', 'asrFinalTimeoutStrategy');
 
   out.tourStopsOverride = readJson('tourStopsOverride', []);
   out.tourStopDurationsOverride = readJson('tourStopDurationsOverride', {});
@@ -472,6 +494,8 @@ export function useAppSettings(clientId) {
   const setAsrMinRecordMs = useCallback((value) => updateSetting('asrMinRecordMs', value), [updateSetting]);
   const setAsrStopGraceMs = useCallback((value) => updateSetting('asrStopGraceMs', value), [updateSetting]);
   const setAsrFinalWaitMs = useCallback((value) => updateSetting('asrFinalWaitMs', value), [updateSetting]);
+  const setAsrProviderType = useCallback((value) => updateSetting('asrProviderType', value), [updateSetting]);
+  const setAsrFinalTimeoutStrategy = useCallback((value) => updateSetting('asrFinalTimeoutStrategy', value), [updateSetting]);
 
   return {
     ...settings,
@@ -518,5 +542,7 @@ export function useAppSettings(clientId) {
     setAsrMinRecordMs,
     setAsrStopGraceMs,
     setAsrFinalWaitMs,
+    setAsrProviderType,
+    setAsrFinalTimeoutStrategy,
   };
 }

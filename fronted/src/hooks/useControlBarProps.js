@@ -135,6 +135,13 @@ export function useControlBarProps({
   setAsrStopGraceMs,
   asrFinalWaitMs,
   setAsrFinalWaitMs,
+  asrProviderType,
+  setAsrProviderType,
+  asrFinalTimeoutStrategy,
+  setAsrFinalTimeoutStrategy,
+  asrRecognitionStage,
+  asrPostProcessStage,
+  asrPostProcessEvents,
 } = {}) {
   const onChangeTourRecordingEnabled = useCallback(
     (checked) => {
@@ -424,6 +431,13 @@ export function useControlBarProps({
       onChangeAsrStopGraceMs: setAsrStopGraceMs,
       asrFinalWaitMs,
       onChangeAsrFinalWaitMs: setAsrFinalWaitMs,
+      asrProviderType,
+      onChangeAsrProviderType: setAsrProviderType,
+      asrFinalTimeoutStrategy,
+      onChangeAsrFinalTimeoutStrategy: setAsrFinalTimeoutStrategy,
+      asrRecognitionStage,
+      asrPostProcessStage,
+      asrPostProcessEvents: Array.isArray(asrPostProcessEvents) ? asrPostProcessEvents : [],
     }),
     [
       agentOptions,
@@ -515,6 +529,13 @@ export function useControlBarProps({
       setAsrStopGraceMs,
       asrFinalWaitMs,
       setAsrFinalWaitMs,
+      asrProviderType,
+      setAsrProviderType,
+      asrFinalTimeoutStrategy,
+      setAsrFinalTimeoutStrategy,
+      asrRecognitionStage,
+      asrPostProcessStage,
+      asrPostProcessEvents,
     ]
   );
 }

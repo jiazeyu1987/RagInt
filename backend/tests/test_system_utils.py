@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from backend.api.system_utils import derive_status_metrics, find_ask_context, parse_event_query, redact_secrets
+from backend.api.system_utils import (
+    build_recent_asr_timeline_report,
+    derive_status_metrics,
+    find_ask_context,
+    parse_event_query,
+    redact_secrets,
+)
 
 
 def test_redact_secrets_nested_fields():
@@ -45,3 +51,29 @@ def test_find_ask_context_from_recent_events():
     assert got["stop_name"] == "A"
     assert got["stop_id"] == "stop_1"
     assert got["action_type"] == "continue"
+
+
+def test_build_recent_asr_timeline_report_groups_and_durations():
+    got = build_recent_asr_timeline_report(
+        [
+            {"request_id": "r1", "name": "asr_pending_asr_matched", "ts_ms": 1000, "fields": {"rawText": "原始文本"}},
+            {"request_id": "r1", "name": "asr_filtering_finished", "ts_ms": 1250, "fields": {"correctedText": "纠错文本"}},
+            {"request_id": "r1", "name": "asr_accepted", "ts_ms": 1600, "fields": {"finalText": "最终文本"}},
+            {"request_id": "r2", "name": "asr_wake_word_missing", "ts_ms": 2000, "fields": {"rawText": "你好"}},
+            {"request_id": "r2", "name": "other_event", "ts_ms": 2100},
+        ]
+    )
+
+    assert got["count"] == 2
+    r1 = next(item for item in got["items"] if item["request_id"] == "r1")
+    assert r1["stage_count"] == 3
+    assert r1["total_ms"] == 600
+    assert r1["stages"][0]["category"] == "filter"
+    assert r1["stages"][0]["duration_ms"] == 250
+    assert r1["stages"][1]["corrected_text"] == "纠错文本"
+    assert r1["stages"][2]["category"] == "accepted"
+    assert r1["stages"][2]["final_text"] == "最终文本"
+
+    r2 = next(item for item in got["items"] if item["request_id"] == "r2")
+    assert r2["stages"][0]["category"] == "wake_word"
+    assert r2["stages"][0]["tone"] == "warn"

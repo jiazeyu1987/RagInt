@@ -1,4 +1,5 @@
 import { VoiceKitWsRecorderManager } from './VoiceKitWsRecorderManager';
+import { AsrRecognitionSession } from '../voice/AsrRecognitionSession';
 
 function safeTrim(v) {
   return String(v == null ? '' : v).trim();
@@ -11,6 +12,7 @@ export class RecordingWorkflowManager {
     this._deps = {};
     this._recordPointerId = null;
     this._wsBaseText = '';
+    this._lastAppliedInputText = '';
     this._wsRequireWake = false;
     this._wsAwakened = true;
     this._wsConfigSig = '';
@@ -22,6 +24,7 @@ export class RecordingWorkflowManager {
     this._pendingFinalText = [];
     this._pendingStopTimer = null;
     this._recordStartedAtMs = 0;
+    this._session = new AsrRecognitionSession();
   }
 
   setDeps(next = {}) {
@@ -74,6 +77,26 @@ export class RecordingWorkflowManager {
     }
   }
 
+  _setRecognizing(v) {
+    const onRecognizingChange = this._deps.onRecognizingChange;
+    if (typeof onRecognizingChange !== 'function') return;
+    try {
+      onRecognizingChange(!!v);
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  _setAsrStage(stage, extra = null) {
+    const onAsrStageChange = this._deps.onAsrStageChange;
+    if (typeof onAsrStageChange !== 'function') return;
+    try {
+      onAsrStageChange(String(stage || 'idle').trim() || 'idle', extra);
+    } catch (_) {
+      // ignore
+    }
+  }
+
   _appendOrReplaceInputText(nextText) {
     const setInputText = this._deps.setInputText;
     if (typeof setInputText !== 'function') return;
@@ -81,9 +104,51 @@ export class RecordingWorkflowManager {
     if (!t) return;
     try {
       setInputText(t);
+      this._session.setLastAppliedInputText(t);
     } catch (_) {
       // ignore
     }
+  }
+
+  _replaceInputText(nextText) {
+    const setInputText = this._deps.setInputText;
+    if (typeof setInputText !== 'function') return;
+    const t = safeTrim(nextText);
+    try {
+      setInputText(t);
+      this._session.setLastAppliedInputText(t);
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  _getFinalTimeoutStrategy() {
+    const strategy = safeTrim(this._deps.asrFinalTimeoutStrategy).toLowerCase();
+    if (strategy === 'keep_input' || strategy === 'clear_input') return strategy;
+    return 'keep_partial';
+  }
+
+  _handleFinalTimeout(partialText) {
+    const partial = this._session.resolveTimeoutText(partialText);
+    const strategy = this._getFinalTimeoutStrategy();
+
+    this._setLoading(false);
+    this._setRecognizing(false);
+    this._setAsrStage('final_timeout', { strategy, text: partial });
+
+    if (strategy === 'clear_input') {
+      this._replaceInputText(this._session.getBaseText());
+      this._emitFinalText('');
+      return;
+    }
+
+    if (strategy === 'keep_partial' && partial) {
+      this._appendOrReplaceInputText(this._composeLiveInputText(partial));
+      this._emitFinalText(partial);
+      return;
+    }
+
+    this._emitFinalText('');
   }
 
   _emitFinalText(text) {
@@ -131,6 +196,7 @@ export class RecordingWorkflowManager {
     const getInputText = this._deps.getInputText;
     if (typeof getInputText !== 'function') {
       this._wsBaseText = '';
+      this._session.reset('');
       return;
     }
     try {
@@ -138,6 +204,23 @@ export class RecordingWorkflowManager {
     } catch (_) {
       this._wsBaseText = '';
     }
+    this._session.reset(this._wsBaseText);
+  }
+
+  _composeLiveInputText(asrText) {
+    const recognizedText = safeTrim(asrText);
+    if (!recognizedText) return '';
+
+    const getInputText = this._deps.getInputText;
+    let currentInput = '';
+    if (typeof getInputText === 'function') {
+      try {
+        currentInput = safeTrim(getInputText());
+      } catch (_) {
+        currentInput = '';
+      }
+    }
+    return this._session.composeInputText(recognizedText, currentInput);
   }
 
   _ensureRecorder() {
@@ -175,6 +258,9 @@ export class RecordingWorkflowManager {
         : null,
       onEvent: (evt) => {
         const t = safeTrim(evt && evt.type).toLowerCase();
+        if (t === 'wake') this._setAsrStage('wake_detected', evt);
+        else if (t === 'info') this._setAsrStage('streaming', evt);
+
         if (requireWake && t === 'wake') {
           this._wsAwakened = true;
           this._wakeHoldUntilMs = Date.now() + this._wakeHoldMs;
@@ -202,29 +288,49 @@ export class RecordingWorkflowManager {
         }
       },
       onStateChange: (v) => this._setRecording(!!v),
+      onRecognizingChange: (v) => this._setRecognizing(!!v),
       onPartialText: (text) => {
         if (requireWake && !this._wsAwakened) return;
         const t = safeTrim(text);
         if (!t) return;
+        const update = this._session.applyPartial(t);
+        this._setAsrStage('receiving_partial', {
+          text: update.sourceText,
+          assembledText: update.assembledText,
+          committedText: update.committedText,
+          hypothesisText: update.hypothesisText,
+        });
         if (this._wsRequireWake && wakeWord) this._wakeHoldUntilMs = Date.now() + this._wakeHoldMs;
-        const base = safeTrim(this._wsBaseText);
-        this._appendOrReplaceInputText(base ? `${base} ${t}` : t);
+        this._appendOrReplaceInputText(this._composeLiveInputText(update.assembledText || update.sourceText));
       },
       onFinalText: (text) => {
         if (requireWake && !this._wsAwakened) {
           this._setLoading(false);
+          this._setRecognizing(false);
+          this._setAsrStage('idle');
           this._emitFinalText('');
           return;
         }
         const t = safeTrim(text);
-        const base = safeTrim(this._wsBaseText);
-        if (t) this._appendOrReplaceInputText(base ? `${base} ${t}` : t);
+        const update = this._session.applyFinal(t);
+        if (update.assembledText || t) this._appendOrReplaceInputText(this._composeLiveInputText(update.assembledText || t));
         if (t && this._wsRequireWake && wakeWord) this._wakeHoldUntilMs = Date.now() + this._wakeHoldMs;
         this._setLoading(false);
-        this._emitFinalText(t);
+        this._setRecognizing(false);
+        this._setAsrStage('final_received', {
+          text: update.sourceText,
+          assembledText: update.assembledText,
+          committedText: update.committedText,
+        });
+        this._emitFinalText(update.assembledText || t);
+      },
+      onFinalTimeout: (text) => {
+        this._handleFinalTimeout(text);
       },
       onError: (msg) => {
         this._setLoading(false);
+        this._setRecognizing(false);
+        this._setAsrStage('error', { message: safeTrim(msg) });
         if (this._log) this._log('[REC] ws error', msg);
         const onWakeWordFeedback = this._deps.onWakeWordFeedback;
         if (requireWake && typeof onWakeWordFeedback === 'function') {
@@ -264,6 +370,8 @@ export class RecordingWorkflowManager {
 
     this._snapshotBaseText();
     this._setLoading(true);
+    this._setRecognizing(true);
+    this._setAsrStage('capturing');
     this._clearPendingStopTimer();
     this._recordStartedAtMs = Date.now();
     this._wsRequireWakeActive = !!this._wsRequireWake && !!safeTrim(this._deps.wakeWord);
@@ -275,6 +383,8 @@ export class RecordingWorkflowManager {
       await this._recorder.start();
     } catch (e) {
       this._setLoading(false);
+      this._setRecognizing(false);
+      this._setAsrStage('error', { message: safeTrim(e && e.message ? e.message : e) });
       if (this._log) this._log('[REC] start failed', e);
     }
   }
@@ -307,12 +417,15 @@ export class RecordingWorkflowManager {
     const elapsedMs = this._recordStartedAtMs > 0 ? Date.now() - this._recordStartedAtMs : minRecordMs;
     const remainingMs = Math.max(0, minRecordMs - elapsedMs);
     if (remainingMs > 0) {
+      this._setAsrStage('waiting_min_duration', { remainingMs });
       this._clearPendingStopTimer();
       this._pendingStopTimer = setTimeout(() => {
         this._pendingStopTimer = null;
+        this._setAsrStage('awaiting_final');
         this._stopRecorderNow();
       }, remainingMs);
     } else {
+      this._setAsrStage('awaiting_final');
       this._stopRecorderNow();
     }
 
@@ -364,6 +477,8 @@ export class RecordingWorkflowManager {
     }
     this._recordStartedAtMs = 0;
     this._setLoading(false);
+    this._setRecognizing(false);
+    this._setAsrStage('idle');
   }
 
   async onPointerDown(e) {

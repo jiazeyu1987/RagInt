@@ -31,9 +31,11 @@ describe('VoiceKitWsRecorderManager', () => {
 
   test('stop keeps sending tail frames during grace window', async () => {
     let onFrame = null;
+    let onFinal = null;
     const micStop = jest.fn();
     const sendAudioFrame = jest.fn();
     const stopHoldToTalk = jest.fn();
+    const recognizingStates = [];
 
     createMicRecorder.mockImplementation((options) => {
       onFrame = options.onFrame;
@@ -43,19 +45,25 @@ describe('VoiceKitWsRecorderManager', () => {
       };
     });
 
-    createVoiceInputManager.mockReturnValue({
-      startHoldToTalk: jest.fn().mockResolvedValue(undefined),
-      stopHoldToTalk,
-      sendAudioFrame,
-      dispose: jest.fn(),
+    createVoiceInputManager.mockImplementation((options) => {
+      onFinal = options.onFinal;
+      return {
+        startHoldToTalk: jest.fn().mockResolvedValue(undefined),
+        stopHoldToTalk,
+        sendAudioFrame,
+        dispose: jest.fn(),
+      };
     });
 
     const recorder = new VoiceKitWsRecorderManager({
       baseUrl: 'ws://unit.test',
       clientId: 'client-test',
+      onRecognizingChange: (value) => recognizingStates.push(!!value),
     });
 
     await recorder.start();
+
+    expect(recognizingStates).toEqual([false, true]);
 
     const frameA = new ArrayBuffer(8);
     onFrame(frameA);
@@ -70,9 +78,14 @@ describe('VoiceKitWsRecorderManager', () => {
     jest.advanceTimersByTime(479);
     expect(stopHoldToTalk).not.toHaveBeenCalled();
     expect(micStop).not.toHaveBeenCalled();
+    expect(recognizingStates).toEqual([false, true]);
 
     jest.advanceTimersByTime(1);
     expect(stopHoldToTalk).toHaveBeenCalledTimes(1);
     expect(micStop).toHaveBeenCalledTimes(1);
+    expect(recognizingStates).toEqual([false, true]);
+
+    onFinal('done');
+    expect(recognizingStates).toEqual([false, true, false]);
   });
 });

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { fetchJson } from '../api/backendClient';
 
-export function useBackendEvents(requestId, { intervalMs = 1000, limit = 80 } = {}) {
-  const rid = String(requestId || '').trim();
+export function useBackendEvents(requestId, { intervalMs = 1000, limit = 80, enabled = true } = {}) {
+  const rid = enabled ? String(requestId || '').trim() : '';
   const [items, setItems] = useState(null);
   const [lastError, setLastError] = useState(null);
   const [error, setError] = useState(null);
@@ -12,8 +12,6 @@ export function useBackendEvents(requestId, { intervalMs = 1000, limit = 80 } = 
     let timer = null;
 
     if (!rid) {
-      setItems(null);
-      setLastError(null);
       setError(null);
       return () => {};
     }
@@ -38,7 +36,7 @@ export function useBackendEvents(requestId, { intervalMs = 1000, limit = 80 } = 
       cancelled = true;
       if (timer) clearInterval(timer);
     };
-  }, [rid, intervalMs, limit]);
+  }, [rid, intervalMs, limit, enabled]);
 
   return { items, lastError, error };
 }

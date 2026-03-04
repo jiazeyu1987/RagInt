@@ -2,6 +2,8 @@ import { useCallback, useMemo } from 'react';
 
 export function useTextInputProps({
   isRecording,
+  isRecognizing,
+  recognitionStage,
   pointerSupported,
   onRecordPointerDown,
   onRecordPointerUp,
@@ -20,6 +22,8 @@ export function useTextInputProps({
   const textInputProps = useMemo(
     () => ({
       isRecording,
+      isRecognizing,
+      recognitionStage,
       POINTER_SUPPORTED: pointerSupported,
       onRecordPointerDown,
       onRecordPointerUp,
@@ -41,6 +45,8 @@ export function useTextInputProps({
       inputElRef,
       inputText,
       isRecording,
+      isRecognizing,
+      recognitionStage,
       onRecordPointerCancel,
       onRecordPointerDown,
       onRecordPointerUp,

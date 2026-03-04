@@ -463,6 +463,36 @@ body {
   padding: 8px 10px;
 }
 
+.debug-item-asr {
+  border-color: rgba(22, 119, 255, 0.26);
+  background: linear-gradient(180deg, rgba(22, 119, 255, 0.08) 0%, rgba(22, 119, 255, 0.03) 100%);
+}
+
+.debug-item-asr-filter {
+  border-color: rgba(22, 119, 255, 0.26);
+  background: linear-gradient(180deg, rgba(22, 119, 255, 0.08) 0%, rgba(22, 119, 255, 0.03) 100%);
+}
+
+.debug-item-asr-wake {
+  border-color: rgba(250, 140, 22, 0.28);
+  background: linear-gradient(180deg, rgba(250, 140, 22, 0.10) 0%, rgba(250, 140, 22, 0.04) 100%);
+}
+
+.debug-item-asr-accepted {
+  border-color: rgba(7, 193, 96, 0.28);
+  background: linear-gradient(180deg, rgba(7, 193, 96, 0.10) 0%, rgba(7, 193, 96, 0.04) 100%);
+}
+
+.debug-item-asr-error {
+  border-color: rgba(239, 68, 68, 0.30);
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.10) 0%, rgba(239, 68, 68, 0.04) 100%);
+}
+
+.debug-item-asr-state {
+  border-color: rgba(15, 23, 42, 0.14);
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.05) 0%, rgba(15, 23, 42, 0.02) 100%);
+}
+
 .debug-item-h {
   display: flex;
   justify-content: space-between;
@@ -477,6 +507,141 @@ body {
   gap: 4px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.debug-asr-timeline {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.debug-asr-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.debug-asr-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.debug-asr-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.04);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.debug-asr-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.debug-asr-legend-dot-filter {
+  background: #1677ff;
+}
+
+.debug-asr-legend-dot-wake {
+  background: #fa8c16;
+}
+
+.debug-asr-legend-dot-accepted {
+  background: #07c160;
+}
+
+.debug-asr-legend-dot-error {
+  background: #ef4444;
+}
+
+.debug-asr-legend-dot-state {
+  background: #64748b;
+}
+
+.debug-asr-track {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  width: 100%;
+  min-height: 48px;
+}
+
+.debug-asr-segment {
+  min-width: 48px;
+  border-radius: 12px;
+  border: 1px solid rgba(22, 119, 255, 0.18);
+  background: linear-gradient(180deg, rgba(22, 119, 255, 0.16) 0%, rgba(22, 119, 255, 0.06) 100%);
+  color: #1858b8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 8px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.debug-asr-segment-info {
+  border-color: rgba(22, 119, 255, 0.22);
+}
+
+.debug-asr-segment-filter {
+  border-color: rgba(22, 119, 255, 0.22);
+  background: linear-gradient(180deg, rgba(22, 119, 255, 0.16) 0%, rgba(22, 119, 255, 0.06) 100%);
+  color: #1858b8;
+}
+
+.debug-asr-segment-wake {
+  border-color: rgba(250, 140, 22, 0.26);
+  background: linear-gradient(180deg, rgba(250, 140, 22, 0.16) 0%, rgba(250, 140, 22, 0.06) 100%);
+  color: #9a4d00;
+}
+
+.debug-asr-segment-accepted {
+  border-color: rgba(7, 193, 96, 0.28);
+  background: linear-gradient(180deg, rgba(7, 193, 96, 0.16) 0%, rgba(7, 193, 96, 0.06) 100%);
+  color: #0b6f3a;
+}
+
+.debug-asr-segment-error {
+  border-color: rgba(239, 68, 68, 0.24);
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.16) 0%, rgba(239, 68, 68, 0.06) 100%);
+  color: #b42318;
+}
+
+.debug-asr-segment-state {
+  border-color: rgba(100, 116, 139, 0.22);
+  background: linear-gradient(180deg, rgba(100, 116, 139, 0.14) 0%, rgba(100, 116, 139, 0.05) 100%);
+  color: #475569;
+}
+
+.debug-asr-segment-warn {
+  border-color: rgba(250, 140, 22, 0.26);
+  background: linear-gradient(180deg, rgba(250, 140, 22, 0.16) 0%, rgba(250, 140, 22, 0.06) 100%);
+  color: #9a4d00;
+}
+
+.debug-asr-segment-danger {
+  border-color: rgba(239, 68, 68, 0.24);
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.16) 0%, rgba(239, 68, 68, 0.06) 100%);
+  color: #b42318;
+}
+
+.debug-asr-detail {
+  color: var(--text);
+  white-space: pre-wrap;
+  line-height: 1.35;
 }
 
 .queue-q {
@@ -842,6 +1007,13 @@ h1 {
 .record-btn.recording {
   border-color: rgba(250, 81, 81, 0.8);
   box-shadow: 0 0 0 4px rgba(250, 81, 81, 0.18), var(--shadow);
+}
+
+.record-btn.recognizing {
+  border-color: rgba(22, 119, 255, 0.68);
+  color: #1858b8;
+  background: linear-gradient(180deg, rgba(22, 119, 255, 0.10) 0%, rgba(22, 119, 255, 0.04) 100%);
+  box-shadow: 0 0 0 4px rgba(22, 119, 255, 0.14), var(--shadow);
 }
 
 .record-btn:disabled {

@@ -1,63 +1,41 @@
-import { RecordingWorkflowManager } from './RecordingWorkflowManager';
+import { PressToTalkAsrModule } from '../voice/PressToTalkAsrModule';
 
 export class VoiceInputManager {
   constructor({ onLog } = {}) {
-    this._recording = new RecordingWorkflowManager({ onLog });
-    this._isRecording = false;
-    this._manualHoldActive = false;
+    this._module = new PressToTalkAsrModule({ onLog });
   }
 
   setRecordingDeps(deps = {}) {
-    const userOnRecordingChange = typeof deps.onRecordingChange === 'function' ? deps.onRecordingChange : null;
-    this._recording.setDeps({
-      ...deps,
-      onRecordingChange: (value) => {
-        this._isRecording = !!value;
-        if (userOnRecordingChange) {
-          userOnRecordingChange(value);
-        }
-      },
-    });
+    this._module.configure(deps);
   }
 
   startRecording() {
-    this._manualHoldActive = true;
-    return this._recording.start();
+    return this._module.startRecording();
   }
 
   stopRecording() {
-    this._recording.stop();
-    this._manualHoldActive = false;
+    this._module.stopRecording();
   }
 
   recordOnce(opts) {
-    this._manualHoldActive = true;
-    // Best-effort: clear the manual-hold flag once recordOnce resolves/rejects.
-    return Promise.resolve()
-      .then(() => this._recording.recordOnce(opts))
-      .finally(() => {
-        this._manualHoldActive = false;
-      });
+    return this._module.recordOnce(opts);
   }
 
   onRecordPointerDown(e) {
-    this._manualHoldActive = true;
-    return this._recording.onPointerDown(e);
+    return this._module.onRecordPointerDown(e);
   }
 
   onRecordPointerUp(e) {
-    this._manualHoldActive = false;
-    return this._recording.onPointerUp(e);
+    return this._module.onRecordPointerUp(e);
   }
 
   onRecordPointerCancel() {
-    this._manualHoldActive = false;
-    return this._recording.onPointerCancel();
+    return this._module.onRecordPointerCancel();
   }
 
   dispose() {
     try {
-      this._recording.cancel();
+      this._module.dispose();
     } catch (_) {
       // ignore
     }

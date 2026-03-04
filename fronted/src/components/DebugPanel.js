@@ -8,50 +8,142 @@ function StatusPill({ text, tone = 'neutral' }) {
 function mapQaCacheReason(reason) {
   const code = String(reason || '').trim();
   if (!code) return '-';
-  const prefixMap = [
-    ['classifier_no_match:', '分类器判定不匹配'],
-    ['classifier_', '分类器判定'],
-  ];
-  for (const [prefix, label] of prefixMap) {
-    if (code.startsWith(prefix)) return `${label}: ${code.slice(prefix.length) || '-'}`;
-  }
   const exactMap = {
-    cache_hit: '缓存命中',
-    qa_audio_hit: '问答音频缓存命中',
-    lookup_disabled_by_client: '当前请求禁用缓存判定',
-    empty_question: '问题为空',
-    exact_normalized_question: '规范化问题完全匹配',
-    no_candidates_in_tts_bucket: '当前音色桶内无候选',
-    heuristic_similarity_match: '启发式相似匹配',
-    classifier_match: '分类器匹配',
-    classifier_match_soft_accept: '分类器低阈值接受',
-    classifier_entity_mismatch_guard: '实体不一致，已拦截',
-    classifier_confidence_below_threshold: '分类器置信度低于阈值',
-    classifier_candidate_not_in_recall_set: '分类器候选不在召回集',
-    classifier_missing_candidate_id: '分类器未返回候选ID',
-    candidate_pair_not_found: '候选问答对不存在',
-    candidate_audio_missing: '候选音频缺失',
-    invalid_json: '分类器返回无效JSON',
+    cache_hit: 'cache hit',
+    qa_audio_hit: 'qa audio hit',
+    lookup_disabled_by_client: 'lookup disabled by client',
+    empty_question: 'empty question',
+    exact_normalized_question: 'exact normalized question',
+    no_candidates_in_tts_bucket: 'no candidates in tts bucket',
+    heuristic_similarity_match: 'heuristic similarity match',
+    classifier_match: 'classifier match',
+    classifier_match_soft_accept: 'classifier soft accept',
+    classifier_entity_mismatch_guard: 'entity mismatch guard',
+    classifier_confidence_below_threshold: 'classifier below threshold',
+    classifier_candidate_not_in_recall_set: 'classifier candidate not in recall set',
+    classifier_missing_candidate_id: 'classifier missing candidate id',
+    candidate_pair_not_found: 'candidate pair not found',
+    candidate_audio_missing: 'candidate audio missing',
+    invalid_json: 'invalid json',
   };
   return exactMap[code] || code;
 }
 
 function buildRouteSummary({ requestMode, guideModeLabel, cacheLookup, cacheHit, cacheReason }) {
   const parts = [];
-  if (requestMode === 'tour') parts.push('讲解流程');
-  else if (requestMode === 'send') parts.push('发送问答');
-
-  const guideMode = String(guideModeLabel || '').trim();
-  if (guideMode) parts.push(guideMode);
-
-  if (cacheLookup === 'yes') parts.push('缓存判定开启');
-  else if (cacheLookup === 'no') parts.push('缓存判定关闭');
-
-  if (cacheHit === 'yes') parts.push('缓存已命中');
-  else if (cacheHit === 'no') parts.push('缓存未命中');
-
+  if (requestMode === 'tour') parts.push('tour flow');
+  else if (requestMode === 'send') parts.push('ask flow');
+  if (guideModeLabel) parts.push(String(guideModeLabel));
+  if (cacheLookup === 'yes') parts.push('cache lookup on');
+  else if (cacheLookup === 'no') parts.push('cache lookup off');
+  if (cacheHit === 'yes') parts.push('cache hit');
+  else if (cacheHit === 'no') parts.push('cache miss');
   if (cacheReason && cacheReason !== '-') parts.push(cacheReason);
   return parts.filter(Boolean).join(' / ') || '-';
+}
+
+function getEventTsMs(event) {
+  const value = Number(event && (event.ts_ms || event.ts || event.created_at_ms));
+  return Number.isFinite(value) ? value : null;
+}
+
+function formatDurationMs(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return '-';
+  return `${Math.round(n)} ms`;
+}
+
+function formatAsrStageName(name) {
+  const raw = String(name || '').trim();
+  if (!raw) return '未知';
+  const normalized = raw.replace(/^asr_/, '');
+  const labelMap = {
+    pending_asr_matched: '匹配到待处理 ASR 文本',
+    filtering_started: '开始过滤',
+    filtering_finished: '过滤完成',
+    filtering_failed: '过滤失败',
+    wake_word_missing: '未命中唤醒词',
+    wake_word_only: '只有唤醒词',
+    wake_word_hold_extended: '延长唤醒保持',
+    accepted: '已通过',
+    bypass_non_asr: '手动输入跳过后处理',
+    error: '错误',
+    final_timeout: '最终结果超时',
+  };
+  return labelMap[normalized] || normalized.replace(/_/g, ' ');
+}
+
+function classifyAsrEvent(name, level) {
+  const raw = String(name || '').trim().toLowerCase();
+  if (raw.includes('error') || raw.includes('timeout')) {
+    return { category: 'error', tone: 'danger', legend: '错误 / 超时' };
+  }
+  if (raw.includes('wake')) {
+    return { category: 'wake', tone: 'warn', legend: '唤醒词' };
+  }
+  if (raw.includes('accepted') || raw.includes('bypass_non_asr')) {
+    return { category: 'accepted', tone: 'ok', legend: '已通过' };
+  }
+  if (raw.includes('filter') || raw.includes('correct') || raw.includes('pending_asr')) {
+    return { category: 'filter', tone: 'info', legend: '过滤 / 纠错' };
+  }
+  return { category: 'state', tone: level === 'warn' ? 'warn' : 'neutral', legend: '运行状态' };
+}
+
+function buildAsrLegend(items) {
+  const seen = new Set();
+  const legend = [];
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    const key = `${item.category}_${item.legend}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    legend.push({
+      key,
+      category: item.category,
+      legend: item.legend,
+      tone: item.tone,
+    });
+  });
+  return legend;
+}
+
+function buildAsrTimeline(events) {
+  const asrEvents = (Array.isArray(events) ? events : [])
+    .filter((event) => String((event && event.name) || '').trim().startsWith('asr_'))
+    .map((event) => ({
+      ...event,
+      __ts: getEventTsMs(event),
+    }))
+    .filter((event) => Number.isFinite(event.__ts))
+    .sort((a, b) => a.__ts - b.__ts);
+
+  if (!asrEvents.length) return { items: [], totalMs: 0 };
+
+  const firstTs = asrEvents[0].__ts;
+  const lastTs = asrEvents[asrEvents.length - 1].__ts;
+  const totalMs = Math.max(1, lastTs - firstTs);
+  const items = asrEvents.map((event, idx) => {
+    const next = asrEvents[idx + 1] || null;
+    const startMs = Math.max(0, event.__ts - firstTs);
+    const durationMs = next ? Math.max(0, next.__ts - event.__ts) : 0;
+    const widthPct = totalMs > 0 ? Math.max(6, (durationMs / totalMs) * 100) : 100;
+    const classification = classifyAsrEvent(event.name, event.level);
+    return {
+      key: `${String(event.name || 'asr')}_${event.__ts}_${idx}`,
+      name: String(event.name || ''),
+      label: formatAsrStageName(event.name),
+      tsMs: event.__ts,
+      startMs,
+      durationMs,
+      widthPct,
+      fields: event.fields && typeof event.fields === 'object' ? event.fields : {},
+      level: String(event.level || 'info'),
+      category: classification.category,
+      tone: classification.tone,
+      legend: classification.legend,
+    };
+  });
+  return { items, totalMs };
 }
 
 export function DebugPanel({
@@ -85,29 +177,21 @@ export function DebugPanel({
   let requestMode = '-';
   let requestActionType = '-';
   let requestTourAction = '-';
-  try {
-    for (let i = events.length - 1; i >= 0; i -= 1) {
-      const e = events[i];
-      if (!e || e.kind !== 'nav') continue;
-      navState = String(e.name || 'nav');
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i];
+    if (event && event.kind === 'nav') {
+      navState = String(event.name || 'nav');
       break;
     }
-  } catch (_) {
-    // ignore
   }
-
-  try {
-    for (let i = events.length - 1; i >= 0; i -= 1) {
-      const e = events[i];
-      if (!e || e.name !== 'ask_received') continue;
-      const fields = e.fields && typeof e.fields === 'object' ? e.fields : e;
-      requestMode = String(fields.request_mode || '-');
-      requestActionType = String(fields.action_type || '-');
-      requestTourAction = String(fields.tour_action || '-');
-      break;
-    }
-  } catch (_) {
-    // ignore
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i];
+    if (!event || event.name !== 'ask_received') continue;
+    const fields = event.fields && typeof event.fields === 'object' ? event.fields : event;
+    requestMode = String(fields.request_mode || '-');
+    requestActionType = String(fields.action_type || '-');
+    requestTourAction = String(fields.tour_action || '-');
+    break;
   }
 
   const cacheDebug = qaCacheDebug && typeof qaCacheDebug === 'object' ? qaCacheDebug : null;
@@ -120,7 +204,7 @@ export function DebugPanel({
   const cacheConfidence =
     cacheDebug && Number.isFinite(Number(cacheDebug.confidence)) ? Number(cacheDebug.confidence).toFixed(3) : '-';
   const guideModeTone =
-    String(guideModeLabel || '').includes('播放') ? 'info' : String(guideModeLabel || '').includes('录制') ? 'warn' : 'ok';
+    String(guideModeLabel || '').includes('playback') ? 'info' : String(guideModeLabel || '').includes('record') ? 'warn' : 'ok';
   const requestModeTone = requestMode === 'tour' ? 'warn' : requestMode === 'send' ? 'ok' : 'neutral';
   const resolvedCacheLookup = cacheLookupEnabled || (requestMode === 'tour' ? 'no' : '-');
   const lookupTone = resolvedCacheLookup === 'yes' ? 'ok' : 'danger';
@@ -132,29 +216,31 @@ export function DebugPanel({
     cacheHit,
     cacheReason,
   });
+  const asrTimeline = buildAsrTimeline(events);
+  const asrLegend = buildAsrLegend(asrTimeline.items);
 
   return (
     <Root className={rootClass}>
-      <div className="debug-title">调试面板</div>
+      <div className="debug-title">Debug Panel</div>
       {!debugInfo ? (
-        <div className="debug-muted">点击发送后显示耗时</div>
+        <div className="debug-muted">Submit a request to populate timing data.</div>
       ) : (
         <>
-          <div className="debug-subtitle">讲解 / 移动</div>
+          <div className="debug-subtitle">Tour / Navigation</div>
           <div className="debug-row">
-            <div className="debug-k">当前站点</div>
+            <div className="debug-k">current stop</div>
             <div className="debug-v">{tourStopName ? `${tourStopIndex != null ? `#${tourStopIndex} ` : ''}${tourStopName}` : '-'}</div>
           </div>
           <div className="debug-row">
-            <div className="debug-k">移动状态</div>
+            <div className="debug-k">nav state</div>
             <div className="debug-v">{navState}</div>
           </div>
           <div className="debug-row">
-            <div className="debug-k">tour_mode</div>
+            <div className="debug-k">tour mode</div>
             <div className="debug-v">{tourMode || '-'}</div>
           </div>
           <div className="debug-row">
-            <div className="debug-k">guide_mode</div>
+            <div className="debug-k">guide mode</div>
             <div className="debug-v">
               <StatusPill text={String(guideModeLabel || '-')} tone={guideModeTone} />
             </div>
@@ -165,7 +251,7 @@ export function DebugPanel({
             <div className="debug-v">{requestId || '-'}</div>
           </div>
           <div className="debug-row">
-            <div className="debug-k">route_summary</div>
+            <div className="debug-k">route summary</div>
             <div className="debug-v">
               <span className="debug-summary-text">{routeSummary}</span>
             </div>
@@ -175,23 +261,23 @@ export function DebugPanel({
             <div className="debug-v">{debugInfo.trigger}</div>
           </div>
           <div className="debug-row">
-            <div className="debug-k">request_mode</div>
+            <div className="debug-k">request mode</div>
             <div className="debug-v">
               <StatusPill text={requestMode} tone={requestModeTone} />
             </div>
           </div>
           <div className="debug-row">
-            <div className="debug-k">tour_action</div>
+            <div className="debug-k">tour action</div>
             <div className="debug-v">
               <StatusPill text={requestTourAction} tone={requestMode === 'tour' ? 'warn' : 'neutral'} />
             </div>
           </div>
           <div className="debug-row">
-            <div className="debug-k">action_type</div>
+            <div className="debug-k">action type</div>
             <div className="debug-v">{requestActionType}</div>
           </div>
 
-          <div className="debug-subtitle">缓存路由</div>
+          <div className="debug-subtitle">Cache Route</div>
           <div className="debug-row">
             <div className="debug-k">qa_cache_lookup</div>
             <div className="debug-v">
@@ -252,13 +338,13 @@ export function DebugPanel({
             </div>
           </div>
 
-          <div className="debug-subtitle">后端状态</div>
+          <div className="debug-subtitle">Backend Status</div>
           {!requestId ? (
-            <div className="debug-muted">等待 request_id...</div>
+            <div className="debug-muted">Waiting for request_id...</div>
           ) : serverStatusErr ? (
             <div className="debug-muted">{serverStatusErr}</div>
           ) : !serverStatus ? (
-            <div className="debug-muted">查询中...</div>
+            <div className="debug-muted">Loading...</div>
           ) : (
             <>
               <div className="debug-row">
@@ -318,19 +404,19 @@ export function DebugPanel({
             </>
           )}
 
-          <div className="debug-subtitle">事件时间线</div>
+          <div className="debug-subtitle">Event Timeline</div>
           {!requestId ? (
-            <div className="debug-muted">等待 request_id...</div>
+            <div className="debug-muted">Waiting for request_id...</div>
           ) : serverEventsErr ? (
             <div className="debug-muted">{serverEventsErr}</div>
           ) : !serverEvents ? (
-            <div className="debug-muted">查询中...</div>
+            <div className="debug-muted">Loading...</div>
           ) : (
             <>
               {lastErr ? (
                 <div className="debug-row">
                   <div className="debug-k">latest_error</div>
-                  <div className="debug-v">{`${lastErr.name || 'error'} ${(lastErr.fields && lastErr.fields.err) ? String(lastErr.fields.err).slice(0, 80) : ''}`}</div>
+                  <div className="debug-v">{`${lastErr.name || 'error'} ${lastErr.fields && lastErr.fields.err ? String(lastErr.fields.err).slice(0, 80) : ''}`}</div>
                 </div>
               ) : null}
               <div className="debug-row">
@@ -341,19 +427,78 @@ export function DebugPanel({
                   </a>
                 </div>
               </div>
+
+              <div className="debug-subtitle">ASR 时间轴</div>
+              {!asrTimeline.items.length ? (
+                <div className="debug-muted">暂时没有 ASR 时间轴事件。</div>
+              ) : (
+                <div className="debug-asr-timeline">
+                  <div className="debug-asr-summary">
+                    <span>{asrTimeline.items.length} 个阶段</span>
+                    <span>总耗时 {formatDurationMs(asrTimeline.totalMs)}</span>
+                  </div>
+                  <div className="debug-asr-legend">
+                    {asrLegend.map((item) => (
+                      <div key={item.key} className="debug-asr-legend-item">
+                        <span className={`debug-asr-legend-dot debug-asr-legend-dot-${item.category}`} />
+                        <span>{item.legend}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="debug-asr-track">
+                    {asrTimeline.items.map((item) => (
+                      <div
+                        key={item.key}
+                        className={`debug-asr-segment debug-asr-segment-${item.category} debug-asr-segment-${item.tone}`}
+                        style={{ width: `${item.widthPct}%` }}
+                        title={`${item.label} | ${item.legend} | 开始 ${formatDurationMs(item.startMs)} | 耗时 ${formatDurationMs(item.durationMs)}`}
+                      >
+                        <span>{item.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="debug-list">
+                    {asrTimeline.items.map((item) => {
+                      const rawText = item.fields.rawText || '';
+                      const correctedText = item.fields.correctedText || '';
+                      const finalText = item.fields.finalText || item.fields.text || '';
+                      return (
+                        <div key={`${item.key}_detail`} className={`debug-item debug-item-asr debug-item-asr-${item.category}`}>
+                          <div className="debug-item-h">
+                            <span>{item.label}</span>
+                            <span>{formatDurationMs(item.durationMs)}</span>
+                          </div>
+                          <div className="debug-item-b">
+                            <div>开始于：{formatDurationMs(item.startMs)}</div>
+                            <div>发生时间：{new Date(Number(item.tsMs)).toLocaleTimeString()}</div>
+                            <div>分组：{item.legend}</div>
+                            {rawText ? <div className="debug-asr-detail"><strong>原始：</strong>{String(rawText).slice(0, 120)}</div> : null}
+                            {correctedText ? <div className="debug-asr-detail"><strong>纠错后：</strong>{String(correctedText).slice(0, 120)}</div> : null}
+                            {finalText ? <div className="debug-asr-detail"><strong>最终提交：</strong>{String(finalText).slice(0, 120)}</div> : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               <div className="debug-list">
                 {!events.length ? (
-                  <div className="debug-muted">无事件</div>
+                  <div className="debug-muted">No events.</div>
                 ) : (
-                  events.slice(-18).map((e, idx) => (
-                    <div key={`${e.ts_ms || 0}_${idx}`} className="debug-item">
+                  events.slice(-18).map((event, idx) => (
+                    <div
+                      key={`${event.ts_ms || 0}_${idx}`}
+                      className={`debug-item ${String((event && event.name) || '').startsWith('asr_') ? `debug-item-asr debug-item-asr-${classifyAsrEvent(event.name, event.level).category}` : ''}`}
+                    >
                       <div className="debug-item-h">
-                        <span>{e.level || 'info'}</span>
-                        <span>{e.kind || 'app'}</span>
+                        <span>{event.level || 'info'}</span>
+                        <span>{event.kind || 'app'}</span>
                       </div>
                       <div className="debug-item-b">
-                        <div>{e.name || 'event'}</div>
-                        <div className="debug-muted">{e.ts_ms ? new Date(Number(e.ts_ms)).toLocaleTimeString() : '-'}</div>
+                        <div>{event.name || 'event'}</div>
+                        <div className="debug-muted">{event.ts_ms ? new Date(Number(event.ts_ms)).toLocaleTimeString() : '-'}</div>
                       </div>
                     </div>
                   ))
@@ -362,25 +507,25 @@ export function DebugPanel({
             </>
           )}
 
-          <div className="debug-subtitle">围观队列</div>
+          <div className="debug-subtitle">Audience Queue</div>
           <div className="debug-list">
             {!q.length ? (
-              <div className="debug-muted">无排队问题</div>
+              <div className="debug-muted">No queued questions.</div>
             ) : (
               q.slice(0, 12).map((item) => (
                 <div key={item.id} className="debug-item">
                   <div className="debug-item-h">
-                    <span>{item.speaker || '观众'}</span>
-                    <span>{item.priority === 'high' ? '高优先' : '普通'}</span>
+                    <span>{item.speaker || 'audience'}</span>
+                    <span>{item.priority === 'high' ? 'high' : 'normal'}</span>
                   </div>
                   <div className="debug-item-b">
                     <div className="queue-q">{String(item.text || '').slice(0, 60)}</div>
                     <div className="queue-actions">
                       <button type="button" className="queue-btn" onClick={() => onAnswerQueuedNow && onAnswerQueuedNow(item)}>
-                        立即回答
+                        Answer Now
                       </button>
                       <button type="button" className="queue-btn queue-btn-danger" onClick={() => onRemoveQueuedQuestion && onRemoveQueuedQuestion(item.id)}>
-                        移除
+                        Remove
                       </button>
                     </div>
                   </div>
@@ -389,18 +534,18 @@ export function DebugPanel({
             )}
           </div>
 
-          <div className="debug-subtitle">分段</div>
+          <div className="debug-subtitle">Segments</div>
           <div className="debug-list">
-            {(debugInfo.segments || []).slice(-12).map((s, idx) => (
-              <div key={`${debugInfo.requestId || 'run'}_${s.seq}_${idx}`} className="debug-item">
+            {(debugInfo.segments || []).slice(-12).map((segment, idx) => (
+              <div key={`${debugInfo.requestId || 'run'}_${segment.seq}_${idx}`} className="debug-item">
                 <div className="debug-item-h">
-                  <span>#{s.seq}</span>
-                  <span>{s.chars} chars</span>
+                  <span>#{segment.seq}</span>
+                  <span>{segment.chars} chars</span>
                 </div>
                 <div className="debug-item-b">
-                  <div>request: {s.ttsRequestAt ? `${(s.ttsRequestAt - debugInfo.submitAt).toFixed(0)}ms` : '-'}</div>
-                  <div>first audio: {s.ttsFirstAudioAt ? `${(s.ttsFirstAudioAt - debugInfo.submitAt).toFixed(0)}ms` : '-'}</div>
-                  <div>done: {s.ttsDoneAt ? `${(s.ttsDoneAt - debugInfo.submitAt).toFixed(0)}ms` : '-'}</div>
+                  <div>request: {segment.ttsRequestAt ? `${(segment.ttsRequestAt - debugInfo.submitAt).toFixed(0)}ms` : '-'}</div>
+                  <div>first audio: {segment.ttsFirstAudioAt ? `${(segment.ttsFirstAudioAt - debugInfo.submitAt).toFixed(0)}ms` : '-'}</div>
+                  <div>done: {segment.ttsDoneAt ? `${(segment.ttsDoneAt - debugInfo.submitAt).toFixed(0)}ms` : '-'}</div>
                 </div>
               </div>
             ))}

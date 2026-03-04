@@ -23,8 +23,10 @@ export class VoiceKitWsRecorderManager {
     label,
     startPayload,
     onStateChange,
+    onRecognizingChange,
     onPartialText,
     onFinalText,
+    onFinalTimeout,
     onEvent,
     onError,
     onLog,
@@ -37,8 +39,10 @@ export class VoiceKitWsRecorderManager {
     this._continuous = !!continuous;
     this._startPayload = startPayload && typeof startPayload === 'object' ? startPayload : null;
     this._onStateChange = typeof onStateChange === 'function' ? onStateChange : null;
+    this._onRecognizingChange = typeof onRecognizingChange === 'function' ? onRecognizingChange : null;
     this._onPartialText = typeof onPartialText === 'function' ? onPartialText : null;
     this._onFinalText = typeof onFinalText === 'function' ? onFinalText : null;
+    this._onFinalTimeout = typeof onFinalTimeout === 'function' ? onFinalTimeout : null;
     this._onEvent = typeof onEvent === 'function' ? onEvent : null;
     this._onError = typeof onError === 'function' ? onError : null;
     this._log = typeof onLog === 'function' ? onLog : null;
@@ -51,10 +55,12 @@ export class VoiceKitWsRecorderManager {
     this._stopRequested = false;
     this._stopping = false;
     this._finalReceived = false;
+    this._isRecognizing = false;
     this._stopGraceTimer = null;
     this._finalWaitTimer = null;
     this._stopGraceMs = Math.max(0, Number(stopGraceMs) || 480);
     this._finalWaitMs = Math.max(200, Number(finalWaitMs) || 1500);
+    this._lastPartialText = '';
   }
 
   get isRecording() {
@@ -66,6 +72,17 @@ export class VoiceKitWsRecorderManager {
     if (this._onStateChange) {
       try {
         this._onStateChange(this._isRecording);
+      } catch (_) {
+        // ignore
+      }
+    }
+  }
+
+  _setRecognizing(next) {
+    this._isRecognizing = !!next;
+    if (this._onRecognizingChange) {
+      try {
+        this._onRecognizingChange(this._isRecognizing);
       } catch (_) {
         // ignore
       }
@@ -108,6 +125,8 @@ export class VoiceKitWsRecorderManager {
     this._stopRequested = false;
     this._stopping = false;
     this._finalReceived = false;
+    this._lastPartialText = '';
+    this._setRecognizing(false);
     this._setRecording(false);
   }
 
@@ -142,6 +161,7 @@ export class VoiceKitWsRecorderManager {
 
     this._cleanup();
     this._disposeWs();
+    this._setRecognizing(true);
     this._setRecording(true);
 
     const wakeEnabled = !!(this._startPayload && this._startPayload.wake_word_enabled);
@@ -165,12 +185,15 @@ export class VoiceKitWsRecorderManager {
       },
       onPartial: (text, msg) => {
         if (this._onEvent && msg) this._onEvent(msg);
+        this._lastPartialText = safeTrim(text);
         if (this._onPartialText) this._onPartialText(text, msg);
       },
       onFinal: (text, msg) => {
         if (this._onEvent && msg) this._onEvent(msg);
+        this._lastPartialText = safeTrim(text);
         if (this._onFinalText) this._onFinalText(text, msg);
         this._finalReceived = true;
+        this._setRecognizing(false);
         if (this._stopping && !this._continuous) {
           if (this._finalWaitTimer) {
             try {
@@ -185,6 +208,7 @@ export class VoiceKitWsRecorderManager {
         }
       },
       onError: (e, msg) => {
+        this._setRecognizing(false);
         if (!this._stopRequested && !this._stopping) this._fail(String(e || 'ws_error'), msg);
       },
     });
@@ -254,6 +278,7 @@ export class VoiceKitWsRecorderManager {
       this._frameQueue = [];
       this._stopMicOnly();
       if (this._finalReceived || this._continuous) {
+        this._setRecognizing(false);
         this._setRecording(false);
         return;
       }
@@ -266,7 +291,15 @@ export class VoiceKitWsRecorderManager {
       }
       this._finalWaitTimer = setTimeout(() => {
         this._finalWaitTimer = null;
+        if (this._onFinalTimeout) {
+          try {
+            this._onFinalTimeout(this._lastPartialText, { reason: 'final_wait_timeout' });
+          } catch (_) {
+            // ignore
+          }
+        }
         this._disposeWs();
+        this._setRecognizing(false);
         this._setRecording(false);
       }, this._finalWaitMs);
     }, this._stopGraceMs);

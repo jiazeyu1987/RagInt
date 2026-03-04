@@ -404,10 +404,63 @@ function ArchiveTab({ controlBarProps, ttsMode, modelscopeVoice }) {
 }
 function AsrTab({ controlBarProps }) {
   const c = controlBarProps || {};
+  const recognitionStageLabel =
+    c.asrRecognitionStage === 'capturing'
+      ? '正在采集语音'
+      : c.asrRecognitionStage === 'waiting_min_duration'
+        ? '等待达到最短录音时长'
+        : c.asrRecognitionStage === 'awaiting_final'
+          ? '等待最终识别结果'
+          : c.asrRecognitionStage === 'receiving_partial'
+            ? '正在接收中间结果'
+            : c.asrRecognitionStage === 'wake_detected'
+              ? '已检测到唤醒词'
+              : c.asrRecognitionStage === 'streaming'
+                ? '正在发送到 ASR'
+                : c.asrRecognitionStage === 'final_received'
+                  ? '已收到最终结果'
+                  : c.asrRecognitionStage === 'final_timeout'
+                    ? '等待最终结果超时'
+                    : c.asrRecognitionStage === 'error'
+                      ? '识别出错'
+                      : '空闲';
+  const postProcessStageLabel =
+    c.asrPostProcessStage === 'filtering'
+      ? '正在过滤和纠错'
+      : c.asrPostProcessStage === 'wake_word_missing'
+        ? '未命中唤醒词'
+        : c.asrPostProcessStage === 'wake_word_only'
+          ? '只有唤醒词'
+          : c.asrPostProcessStage === 'accepted'
+            ? '已通过'
+            : c.asrPostProcessStage === 'bypass_non_asr'
+              ? '手动输入，跳过后处理'
+              : c.asrPostProcessStage === 'pending_asr_matched'
+                ? '已匹配待处理 ASR 文本'
+                : '空闲';
+  const postProcessEvents = Array.isArray(c.asrPostProcessEvents) ? c.asrPostProcessEvents : [];
+
   return (
     <>
-      <SettingsGroup title="唤醒词设置">
+      <SettingsGroup title="ASR 运行状态">
         <div className="settings-form">
+          <label className="settings-field">
+            <span>ASR 提供方</span>
+            <select value={String(c.asrProviderType || 'voicekit_ws')} onChange={(e) => c.onChangeAsrProviderType && c.onChangeAsrProviderType(e.target.value)}>
+              <option value="voicekit_ws">VoiceKit WebSocket</option>
+            </select>
+          </label>
+
+          <div className="settings-field">
+            <span>识别阶段</span>
+            <div>{recognitionStageLabel}</div>
+          </div>
+
+          <div className="settings-field">
+            <span>后处理阶段</span>
+            <div>{postProcessStageLabel}</div>
+          </div>
+
           <label className="settings-toggle">
             <input type="checkbox" checked={!!c.wakeWordEnabled} onChange={(e) => c.onChangeWakeWordEnabled && c.onChangeWakeWordEnabled(e.target.checked)} />
             <span>启用唤醒词</span>
@@ -416,15 +469,18 @@ function AsrTab({ controlBarProps }) {
           {c.wakeWordEnabled ? (
             <label className="settings-field">
               <span>唤醒词</span>
-              <input value={String(c.wakeWord || '')} onChange={(e) => c.onChangeWakeWord && c.onChangeWakeWord(e.target.value)} placeholder="例如：你好小D" />
+              <input value={String(c.wakeWord || '')} onChange={(e) => c.onChangeWakeWord && c.onChangeWakeWord(e.target.value)} placeholder="e.g. 你好小助手" />
             </label>
           ) : null}
 
           {c.wakeWordEnabled ? (
             <label className="settings-field">
-              <span>冷却时间(ms)</span>
+              <span>唤醒冷却时间（毫秒）</span>
               <input
-                value={String(c.wakeWordCooldownMs || '')}
+                type="number"
+                min="0"
+                step="100"
+                value={String(c.wakeWordCooldownMs || 0)}
                 onChange={(e) => c.onChangeWakeWordCooldownMs && c.onChangeWakeWordCooldownMs(Number(e.target.value) || 0)}
                 placeholder="5000"
               />
@@ -434,12 +490,12 @@ function AsrTab({ controlBarProps }) {
           {c.wakeWordEnabled ? (
             <label className="settings-toggle">
               <input type="checkbox" checked={!!c.wakeWordStrict} onChange={(e) => c.onChangeWakeWordStrict && c.onChangeWakeWordStrict(e.target.checked)} />
-              <span>严格匹配</span>
+              <span>严格唤醒词匹配</span>
             </label>
           ) : null}
 
           <label className="settings-field">
-            <span>最短录音时长(ms)</span>
+            <span>最短录音时长（毫秒）</span>
             <input
               type="number"
               min="200"
@@ -451,7 +507,7 @@ function AsrTab({ controlBarProps }) {
           </label>
 
           <label className="settings-field">
-            <span>松开尾音补偿(ms)</span>
+            <span>停止缓冲时长（毫秒）</span>
             <input
               type="number"
               min="0"
@@ -463,7 +519,7 @@ function AsrTab({ controlBarProps }) {
           </label>
 
           <label className="settings-field">
-            <span>等待最终识别(ms)</span>
+            <span>等待最终结果超时（毫秒）</span>
             <input
               type="number"
               min="200"
@@ -473,10 +529,22 @@ function AsrTab({ controlBarProps }) {
               placeholder="1500"
             />
           </label>
+
+          <label className="settings-field">
+            <span>最终结果超时策略</span>
+            <select
+              value={String(c.asrFinalTimeoutStrategy || 'keep_partial')}
+              onChange={(e) => c.onChangeAsrFinalTimeoutStrategy && c.onChangeAsrFinalTimeoutStrategy(e.target.value)}
+            >
+              <option value="keep_partial">保留中间识别文本</option>
+              <option value="keep_input">保留当前输入框内容</option>
+              <option value="clear_input">恢复识别前输入内容</option>
+            </select>
+          </label>
         </div>
       </SettingsGroup>
 
-      <SettingsGroup title="ASR纠错过滤">
+      <SettingsGroup title="ASR 文本过滤">
         <div className="settings-form">
           <label className="settings-toggle">
             <input
@@ -484,12 +552,12 @@ function AsrTab({ controlBarProps }) {
               checked={!!c.asrTextFilterEnabled}
               onChange={(e) => c.onChangeAsrTextFilterEnabled && c.onChangeAsrTextFilterEnabled(e.target.checked)}
             />
-            <span>使用语音模型优化</span>
+            <span>启用基于 RAG 的纠错</span>
           </label>
 
           {c.asrTextFilterEnabled ? (
             <label className="settings-field">
-              <span>Ragflow 对话名</span>
+              <span>RAGFlow 对话名称</span>
               <input
                 value={String(c.asrTextFilterChatName || '')}
                 onChange={(e) => c.onChangeAsrTextFilterChatName && c.onChangeAsrTextFilterChatName(e.target.value)}
@@ -500,13 +568,13 @@ function AsrTab({ controlBarProps }) {
 
           {c.asrTextFilterEnabled ? (
             <label className="settings-field">
-              <span>领域术语列表</span>
+              <span>领域术语</span>
               <textarea
                 className="settings-textarea"
                 rows={2}
                 value={String(c.asrTextFilterTerms || '')}
                 onChange={(e) => c.onChangeAsrTextFilterTerms && c.onChangeAsrTextFilterTerms(e.target.value)}
-                placeholder="例如：指引导丝,指引导管"
+                placeholder="指引导丝, 指引导管"
               />
             </label>
           ) : null}
@@ -519,11 +587,35 @@ function AsrTab({ controlBarProps }) {
                 rows={14}
                 value={String(c.asrTextFilterPrompt || '')}
                 onChange={(e) => c.onChangeAsrTextFilterPrompt && c.onChangeAsrTextFilterPrompt(e.target.value)}
-                placeholder="使用 {ASR的语音输入} 和 {领域片段} 作为变量"
+                placeholder="填写发送到 RAGFlow 纠错对话前使用的提示词。"
               />
-              <span className="settings-field-hint">打开时，ASR 文本会先经过语音模型优化后再发送；关闭时，直接发送原始转写文本。</span>
+              <span className="settings-field-hint">这段提示词会先用于 ASR 纠错，再进行唤醒词判断和业务提交。</span>
             </label>
           ) : null}
+        </div>
+      </SettingsGroup>
+
+      <SettingsGroup title="ASR 事件日志">
+        <div className="settings-form">
+          <div className="settings-field">
+            <span>最近后处理事件</span>
+            <div>
+              {postProcessEvents.length ? (
+                postProcessEvents.map((event, idx) => {
+                  const fields = event && event.fields && typeof event.fields === 'object' ? event.fields : {};
+                  const text = fields.text || fields.correctedText || fields.trigger || '';
+                  return (
+                    <div key={`${String(event && event.name) || 'evt'}_${idx}`}>
+                      {String(event && event.name) || 'event'}
+                      {text ? `: ${String(text)}` : ''}
+                    </div>
+                  );
+                })
+              ) : (
+                <div>暂时没有后处理事件。</div>
+              )}
+            </div>
+          </div>
         </div>
       </SettingsGroup>
     </>

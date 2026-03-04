@@ -33,7 +33,10 @@ def test_api_diagnostics_zip():
     names = set(z.namelist())
     assert "version.json" in names
     assert "events_recent.json" in names
+    assert "asr_timeline_recent.json" in names
 
     ver = json.loads(z.read("version.json").decode("utf-8"))
     assert ver["version"] == "0.0.0-test"
 
+    asr_timeline = json.loads(z.read("asr_timeline_recent.json").decode("utf-8"))
+    assert "items" in asr_timeline

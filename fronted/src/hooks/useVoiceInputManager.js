@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
-import { VoiceInputManager } from '../managers/VoiceInputManager';
+import { useEffect, useMemo, useState } from 'react';
+import { PressToTalkAsrModule } from '../voice/PressToTalkAsrModule';
 import { VOICE_DEBUG, WAKE_HOLD_MS } from '../config/features';
 
 export function useVoiceInputManager({
+  providerType = 'voicekit_ws',
   baseUrl,
   minRecordMs = 900,
   asrStopGraceMs = 480,
   asrFinalWaitMs = 1500,
+  asrFinalTimeoutStrategy = 'keep_partial',
   clientIdRef,
   setInputText,
   getInputText,
@@ -26,13 +28,18 @@ export function useVoiceInputManager({
   isLoading,
 } = {}) {
   const [isRecording, setIsRecording] = useState(false);
+  const [isRecognizing, setIsRecognizing] = useState(false);
+  const [recognitionStage, setRecognitionStage] = useState('idle');
   const [hasUserGesture, setHasUserGesture] = useState(false);
   const [isManualHold, setIsManualHold] = useState(false);
-  const managerRef = useRef(null);
-  if (!managerRef.current) {
-    managerRef.current = new VoiceInputManager({ onLog: (...args) => (VOICE_DEBUG ? console.log(...args) : null) });
-  }
-  const manager = managerRef.current;
+  const manager = useMemo(
+    () =>
+      new PressToTalkAsrModule({
+        providerType,
+        onLog: (...args) => (VOICE_DEBUG ? console.log(...args) : null),
+      }),
+    [providerType]
+  );
 
   useEffect(() => {
     if (hasUserGesture) return () => {};
@@ -58,20 +65,6 @@ export function useVoiceInputManager({
     };
   }, [manager]);
 
-  const callbacksRef = useRef({
-    setInputText,
-    getInputText,
-    onFeedback: onWakeWordFeedback,
-  });
-
-  useEffect(() => {
-    callbacksRef.current = {
-      setInputText,
-      getInputText,
-      onFeedback: onWakeWordFeedback,
-    };
-  }, [getInputText, onWakeWordFeedback, setInputText]);
-
   useEffect(() => {
     const deps = {
       baseUrl,
@@ -88,6 +81,7 @@ export function useVoiceInputManager({
       wsRequireWake: false,
       asrStopGraceMs,
       asrFinalWaitMs,
+      asrFinalTimeoutStrategy,
       wakeWord,
       wakeWordStrict,
       wakeWordCooldownMs,
@@ -96,10 +90,16 @@ export function useVoiceInputManager({
       wakeHoldMs: WAKE_HOLD_MS,
       onRecordingChange: (value) => setIsRecording(!!value),
     };
-    manager.setRecordingDeps(deps);
+    manager.configure({
+      ...deps,
+      onCaptureChange: (value) => setIsRecording(!!value),
+      onRecognizingChange: (value) => setIsRecognizing(!!value),
+      onAsrStageChange: (stage) => setRecognitionStage(String(stage || 'idle').trim() || 'idle'),
+    });
   }, [
     audioContextRef,
     asrFinalWaitMs,
+    asrFinalTimeoutStrategy,
     asrStopGraceMs,
     baseUrl,
     clientIdRef,
@@ -109,6 +109,7 @@ export function useVoiceInputManager({
     manager,
     onWakeWordFeedback,
     onAsrFinalText,
+    providerType,
     setInputText,
     setIsLoading,
     ttsEnabledRef,
@@ -129,6 +130,8 @@ export function useVoiceInputManager({
           hasUserGesture: !!hasUserGesture,
           isManualHold: !!isManualHold,
           isRecording: !!isRecording,
+          isRecognizing: !!isRecognizing,
+          recognitionStage,
           enabled: !!wakeWordEnabled && !!hasUserGesture && !isManualHold && !isRecording,
         });
       } catch (_) {
@@ -140,6 +143,8 @@ export function useVoiceInputManager({
     hasUserGesture,
     isManualHold,
     isRecording,
+    isRecognizing,
+    recognitionStage,
     manager,
     resolvedClientId,
     wakeWord,
@@ -151,9 +156,11 @@ export function useVoiceInputManager({
 
   return {
     isRecording,
+    isRecognizing,
+    recognitionStage,
     isWakeWordRunning: false,
-    startRecording: () => manager.startRecording(),
-    stopRecording: () => manager.stopRecording(),
+    startRecording: () => manager.startCapture(),
+    stopRecording: () => manager.stopCapture(),
     recordOnce: (opts) => manager.recordOnce(opts),
     onRecordPointerDown: async (e) => {
       try {
@@ -161,7 +168,7 @@ export function useVoiceInputManager({
       } catch (_) {
         // ignore
       }
-      return manager.onRecordPointerDown(e);
+      return manager.onPointerDown(e);
     },
     onRecordPointerUp: (e) => {
       try {
@@ -169,7 +176,7 @@ export function useVoiceInputManager({
       } catch (_) {
         // ignore
       }
-      return manager.onRecordPointerUp(e);
+      return manager.onPointerUp(e);
     },
     onRecordPointerCancel: () => {
       try {
@@ -177,7 +184,7 @@ export function useVoiceInputManager({
       } catch (_) {
         // ignore
       }
-      return manager.onRecordPointerCancel();
+      return manager.onPointerCancel();
     },
   };
 }

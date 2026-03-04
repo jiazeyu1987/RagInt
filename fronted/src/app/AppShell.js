@@ -45,6 +45,7 @@ import { useTourRecordings } from '../hooks/useTourRecordings';
 import { getBackendBase } from '../config/backend';
 import { WAKE_HOLD_MS } from '../config/features';
 import { parseTourCommand } from '../api/tourCommand';
+import { AsrPostProcessPipeline } from '../voice/AsrPostProcessPipeline';
 
 const TOUR_BTN_MODE = {
   START: 'start',
@@ -63,46 +64,6 @@ function reduceTourButtonState(state, event) {
   return state;
 }
 
-function parseWakeWordList(raw) {
-  return String(raw || '')
-    .split(/[,\uFF0C;]/g)
-    .map((item) => String(item || '').trim())
-    .filter(Boolean);
-}
-
-function buildAsrFilterDomainTerms({ domainTermsText, wakeWordText }) {
-  const terms = String(domainTermsText || '').trim();
-  const wakeWords = parseWakeWordList(wakeWordText);
-  if (!wakeWords.length) return terms;
-  return [terms, wakeWords.join(',')].filter(Boolean).join(',');
-}
-
-function resolveWakeWordMatch(text, wakeWords, strict) {
-  const source = String(text || '').trim();
-  if (!source) return null;
-  for (const rawWord of wakeWords || []) {
-    const word = String(rawWord || '').trim();
-    if (!word) continue;
-    const idx = source.indexOf(word);
-    if (idx < 0) continue;
-    if (strict) {
-      if (idx === 0) return { word, index: idx };
-      continue;
-    }
-    if (idx <= 2) return { word, index: idx };
-  }
-  return null;
-}
-
-function stripWakeWordPrefix(text, match) {
-  const source = String(text || '').trim();
-  if (!source) return '';
-  if (!match || !match.word) return source;
-  const start = Math.max(0, Number(match.index) || 0);
-  const end = start + String(match.word).length;
-  return source.slice(end).replace(/^[\s，,。！？!?:：;；、-]+/, '').trim();
-}
-
 function AppShell() {
   const backendBase = getBackendBase();
   const [inputText, setInputTextState] = useState('');
@@ -112,6 +73,8 @@ function AppShell() {
   const [qaCacheDebug, setQaCacheDebug] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [queueStatus, setQueueStatus] = useState('');
+  const [asrPostProcessStage, setAsrPostProcessStage] = useState('idle');
+  const [asrPostProcessEvents, setAsrPostProcessEvents] = useState([]);
   const [tourButtonState, setTourButtonState] = useState({ started: false, mode: TOUR_BTN_MODE.START });
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const clientId = useClientId();
@@ -199,6 +162,10 @@ function AppShell() {
     setAsrStopGraceMs,
     asrFinalWaitMs,
     setAsrFinalWaitMs,
+    asrProviderType,
+    setAsrProviderType,
+    asrFinalTimeoutStrategy,
+    setAsrFinalTimeoutStrategy,
   } = useAppSettings(clientId);
   const [chatOptions, setChatOptions] = useState([]);
   const [selectedChat, setSelectedChat] = useState('展厅聊天');
@@ -225,8 +192,17 @@ function AppShell() {
   const [questionPriority, setQuestionPriority] = useState('normal'); // 'normal' | 'high'
   const [questionQueue, setQuestionQueue] = useState([]);
   const [stageSpeedMode, setStageSpeedMode] = useState('normal'); // 'normal' | 'fast'
-  const { status: serverStatus, error: serverStatusErr } = useBackendStatus(debugInfo && debugInfo.requestId);
-  const { items: serverEvents, lastError: serverLastError, error: serverEventsErr } = useBackendEvents(debugInfo && debugInfo.requestId);
+  const debugPollingEnabled = !!showDebugPanel && !!isLoading;
+  const debugPollingRequestId = debugPollingEnabled && debugInfo && debugInfo.requestId ? debugInfo.requestId : '';
+  const { status: serverStatus, error: serverStatusErr } = useBackendStatus(debugPollingRequestId, {
+    enabled: debugPollingEnabled,
+  });
+  const { items: serverEvents, lastError: serverLastError, error: serverEventsErr } = useBackendEvents(
+    debugPollingRequestId,
+    {
+      enabled: debugPollingEnabled,
+    }
+  );
   const [currentIntent, setCurrentIntent] = useState(null);
 
   useTourBootstrap({
@@ -321,6 +297,15 @@ function AppShell() {
   const globalPromptPrefixRef = useRef(globalPromptPrefix);
   const pendingAsrFinalTextRef = useRef('');
   const wakeWordHoldUntilRef = useRef(0);
+  const pendingAsrClientEventsRef = useRef([]);
+  const asrPostProcessPipelineRef = useRef(null);
+  if (!asrPostProcessPipelineRef.current) {
+    asrPostProcessPipelineRef.current = new AsrPostProcessPipeline({
+      filterAsrText: filterAsrTextExt,
+      now: () => Date.now(),
+      wakeHoldMs: WAKE_HOLD_MS,
+    });
+  }
 
   const interruptEpochRef = useRef(0);
   const interruptManagerRef = useRef(null);
@@ -378,6 +363,10 @@ function AppShell() {
 
   const setInputText = (next) => {
     pendingAsrFinalTextRef.current = '';
+    if (asrPostProcessPipelineRef.current) asrPostProcessPipelineRef.current.clearPendingAsrText();
+    pendingAsrClientEventsRef.current = [];
+    setAsrPostProcessStage('idle');
+    setAsrPostProcessEvents([]);
     setInputTextState(next);
   };
 
@@ -386,75 +375,52 @@ function AppShell() {
   };
 
   const handleAsrFinalText = (text) => {
-    pendingAsrFinalTextRef.current = String(text || '').trim();
+    const finalText = String(text || '').trim();
+    pendingAsrFinalTextRef.current = finalText;
+    if (asrPostProcessPipelineRef.current) asrPostProcessPipelineRef.current.setPendingAsrText(finalText);
   };
 
   const preprocessVoiceText = async ({ text, trigger } = {}) => {
     const originalText = String(text || '').trim();
-    const normalizedTrigger = String(trigger || '').trim().toLowerCase();
-    const pendingAsrText = String(pendingAsrFinalTextRef.current || '').trim();
-    const looksLikePendingAsrText =
-      !!originalText &&
-      !!pendingAsrText &&
-      originalText === pendingAsrText &&
-      (normalizedTrigger === 'text' || normalizedTrigger === 'wake_word' || normalizedTrigger === 'voice');
-
-    if (!looksLikePendingAsrText) return originalText;
     pendingAsrFinalTextRef.current = '';
+    const pipeline = asrPostProcessPipelineRef.current;
+    if (!pipeline) return originalText;
+    setAsrPostProcessStage('pending_asr_matched');
 
-    const wakeWords = wakeWordEnabled ? parseWakeWordList(wakeWord) : [];
-    const holdActive = Date.now() < Number(wakeWordHoldUntilRef.current || 0);
-    let correctedText = originalText;
+    const result = await pipeline.process({
+      text: originalText,
+      trigger,
+      wakeWordEnabled,
+      wakeWord,
+      wakeWordStrict,
+      asrTextFilterEnabled,
+      asrTextFilterPrompt,
+      asrTextFilterChatName,
+      asrTextFilterTerms,
+      onStatusChange: (status) => {
+        if (status === 'processing_asr_text') setQueueStatus('正在处理 ASR 文本...');
+        else setQueueStatus('');
+      },
+      onStageChange: (stage) => setAsrPostProcessStage(String(stage || 'idle')),
+      onEvent: (event) => {
+        pendingAsrClientEventsRef.current = [event, ...(Array.isArray(pendingAsrClientEventsRef.current) ? pendingAsrClientEventsRef.current : [])].slice(0, 12);
+        setAsrPostProcessEvents((prev) => {
+          const next = [event, ...(Array.isArray(prev) ? prev : [])];
+          return next.slice(0, 8);
+        });
+      },
+    });
 
-    if (asrTextFilterEnabled) {
-      const prompt = String(asrTextFilterPrompt || '').trim();
-      const chatName = String(asrTextFilterChatName || '').trim();
-      const domainTerms = buildAsrFilterDomainTerms({
-        domainTermsText: asrTextFilterTerms,
-        wakeWordText: wakeWordEnabled ? wakeWord : '',
-      });
-      if (prompt && chatName) {
-        try {
-          setQueueStatus('正在纠正语音文本...');
-          const res = await filterAsrTextExt({
-            text: originalText,
-            prompt,
-            chatName,
-            domainTerms,
-          });
-          correctedText = String((res && res.text) || '').trim() || originalText;
-        } catch (e) {
-          // eslint-disable-next-line no-console
-          console.warn('[ASR_FILTER] failed', e);
-          correctedText = originalText;
-        } finally {
-          setQueueStatus('');
-        }
-      }
+    wakeWordHoldUntilRef.current = pipeline.getWakeHoldUntilMs();
+    if (!result.accepted) {
+      setInputTextState('');
+      if (result.feedback === 'wake_word_detected') showTransientQueueStatus('已检测到唤醒词');
+      else if (result.feedback === 'wake_word_missing') showTransientQueueStatus('未检测到唤醒词');
+      return '';
     }
 
-    let finalText = correctedText;
-    if (wakeWords.length) {
-      const wakeMatch = resolveWakeWordMatch(correctedText, wakeWords, !!wakeWordStrict);
-      if (wakeMatch) {
-        finalText = stripWakeWordPrefix(correctedText, wakeMatch);
-        wakeWordHoldUntilRef.current = Date.now() + WAKE_HOLD_MS;
-        if (!finalText) {
-          setInputTextState('');
-          showTransientQueueStatus('已唤醒');
-          return '';
-        }
-      } else if (!holdActive) {
-        setInputTextState('');
-        showTransientQueueStatus('未检测到唤醒词');
-        return '';
-      } else if (finalText) {
-        wakeWordHoldUntilRef.current = Date.now() + WAKE_HOLD_MS;
-      }
-    }
-
-    setInputTextState(finalText);
-    return finalText;
+    setInputTextState(result.text);
+    return result.text;
   };
 
   const getTtsManager = () =>
@@ -803,6 +769,11 @@ function AppShell() {
     fetchHistory,
     runCoordinatorRef,
     globalPromptPrefixRef,
+    consumePendingAsrClientEvents: () => {
+      const items = Array.isArray(pendingAsrClientEventsRef.current) ? [...pendingAsrClientEventsRef.current].reverse() : [];
+      pendingAsrClientEventsRef.current = [];
+      return items;
+    },
   });
 
   const {
@@ -889,6 +860,8 @@ function AppShell() {
 
   const {
     isRecording,
+    isRecognizing,
+    recognitionStage,
     startRecording,
     stopRecording,
     onRecordPointerDown,
@@ -900,10 +873,12 @@ function AppShell() {
     handleTextSubmit,
     submitTextAuto,
   } = useVoiceConversationControls({
+    asrProviderType,
     baseUrl: backendBase,
     minRecordMs: asrMinRecordMs,
     asrStopGraceMs,
     asrFinalWaitMs,
+    asrFinalTimeoutStrategy,
     clientIdRef,
     setInputText: setInputTextFromAsr,
     setIsLoading,
@@ -1121,6 +1096,13 @@ function AppShell() {
     setAsrStopGraceMs,
     asrFinalWaitMs,
     setAsrFinalWaitMs,
+    asrProviderType,
+    setAsrProviderType,
+    asrFinalTimeoutStrategy,
+    setAsrFinalTimeoutStrategy,
+    asrRecognitionStage: recognitionStage,
+    asrPostProcessStage,
+    asrPostProcessEvents,
   });
 
   const tourModePanelProps = useTourModePanelProps({
@@ -1142,6 +1124,8 @@ function AppShell() {
 
   const { textInputProps } = useTextInputProps({
     isRecording,
+    isRecognizing,
+    recognitionStage,
     pointerSupported: POINTER_SUPPORTED,
     onRecordPointerDown,
     onRecordPointerUp,

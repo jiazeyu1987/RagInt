@@ -3,11 +3,13 @@ jest.mock('./VoiceKitWsRecorderManager', () => ({
 }));
 
 import { RecordingWorkflowManager } from './RecordingWorkflowManager';
+import { VoiceKitWsRecorderManager } from './VoiceKitWsRecorderManager';
 
 describe('RecordingWorkflowManager', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2026-03-04T12:00:00+08:00'));
+    VoiceKitWsRecorderManager.mockReset();
   });
 
   afterEach(() => {
@@ -55,5 +57,117 @@ describe('RecordingWorkflowManager', () => {
     workflow.stop();
 
     expect(recorder.stop).toHaveBeenCalledTimes(1);
+  });
+
+  test('composeLiveInputText preserves user-appended suffix while ASR finalizes', () => {
+    let currentInput = 'base text partial result user suffix';
+    const workflow = new RecordingWorkflowManager();
+    workflow.setDeps({
+      getInputText: () => currentInput,
+    });
+    workflow._wsBaseText = 'base text';
+    workflow._session.reset('base text');
+    workflow._session.setLastAppliedInputText('base text partial result');
+
+    expect(workflow._composeLiveInputText('final result')).toBe('base text final result user suffix');
+  });
+
+  test('final timeout keeps partial text when strategy is keep_partial', () => {
+    let recorderConfig = null;
+    VoiceKitWsRecorderManager.mockImplementation((config) => {
+      recorderConfig = config;
+      return {
+        stop: jest.fn(),
+        cancel: jest.fn(),
+        isRecording: true,
+      };
+    });
+
+    const setInputText = jest.fn();
+    const onFinalText = jest.fn();
+    const workflow = new RecordingWorkflowManager();
+    workflow.setDeps({
+      baseUrl: 'http://localhost:9380',
+      clientId: 'client-1',
+      setInputText,
+      getInputText: () => 'base text',
+      onFinalText,
+      asrFinalTimeoutStrategy: 'keep_partial',
+    });
+    workflow._snapshotBaseText();
+    workflow._ensureRecorder();
+
+    recorderConfig.onFinalTimeout('partial text');
+
+    expect(setInputText).toHaveBeenLastCalledWith('base text partial text');
+    expect(onFinalText).toHaveBeenCalledWith('partial text');
+  });
+
+  test('final timeout restores base input when strategy is clear_input', () => {
+    let recorderConfig = null;
+    VoiceKitWsRecorderManager.mockImplementation((config) => {
+      recorderConfig = config;
+      return {
+        stop: jest.fn(),
+        cancel: jest.fn(),
+        isRecording: true,
+      };
+    });
+
+    const setInputText = jest.fn();
+    const onFinalText = jest.fn();
+    const workflow = new RecordingWorkflowManager();
+    workflow.setDeps({
+      baseUrl: 'http://localhost:9380',
+      clientId: 'client-1',
+      setInputText,
+      getInputText: () => 'base text',
+      onFinalText,
+      asrFinalTimeoutStrategy: 'clear_input',
+    });
+    workflow._snapshotBaseText();
+    workflow._ensureRecorder();
+
+    recorderConfig.onFinalTimeout('partial text');
+
+    expect(setInputText).toHaveBeenLastCalledWith('base text');
+    expect(onFinalText).toHaveBeenCalledWith('');
+  });
+
+  test('accumulates transcript across segmented partial and final events', () => {
+    let recorderConfig = null;
+    VoiceKitWsRecorderManager.mockImplementation((config) => {
+      recorderConfig = config;
+      return {
+        stop: jest.fn(),
+        cancel: jest.fn(),
+        isRecording: true,
+      };
+    });
+
+    let currentInput = 'base text';
+    const setInputText = jest.fn((value) => {
+      currentInput = value;
+    });
+    const onFinalText = jest.fn();
+    const workflow = new RecordingWorkflowManager();
+    workflow.setDeps({
+      baseUrl: 'http://localhost:9380',
+      clientId: 'client-1',
+      setInputText,
+      getInputText: () => currentInput,
+      onFinalText,
+    });
+    workflow._snapshotBaseText();
+    workflow._ensureRecorder();
+
+    recorderConfig.onPartialText('today weather is nice');
+    recorderConfig.onPartialText('i will go to the supermarket');
+    recorderConfig.onFinalText('buy some things');
+
+    expect(setInputText).toHaveBeenLastCalledWith(
+      'base text today weather is nice i will go to the supermarket buy some things'
+    );
+    expect(onFinalText).toHaveBeenCalledWith('today weather is nice i will go to the supermarket buy some things');
   });
 });

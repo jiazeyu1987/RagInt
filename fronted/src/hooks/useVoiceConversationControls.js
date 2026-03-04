@@ -2,10 +2,12 @@ import { useCallback, useState } from 'react';
 import { useVoiceInputManager } from './useVoiceInputManager';
 
 export function useVoiceConversationControls({
+  asrProviderType = 'voicekit_ws',
   baseUrl,
   minRecordMs = 900,
   asrStopGraceMs = 480,
   asrFinalWaitMs = 1500,
+  asrFinalTimeoutStrategy = 'keep_partial',
   clientIdRef,
   setInputText,
   setIsLoading,
@@ -63,14 +65,26 @@ export function useVoiceConversationControls({
     [selectedAgentId, speakerName, submitUserText, useAgentMode]
   );
 
-  const { isRecording, startRecording, stopRecording, onRecordPointerDown, onRecordPointerUp, onRecordPointerCancel } =
+  const {
+    isRecording,
+    isRecognizing,
+    recognitionStage,
+    startRecording,
+    stopRecording,
+    onRecordPointerDown,
+    onRecordPointerUp,
+    onRecordPointerCancel,
+  } =
     useVoiceInputManager({
+      providerType: asrProviderType,
       baseUrl,
       minRecordMs,
       asrStopGraceMs,
       asrFinalWaitMs,
+      asrFinalTimeoutStrategy,
       clientIdRef,
       setInputText,
+      getInputText: () => inputText,
       setIsLoading,
       decodeAndConvertToWav16kMono,
       unlockAudio,
@@ -155,6 +169,8 @@ export function useVoiceConversationControls({
 
   return {
     isRecording,
+    isRecognizing,
+    recognitionStage,
     startRecording,
     stopRecording,
     onRecordPointerDown,

@@ -56,7 +56,9 @@ def build_diagnostics_zip(*, deps, cfg_loader) -> bytes:
             z.writestr("config.json", json.dumps(redact_secrets(cfg), ensure_ascii=False, indent=2))
 
         with contextlib.suppress(Exception):
-            z.writestr("events_recent.json", json.dumps({"items": deps.event_store.list_recent(limit=500)}, ensure_ascii=False, indent=2))
+            recent_events = deps.event_store.list_recent(limit=500)
+            z.writestr("events_recent.json", json.dumps({"items": recent_events}, ensure_ascii=False, indent=2))
+            z.writestr("asr_timeline_recent.json", json.dumps(build_recent_asr_timeline_report(recent_events), ensure_ascii=False, indent=2))
 
         with contextlib.suppress(Exception):
             path = (Path(deps.base_dir) / "openapi.json").resolve()
@@ -103,6 +105,104 @@ def _dt_ms(a, b):
     if not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
         return None
     return round((float(a) - float(b)) * 1000.0, 1)
+
+
+def _event_ts_ms(event: dict) -> int | None:
+    if not isinstance(event, dict):
+        return None
+    value = event.get("ts_ms")
+    if isinstance(value, (int, float)):
+        return int(value)
+    value = event.get("ts")
+    if isinstance(value, (int, float)):
+        return int(value)
+    value = event.get("created_at_ms")
+    if isinstance(value, (int, float)):
+        return int(value)
+    return None
+
+
+def classify_asr_event(name: str) -> dict:
+    raw = str(name or "").strip().lower()
+    if "error" in raw or "timeout" in raw:
+        return {"category": "error", "tone": "danger"}
+    if "wake" in raw:
+        return {"category": "wake_word", "tone": "warn"}
+    if raw.endswith("accepted") or "accepted" in raw or raw.endswith("bypass_non_asr"):
+        return {"category": "accepted", "tone": "ok"}
+    if "filter" in raw or "correct" in raw or "pending_asr" in raw:
+        return {"category": "filter", "tone": "info"}
+    return {"category": "state", "tone": "neutral"}
+
+
+def build_recent_asr_timeline_report(events: list[dict]) -> dict:
+    timeline_events = []
+    for event in events or []:
+        if not isinstance(event, dict):
+            continue
+        name = str(event.get("name") or "").strip()
+        if not name.startswith("asr_"):
+            continue
+        ts_ms = _event_ts_ms(event)
+        if ts_ms is None:
+            continue
+        timeline_events.append(
+            {
+                "request_id": str(event.get("request_id") or "").strip() or None,
+                "name": name,
+                "kind": str(event.get("kind") or "").strip() or None,
+                "level": str(event.get("level") or "").strip() or "info",
+                "ts_ms": ts_ms,
+                "fields": event.get("fields") if isinstance(event.get("fields"), dict) else {},
+            }
+        )
+
+    groups: dict[str, list[dict]] = {}
+    for event in timeline_events:
+        request_id = event["request_id"] or "recent_unscoped"
+        groups.setdefault(request_id, []).append(event)
+
+    report_items = []
+    for request_id, group_events in groups.items():
+        group_events.sort(key=lambda item: item["ts_ms"])
+        first_ts = group_events[0]["ts_ms"]
+        last_ts = group_events[-1]["ts_ms"]
+        stages = []
+        for idx, event in enumerate(group_events):
+            next_event = group_events[idx + 1] if idx + 1 < len(group_events) else None
+            duration_ms = None if next_event is None else max(0, next_event["ts_ms"] - event["ts_ms"])
+            fields = event["fields"]
+            classification = classify_asr_event(event["name"])
+            stages.append(
+                {
+                    "name": event["name"],
+                    "label": event["name"][4:].replace("_", " "),
+                    "category": classification["category"],
+                    "tone": classification["tone"],
+                    "level": event["level"],
+                    "kind": event["kind"],
+                    "ts_ms": event["ts_ms"],
+                    "start_ms": max(0, event["ts_ms"] - first_ts),
+                    "duration_ms": duration_ms,
+                    "raw_text": fields.get("rawText"),
+                    "corrected_text": fields.get("correctedText"),
+                    "final_text": fields.get("finalText") or fields.get("text"),
+                }
+            )
+
+        report_items.append(
+            {
+                "request_id": None if request_id == "recent_unscoped" else request_id,
+                "stage_count": len(stages),
+                "total_ms": max(0, last_ts - first_ts),
+                "started_at_ms": first_ts,
+                "ended_at_ms": last_ts,
+                "stages": stages,
+            }
+        )
+
+    report_items.sort(key=lambda item: item["started_at_ms"], reverse=True)
+    return {"items": report_items, "count": len(report_items)}
 
 
 def derive_status_metrics(*, timing: dict, now_perf: float) -> dict:
