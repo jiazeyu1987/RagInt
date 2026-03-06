@@ -9,7 +9,7 @@ import {
 
 const ALLOWED_TTS_FETCH_CONCURRENCY = new Set([2, 4, 6, 8, 10]);
 const ALLOWED_TTS_MODES = new Set(['sovtts1', 'sovtts2', 'modelscope', 'flash', 'sapi', 'edge']);
-const ALLOWED_ASR_PROVIDER_TYPES = new Set(['voicekit_ws']);
+const ALLOWED_ASR_PROVIDER_TYPES = new Set(['voicekit_ws', 'sauc_ws']);
 const ALLOWED_ASR_FINAL_TIMEOUT_STRATEGIES = new Set(['keep_partial', 'keep_input', 'clear_input']);
 const FLASH_VOICE_OPTIONS = new Set(['longanyang', 'longanhuan']);
 const STOP_DURATION_TEMPLATE_KEYS = ['tpl_1m', 'tpl_2m', 'tpl_3m', 'tpl_4m', 'tpl_5m'];
@@ -21,6 +21,8 @@ const STOP_DURATION_TEMPLATE_BASE_SECONDS = {
   tpl_5m: 300,
 };
 const DEFAULT_SETTINGS_TAB = 'tts';
+const DEFAULT_SAUC_WS_URL = 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel';
+const DEFAULT_SAUC_RESOURCE_ID = 'volc.bigasr.sauc.duration';
 
 function normalizeBoolean(value, defaultValue = false) {
   if (typeof value === 'boolean') return value;
@@ -77,6 +79,19 @@ function normalizeAsrFinalTimeoutStrategy(value) {
     .trim()
     .toLowerCase();
   return ALLOWED_ASR_FINAL_TIMEOUT_STRATEGIES.has(strategy) ? strategy : 'keep_partial';
+}
+
+function normalizeSaucEndpoint(value, fallback) {
+  const text = String(value == null ? '' : value).trim();
+  return text || fallback;
+}
+
+function normalizeSaucWsUrlByMode(wsUrl, enableNonstream) {
+  const text = String(wsUrl == null ? '' : wsUrl).trim();
+  if (!text) return text;
+  if (!!enableNonstream) return text;
+  // Streaming mode should not use the nostream endpoint, otherwise only final text is returned.
+  return text.includes('/bigmodel_nostream') ? text.replace('/bigmodel_nostream', '/bigmodel') : text;
 }
 
 function normalizeGuideDuration(value) {
@@ -226,6 +241,17 @@ function buildDefaultSettings() {
     asrFinalWaitMs: 1500,
     asrProviderType: 'voicekit_ws',
     asrFinalTimeoutStrategy: 'keep_partial',
+    saucWsUrl: DEFAULT_SAUC_WS_URL,
+    saucResourceId: DEFAULT_SAUC_RESOURCE_ID,
+    saucAppKey: '',
+    saucAccessKey: '',
+    saucModelName: 'bigmodel',
+    saucSegmentDurationMs: 200,
+    saucEnableItn: true,
+    saucEnablePunc: true,
+    saucEnableDdc: true,
+    saucShowUtterances: true,
+    saucEnableNonstream: false,
   };
 }
 
@@ -233,6 +259,9 @@ function normalizeAppSettings(value) {
   const defaults = buildDefaultSettings();
   const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const ttsMode = normalizeTtsMode(raw.ttsMode);
+  const saucEnableNonstream = normalizeBoolean(raw.saucEnableNonstream, defaults.saucEnableNonstream);
+  const saucWsUrlRaw = normalizeSaucEndpoint(raw.saucWsUrl, defaults.saucWsUrl);
+  const saucWsUrl = normalizeSaucWsUrlByMode(saucWsUrlRaw, saucEnableNonstream);
   let modelscopeVoice = String(raw.modelscopeVoice == null ? defaults.modelscopeVoice : raw.modelscopeVoice).trim();
   if (ttsMode === 'flash' && !FLASH_VOICE_OPTIONS.has(modelscopeVoice)) {
     modelscopeVoice = 'longanyang';
@@ -286,6 +315,17 @@ function normalizeAppSettings(value) {
     asrFinalWaitMs: normalizeInteger(raw.asrFinalWaitMs, defaults.asrFinalWaitMs, { min: 200, max: 10000 }),
     asrProviderType: normalizeAsrProviderType(raw.asrProviderType),
     asrFinalTimeoutStrategy: normalizeAsrFinalTimeoutStrategy(raw.asrFinalTimeoutStrategy),
+    saucWsUrl,
+    saucResourceId: normalizeSaucEndpoint(raw.saucResourceId, defaults.saucResourceId),
+    saucAppKey: String(raw.saucAppKey == null ? defaults.saucAppKey : raw.saucAppKey).trim(),
+    saucAccessKey: String(raw.saucAccessKey == null ? defaults.saucAccessKey : raw.saucAccessKey).trim(),
+    saucModelName: String(raw.saucModelName == null ? defaults.saucModelName : raw.saucModelName).trim() || defaults.saucModelName,
+    saucSegmentDurationMs: normalizeInteger(raw.saucSegmentDurationMs, defaults.saucSegmentDurationMs, { min: 50, max: 1000 }),
+    saucEnableItn: normalizeBoolean(raw.saucEnableItn, defaults.saucEnableItn),
+    saucEnablePunc: normalizeBoolean(raw.saucEnablePunc, defaults.saucEnablePunc),
+    saucEnableDdc: normalizeBoolean(raw.saucEnableDdc, defaults.saucEnableDdc),
+    saucShowUtterances: normalizeBoolean(raw.saucShowUtterances, defaults.saucShowUtterances),
+    saucEnableNonstream,
   };
 }
 
@@ -351,6 +391,17 @@ function readLegacySettingsFromLocalStorage() {
   assign('settingsActiveTab', 'settingsActiveTab');
   assign('asrProviderType', 'asrProviderType');
   assign('asrFinalTimeoutStrategy', 'asrFinalTimeoutStrategy');
+  assign('saucWsUrl', 'saucWsUrl');
+  assign('saucResourceId', 'saucResourceId');
+  assign('saucAppKey', 'saucAppKey');
+  assign('saucAccessKey', 'saucAccessKey');
+  assign('saucModelName', 'saucModelName');
+  assign('saucSegmentDurationMs', 'saucSegmentDurationMs', Number);
+  assign('saucEnableItn', 'saucEnableItn');
+  assign('saucEnablePunc', 'saucEnablePunc');
+  assign('saucEnableDdc', 'saucEnableDdc');
+  assign('saucShowUtterances', 'saucShowUtterances');
+  assign('saucEnableNonstream', 'saucEnableNonstream');
 
   out.tourStopsOverride = readJson('tourStopsOverride', []);
   out.tourStopDurationsOverride = readJson('tourStopDurationsOverride', {});
@@ -496,6 +547,17 @@ export function useAppSettings(clientId) {
   const setAsrFinalWaitMs = useCallback((value) => updateSetting('asrFinalWaitMs', value), [updateSetting]);
   const setAsrProviderType = useCallback((value) => updateSetting('asrProviderType', value), [updateSetting]);
   const setAsrFinalTimeoutStrategy = useCallback((value) => updateSetting('asrFinalTimeoutStrategy', value), [updateSetting]);
+  const setSaucWsUrl = useCallback((value) => updateSetting('saucWsUrl', value), [updateSetting]);
+  const setSaucResourceId = useCallback((value) => updateSetting('saucResourceId', value), [updateSetting]);
+  const setSaucAppKey = useCallback((value) => updateSetting('saucAppKey', value), [updateSetting]);
+  const setSaucAccessKey = useCallback((value) => updateSetting('saucAccessKey', value), [updateSetting]);
+  const setSaucModelName = useCallback((value) => updateSetting('saucModelName', value), [updateSetting]);
+  const setSaucSegmentDurationMs = useCallback((value) => updateSetting('saucSegmentDurationMs', value), [updateSetting]);
+  const setSaucEnableItn = useCallback((value) => updateSetting('saucEnableItn', value), [updateSetting]);
+  const setSaucEnablePunc = useCallback((value) => updateSetting('saucEnablePunc', value), [updateSetting]);
+  const setSaucEnableDdc = useCallback((value) => updateSetting('saucEnableDdc', value), [updateSetting]);
+  const setSaucShowUtterances = useCallback((value) => updateSetting('saucShowUtterances', value), [updateSetting]);
+  const setSaucEnableNonstream = useCallback((value) => updateSetting('saucEnableNonstream', value), [updateSetting]);
 
   return {
     ...settings,
@@ -544,5 +606,16 @@ export function useAppSettings(clientId) {
     setAsrFinalWaitMs,
     setAsrProviderType,
     setAsrFinalTimeoutStrategy,
+    setSaucWsUrl,
+    setSaucResourceId,
+    setSaucAppKey,
+    setSaucAccessKey,
+    setSaucModelName,
+    setSaucSegmentDurationMs,
+    setSaucEnableItn,
+    setSaucEnablePunc,
+    setSaucEnableDdc,
+    setSaucShowUtterances,
+    setSaucEnableNonstream,
   };
 }

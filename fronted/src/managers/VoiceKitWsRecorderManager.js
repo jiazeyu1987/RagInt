@@ -149,14 +149,14 @@ export class VoiceKitWsRecorderManager {
   }
 
   async start() {
-    if (this.isRecording) return;
+    if (this.isRecording) return true;
     if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
       this._fail('Browser does not support getUserMedia');
-      return;
+      return false;
     }
     if (typeof window !== 'undefined' && window.isSecureContext === false) {
       this._fail('Browser security restriction: microphone requires https or localhost');
-      return;
+      return false;
     }
 
     this._cleanup();
@@ -173,6 +173,8 @@ export class VoiceKitWsRecorderManager {
     const wakeMaxPos = Number(this._startPayload && this._startPayload.wake_max_pos) || (strict ? 0 : 2);
 
     const sessionId = this._requestId || `asrws_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    let startupError = '';
+    let startupPhase = true;
     const mgr = createVoiceInputManager({
       baseUrl: this._baseUrl,
       clientId: this._clientId,
@@ -208,8 +210,10 @@ export class VoiceKitWsRecorderManager {
         }
       },
       onError: (e, msg) => {
+        const errText = safeTrim(e || 'ws_error') || 'ws_error';
+        if (startupPhase && !startupError) startupError = errText;
         this._setRecognizing(false);
-        if (!this._stopRequested && !this._stopping) this._fail(String(e || 'ws_error'), msg);
+        if (!this._stopRequested && !this._stopping) this._fail(errText, msg);
       },
     });
     this._mgr = mgr;
@@ -232,23 +236,38 @@ export class VoiceKitWsRecorderManager {
       onError: (e) => this._fail('Failed to access microphone', e),
     });
 
-    // Important: start mic FIRST (user gesture handler), then await WS connect/start.
-    await this._recorder.start();
+    try {
+      // Important: start mic FIRST (user gesture handler), then await WS connect/start.
+      await this._recorder.start();
 
-    await mgr.startHoldToTalk({
-      wakeEnabled,
-      wakeWords,
-      wakeWord,
-      strict,
-      cooldownMs,
-      wakeMaxPos,
-    });
+      await mgr.startHoldToTalk({
+        wakeEnabled,
+        wakeWords,
+        wakeWord,
+        strict,
+        cooldownMs,
+        wakeMaxPos,
+      });
 
-    this._wsReady = true;
-    if (this._frameQueue.length) {
-      const q = this._frameQueue;
-      this._frameQueue = [];
-      for (const b of q) mgr.sendAudioFrame(b);
+      startupPhase = false;
+      if (startupError) throw new Error(startupError);
+
+      this._wsReady = true;
+      if (this._frameQueue.length) {
+        const q = this._frameQueue;
+        this._frameQueue = [];
+        for (const b of q) mgr.sendAudioFrame(b);
+      }
+      return true;
+    } catch (e) {
+      startupPhase = false;
+      this._stopMicOnly();
+      this._disposeWs();
+      const stoppedBeforeReady = !!(this._stopRequested || this._stopping);
+      this._cleanup();
+      if (stoppedBeforeReady) return false;
+      this._fail('Failed to start VoiceKit ASR', e);
+      return false;
     }
   }
 

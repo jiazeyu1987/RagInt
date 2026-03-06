@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import importlib
+import inspect
 import time
+import sys
 
-from flask import Blueprint, Response, jsonify, request
+from flask import Blueprint, Response, current_app, jsonify, request
 
 from backend.api.http_responses import bad_request_json
 from backend.api.ragflow_config_cache import get_ragflow_config
@@ -36,6 +39,74 @@ from backend.services.asr_text_filter import (
 
 def create_blueprint(deps):
     bp = Blueprint("speech_api", __name__)
+
+    @bp.route("/api/asr/sauc/health", methods=["GET"])
+    def api_sauc_proxy_health():
+        aiohttp_available = importlib.util.find_spec("aiohttp") is not None
+        simple_ws_available = importlib.util.find_spec("simple_websocket") is not None
+        flask_sock_available = importlib.util.find_spec("flask_sock") is not None
+
+        simple_ws_version = ""
+        receive_timeout_supported = False
+        if simple_ws_available:
+            try:
+                simple_ws = importlib.import_module("simple_websocket")
+                simple_ws_version = str(getattr(simple_ws, "__version__", "") or "")
+                receive_sig = inspect.signature(simple_ws.Server.receive)
+                receive_timeout_supported = "timeout" in receive_sig.parameters
+            except Exception:
+                simple_ws_version = ""
+                receive_timeout_supported = False
+
+        flask_sock_version = ""
+        if flask_sock_available:
+            try:
+                flask_sock = importlib.import_module("flask_sock")
+                flask_sock_version = str(getattr(flask_sock, "__version__", "") or "")
+            except Exception:
+                flask_sock_version = ""
+
+        flask_version = ""
+        werkzeug_version = ""
+        try:
+            import flask as _flask
+
+            flask_version = str(getattr(_flask, "__version__", "") or "")
+        except Exception:
+            flask_version = ""
+        try:
+            import werkzeug as _werkzeug
+
+            werkzeug_version = str(getattr(_werkzeug, "__version__", "") or "")
+        except Exception:
+            werkzeug_version = ""
+
+        sauc_sock_registered = bool(current_app.config.get("RAGINT_SAUC_PROXY_REGISTERED"))
+        sauc_last_event = current_app.config.get("RAGINT_SAUC_LAST_EVENT") or {}
+        sauc_event_history = current_app.config.get("RAGINT_SAUC_EVENT_HISTORY") or []
+        server_software = str(request.environ.get("SERVER_SOFTWARE") or "").strip()
+
+        return jsonify(
+            {
+                "ok": True,
+                "sauc_proxy": {
+                    "registered": sauc_sock_registered,
+                    "flask_debug": bool(getattr(current_app, "debug", False)),
+                    "aiohttp_available": aiohttp_available,
+                    "simple_websocket_available": simple_ws_available,
+                    "simple_websocket_version": simple_ws_version,
+                    "flask_sock_available": flask_sock_available,
+                    "flask_sock_version": flask_sock_version,
+                    "flask_version": flask_version,
+                    "werkzeug_version": werkzeug_version,
+                    "python_version": sys.version.split(" ", 1)[0],
+                    "receive_timeout_supported": receive_timeout_supported,
+                    "server_software": server_software,
+                    "last_event": sauc_last_event if isinstance(sauc_last_event, dict) else {},
+                    "event_history": sauc_event_history[-10:] if isinstance(sauc_event_history, list) else [],
+                },
+            }
+        )
 
     @bp.route("/api/cancel", methods=["POST"])
     def api_cancel():

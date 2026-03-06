@@ -79,7 +79,7 @@ export class PressToTalkAsrModule {
 
   async startCapture() {
     this._manualHoldActive = true;
-    await this._provider.startCapture();
+    return this._provider.startCapture();
   }
 
   stopCapture() {

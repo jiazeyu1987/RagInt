@@ -1,6 +1,9 @@
 jest.mock('./VoiceKitWsRecorderManager', () => ({
   VoiceKitWsRecorderManager: jest.fn(),
 }));
+jest.mock('voicekit-js', () => ({
+  createMicRecorder: jest.fn(),
+}));
 
 import { RecordingWorkflowManager } from './RecordingWorkflowManager';
 import { VoiceKitWsRecorderManager } from './VoiceKitWsRecorderManager';

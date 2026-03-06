@@ -21,6 +21,8 @@ Key endpoints:
 - `POST /api/tour/command/parse` (voice tour commands: next/prev/jump/etc)
 - `GET|POST|DELETE /api/selling_points` + `GET /api/selling_points/topn` (selling points TopN)
 - `GET /ops` + `/api/ops/*` (ops console + device/config MVP)
+- `GET /api/asr/sauc/health` (SAUC proxy capability check)
+- `WS /api/asr/sauc/ws` (SAUC proxy for browser mic streaming)
 
 ## Environment variables
 

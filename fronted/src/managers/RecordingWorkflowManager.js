@@ -1,4 +1,5 @@
 import { VoiceKitWsRecorderManager } from './VoiceKitWsRecorderManager';
+import { SaucWsRecorderManager } from './SaucWsRecorderManager';
 import { AsrRecognitionSession } from '../voice/AsrRecognitionSession';
 
 function safeTrim(v) {
@@ -31,9 +32,11 @@ export class RecordingWorkflowManager {
     const prevSig = this._wsConfigSig;
     this._deps = { ...(this._deps || {}), ...(next || {}) };
     this._wsRequireWake = !!this._deps.wsRequireWake;
+    const providerType = safeTrim(this._deps.providerType).toLowerCase() || 'voicekit_ws';
 
     // Recreate recorder if wake config changed (recorder captures startPayload at construction).
     const sig = JSON.stringify({
+      providerType,
       wsRequireWake: !!this._wsRequireWake,
       wakeWord: safeTrim(this._deps.wakeWord),
       wakeWordStrict: !!this._deps.wakeWordStrict,
@@ -41,6 +44,17 @@ export class RecordingWorkflowManager {
       wakeHoldMs: Number(this._deps.wakeHoldMs) || 0,
       baseUrl: safeTrim(this._deps.baseUrl),
       clientId: safeTrim(this._deps.clientId),
+      saucWsUrl: safeTrim(this._deps.saucWsUrl),
+      saucResourceId: safeTrim(this._deps.saucResourceId),
+      saucAppKey: safeTrim(this._deps.saucAppKey),
+      saucAccessKey: safeTrim(this._deps.saucAccessKey),
+      saucModelName: safeTrim(this._deps.saucModelName),
+      saucSegmentDurationMs: Number(this._deps.saucSegmentDurationMs) || 0,
+      saucEnableItn: !!this._deps.saucEnableItn,
+      saucEnablePunc: !!this._deps.saucEnablePunc,
+      saucEnableDdc: !!this._deps.saucEnableDdc,
+      saucShowUtterances: !!this._deps.saucShowUtterances,
+      saucEnableNonstream: !!this._deps.saucEnableNonstream,
     });
     this._wsConfigSig = sig;
     if (prevSig && sig !== prevSig && this._recorder) {
@@ -226,6 +240,7 @@ export class RecordingWorkflowManager {
   _ensureRecorder() {
     const baseUrl = this._deps.baseUrl;
     const clientId = safeTrim(this._deps.clientId);
+    const providerType = safeTrim(this._deps.providerType).toLowerCase() || 'voicekit_ws';
     const wakeWord = safeTrim(this._deps.wakeWord);
     const strict = !!this._deps.wakeWordStrict;
     const wakeMatchMode = strict ? 'prefix' : 'contains';
@@ -236,7 +251,8 @@ export class RecordingWorkflowManager {
     const holdActive = Date.now() < (Number(this._wakeHoldUntilMs) || 0);
     const requireWake = !!this._wsRequireWake && !!wakeWord && !holdActive;
 
-    this._recorder = new VoiceKitWsRecorderManager({
+    const RecorderManager = providerType === 'sauc_ws' ? SaucWsRecorderManager : VoiceKitWsRecorderManager;
+    this._recorder = new RecorderManager({
       baseUrl,
       label: 'rec',
       clientId,
@@ -256,6 +272,22 @@ export class RecordingWorkflowManager {
             emit_prewake: false,
           }
         : null,
+      saucOptions:
+        providerType === 'sauc_ws'
+          ? {
+              wsUrl: safeTrim(this._deps.saucWsUrl),
+              resourceId: safeTrim(this._deps.saucResourceId),
+              appKey: safeTrim(this._deps.saucAppKey),
+              accessKey: safeTrim(this._deps.saucAccessKey),
+              modelName: safeTrim(this._deps.saucModelName) || 'bigmodel',
+              segmentDurationMs: Number(this._deps.saucSegmentDurationMs) || 200,
+              enableItn: !!this._deps.saucEnableItn,
+              enablePunc: !!this._deps.saucEnablePunc,
+              enableDdc: !!this._deps.saucEnableDdc,
+              showUtterances: !!this._deps.saucShowUtterances,
+              enableNonstream: !!this._deps.saucEnableNonstream,
+            }
+          : null,
       onEvent: (evt) => {
         const t = safeTrim(evt && evt.type).toLowerCase();
         if (t === 'wake') this._setAsrStage('wake_detected', evt);
@@ -359,7 +391,7 @@ export class RecordingWorkflowManager {
     }
 
     this._ensureRecorder();
-    if (!this._recorder) return;
+    if (!this._recorder) return false;
 
     const unlockAudio = this._deps.unlockAudio;
     try {
@@ -380,12 +412,20 @@ export class RecordingWorkflowManager {
     this._wakeHoldMs = Math.max(500, Math.min(120000, Math.round(Number(this._deps.wakeHoldMs) || 8000)));
 
     try {
-      await this._recorder.start();
+      const started = await this._recorder.start();
+      if (!started) {
+        this._setLoading(false);
+        this._setRecognizing(false);
+        if (this._log) this._log('[REC] start returned false');
+        return false;
+      }
+      return true;
     } catch (e) {
       this._setLoading(false);
       this._setRecognizing(false);
       this._setAsrStage('error', { message: safeTrim(e && e.message ? e.message : e) });
       if (this._log) this._log('[REC] start failed', e);
+      return false;
     }
   }
 
@@ -451,7 +491,8 @@ export class RecordingWorkflowManager {
         timeoutTimer = setTimeout(() => resolve(''), totalMs);
       });
 
-      await this.start();
+      const started = await this.start();
+      if (!started) return '';
       stopTimer = setTimeout(() => {
         try {
           this.stop();

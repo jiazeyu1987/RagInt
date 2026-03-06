@@ -81,6 +81,7 @@ def create_app() -> Flask:
 
     # WebSocket endpoints (Flask-Sock / VoiceKit).
     bootstrap.register_voicekit(app=app, deps=deps, logger=logger)
+    bootstrap.register_sauc_proxy(app=app, deps=deps, logger=logger)
     return app
 
 
@@ -93,11 +94,13 @@ def main() -> None:
     debug = _parse_bool(os.environ.get("RAGINT_DEBUG"), default=False)
 
     app = create_app()
+    if debug:
+        logger.warning("RAGINT_DEBUG=1 may reduce websocket stability; forcing use_reloader=False.")
     logger.info("启动语音问答后端服务")
     # Note: Flask-Sock uses `simple-websocket`, which starts a background thread to read frames.
     # Using gevent sockets here can trigger `greenlet.error: Cannot switch to a different thread`.
     # For local/dev, run with werkzeug (Flask built-in server) so websocket works reliably.
-    app.run(host=host, port=port, debug=debug, threaded=True)
+    app.run(host=host, port=port, debug=debug, threaded=True, use_reloader=False)
 
 
 if __name__ == "__main__":

@@ -242,3 +242,22 @@ def register_voicekit(*, app: Flask, deps: AppDeps, logger) -> None:
     register_voicekit(app, vk_deps, url_prefix="/voicekit")
 
     logger.info("VoiceKit registered: /voicekit/ws/asr")
+
+
+def register_sauc_proxy(*, app: Flask, deps: AppDeps, logger) -> None:
+    """
+    Optional SAUC WS proxy endpoint:
+    - Browser -> RagInt: `/api/asr/sauc/ws`
+    - RagInt -> SAUC upstream WS
+    """
+
+    try:
+        from backend.ws.sauc_proxy import register_sauc_proxy_ws
+
+        enabled = bool(register_sauc_proxy_ws(app=app, deps=deps, logger=logger))
+        if enabled:
+            logger.info("SAUC proxy registered: /api/asr/sauc/ws")
+        else:
+            logger.warning("SAUC proxy not enabled")
+    except Exception as e:
+        logger.warning("SAUC proxy registration skipped: %s", e, exc_info=True)

@@ -448,8 +448,116 @@ function AsrTab({ controlBarProps }) {
             <span>ASR 提供方</span>
             <select value={String(c.asrProviderType || 'voicekit_ws')} onChange={(e) => c.onChangeAsrProviderType && c.onChangeAsrProviderType(e.target.value)}>
               <option value="voicekit_ws">VoiceKit WebSocket</option>
+              <option value="sauc_ws">SAUC WebSocket (Proxy)</option>
             </select>
           </label>
+
+          {String(c.asrProviderType || 'voicekit_ws') === 'sauc_ws' ? (
+            <>
+              <label className="settings-field">
+                <span>SAUC URL</span>
+                <input
+                  value={String(c.saucWsUrl || '')}
+                  onChange={(e) => c.onChangeSaucWsUrl && c.onChangeSaucWsUrl(e.target.value)}
+                  placeholder="wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream"
+                />
+              </label>
+
+              <label className="settings-field">
+                <span>Resource ID</span>
+                <input
+                  value={String(c.saucResourceId || '')}
+                  onChange={(e) => c.onChangeSaucResourceId && c.onChangeSaucResourceId(e.target.value)}
+                  placeholder="volc.bigasr.sauc.duration"
+                />
+              </label>
+
+              <label className="settings-field">
+                <span>App Key</span>
+                <input
+                  value={String(c.saucAppKey || '')}
+                  onChange={(e) => c.onChangeSaucAppKey && c.onChangeSaucAppKey(e.target.value)}
+                  placeholder="required"
+                />
+              </label>
+
+              <label className="settings-field">
+                <span>Access Key</span>
+                <input
+                  value={String(c.saucAccessKey || '')}
+                  onChange={(e) => c.onChangeSaucAccessKey && c.onChangeSaucAccessKey(e.target.value)}
+                  placeholder="required"
+                />
+              </label>
+
+              <label className="settings-field">
+                <span>Model Name</span>
+                <input
+                  value={String(c.saucModelName || 'bigmodel')}
+                  onChange={(e) => c.onChangeSaucModelName && c.onChangeSaucModelName(e.target.value)}
+                  placeholder="bigmodel"
+                />
+              </label>
+
+              <label className="settings-field">
+                <span>Packet Duration (ms)</span>
+                <input
+                  type="number"
+                  min="50"
+                  max="1000"
+                  step="10"
+                  value={String(c.saucSegmentDurationMs || 200)}
+                  onChange={(e) => c.onChangeSaucSegmentDurationMs && c.onChangeSaucSegmentDurationMs(Number(e.target.value) || 200)}
+                  placeholder="200"
+                />
+              </label>
+
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={!!c.saucEnableItn}
+                  onChange={(e) => c.onChangeSaucEnableItn && c.onChangeSaucEnableItn(e.target.checked)}
+                />
+                <span>SAUC enable_itn</span>
+              </label>
+
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={!!c.saucEnablePunc}
+                  onChange={(e) => c.onChangeSaucEnablePunc && c.onChangeSaucEnablePunc(e.target.checked)}
+                />
+                <span>SAUC enable_punc</span>
+              </label>
+
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={!!c.saucEnableDdc}
+                  onChange={(e) => c.onChangeSaucEnableDdc && c.onChangeSaucEnableDdc(e.target.checked)}
+                />
+                <span>SAUC enable_ddc</span>
+              </label>
+
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={!!c.saucShowUtterances}
+                  onChange={(e) => c.onChangeSaucShowUtterances && c.onChangeSaucShowUtterances(e.target.checked)}
+                />
+                <span>SAUC show_utterances</span>
+              </label>
+
+              <label className="settings-toggle">
+                <input
+                  type="checkbox"
+                  checked={!!c.saucEnableNonstream}
+                  onChange={(e) => c.onChangeSaucEnableNonstream && c.onChangeSaucEnableNonstream(e.target.checked)}
+                />
+                <span>SAUC enable_nonstream</span>
+              </label>
+            </>
+          ) : null}
 
           <div className="settings-field">
             <span>识别阶段</span>
