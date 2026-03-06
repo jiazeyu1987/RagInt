@@ -27,8 +27,12 @@ class TtsStreamContext:
 def _fallback_tts_providers(*, primary: str, app_config: dict) -> list[str]:
     primary_norm = str(primary or "").strip().lower()
     if primary_norm in ("modelscope", "bailian", "dashscope", "flash"):
-        # Online providers must fail fast with the original upstream error.
-        # Do not auto-fallback to any local/system TTS provider.
+        tts_cfg = app_config.get("tts") if isinstance(app_config, dict) else {}
+        tts_cfg = tts_cfg if isinstance(tts_cfg, dict) else {}
+        edge_cfg = tts_cfg.get("edge")
+        edge_cfg = edge_cfg if isinstance(edge_cfg, dict) else {}
+        if edge_cfg.get("enabled") is not False:
+            return ["edge"]
         return []
     return []
 

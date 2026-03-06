@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import json
 import logging
 import queue
 import threading
@@ -14,6 +15,29 @@ from backend.services.config_utils import get_nested
 
 _DASHSCOPE_POOL = None
 _DASHSCOPE_POOL_LOCK = threading.Lock()
+
+
+def _safe_trim(value) -> str:
+    return str(value or "").strip()
+
+
+def _is_rate_quota_error(message: str) -> bool:
+    text = _safe_trim(message)
+    if not text:
+        return False
+    if "Throttling.RateQuota" in text or "Requests rate limit exceeded" in text:
+        return True
+    try:
+        data = json.loads(text)
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    header = data.get("header")
+    header = header if isinstance(header, dict) else {}
+    code = _safe_trim(header.get("error_code"))
+    err = _safe_trim(header.get("error_message"))
+    return code == "Throttling.RateQuota" or "rate limit" in err.lower()
 
 
 def _dashscope_get_pool(max_size: int):
@@ -39,7 +63,39 @@ def stream_bailian_tts(
     if mode == "http":
         yield from stream_bailian_tts_http(text=text, request_id=request_id, config=config, logger=logger, cancel_event=cancel_event)
         return
-    yield from stream_bailian_tts_dashscope(text=text, request_id=request_id, config=config, logger=logger, cancel_event=cancel_event)
+
+    max_retries = int(bailian_cfg.get("rate_quota_retries", 2) or 2)
+    max_retries = max(0, min(max_retries, 6))
+    base_backoff_s = float(bailian_cfg.get("rate_quota_backoff_s", 0.6) or 0.6)
+    base_backoff_s = max(0.05, min(base_backoff_s, 10.0))
+
+    attempt = 0
+    while True:
+        emitted_any = False
+        try:
+            for chunk in stream_bailian_tts_dashscope(
+                text=text, request_id=request_id, config=config, logger=logger, cancel_event=cancel_event
+            ):
+                emitted_any = True
+                yield chunk
+            return
+        except RuntimeError as exc:
+            err_text = _safe_trim(exc)
+            if emitted_any or not _is_rate_quota_error(err_text) or attempt >= max_retries:
+                raise
+            if cancel_event is not None and cancel_event.is_set():
+                raise
+            wait_s = min(8.0, base_backoff_s * (2**attempt))
+            attempt += 1
+            logger.warning(
+                "[%s] dashscope_tts_rate_quota retry=%s/%s backoff=%.2fs",
+                request_id,
+                attempt,
+                max_retries,
+                wait_s,
+            )
+            time.sleep(wait_s)
+            continue
 
 
 def stream_bailian_tts_http(

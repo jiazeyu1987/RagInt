@@ -10,6 +10,13 @@ from backend.services.tts.providers.local_gpt_sovits import get_local_tts_cfg, s
 from backend.services.tts.providers.sapi import stream_sapi_tts
 
 
+def _is_rate_quota_error(exc: Exception) -> bool:
+    text = str(exc or "").strip()
+    if not text:
+        return False
+    return "Throttling.RateQuota" in text or "Requests rate limit exceeded" in text
+
+
 def stream_tts(
     *,
     text: str,
@@ -40,8 +47,17 @@ def stream_tts(
         return
     if provider_norm in ("bailian", "dashscope", "modelscope", "flash"):
         logger.info(f"[{request_id}] tts_provider_select provider=modelscope(mapped_to=bailian)")
-        yield from stream_bailian_tts(text=text, request_id=request_id, config=config, logger=logger, cancel_event=cancel_event)
-        return
+        try:
+            yield from stream_bailian_tts(text=text, request_id=request_id, config=config, logger=logger, cancel_event=cancel_event)
+            return
+        except Exception as exc:  # noqa: BLE001
+            if _is_rate_quota_error(exc):
+                edge_cfg = get_nested(config, ["tts", "edge"], {}) or {}
+                if edge_cfg.get("enabled") is not False:
+                    logger.warning(f"[{request_id}] modelscope_rate_limited -> fallback_to=edge")
+                    yield from stream_edge(text=text, request_id=request_id, config=config, logger=logger, cancel_event=cancel_event)
+                    return
+            raise
 
     local_provider = provider_norm
     if local_provider in ("local", "gpt_sovits"):
@@ -67,4 +83,3 @@ def stream_tts(
     yield from stream_local_gpt_sovits(
         text=text, request_id=request_id, config=config, logger=logger, cancel_event=cancel_event, local_provider=local_provider
     )
-
