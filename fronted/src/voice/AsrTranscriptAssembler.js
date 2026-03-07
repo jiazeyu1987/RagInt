@@ -103,7 +103,14 @@ export class AsrTranscriptAssembler {
     }
 
     const current = safeTrim(this._hypothesis);
-    if (current && !hasStrongPrefixRelation(current, next)) {
+    if (current) {
+      if (hasStrongPrefixRelation(current, next)) {
+        // Some providers occasionally send a shorter final than the latest
+        // partial. Keep the longer one to avoid truncating long utterances.
+        this._hypothesis = next.length >= current.length ? next : current;
+        this._commitHypothesis();
+        return this.getRecognizedText();
+      }
       this._commitHypothesis();
       this._hypothesis = stripLeadingOverlap(current, next) || next;
       this._commitHypothesis();

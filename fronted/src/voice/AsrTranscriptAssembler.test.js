@@ -32,6 +32,15 @@ describe('AsrTranscriptAssembler', () => {
     ]);
   });
 
+  test('does not truncate when final text is shorter than the latest partial', () => {
+    const assembler = new AsrTranscriptAssembler();
+
+    assembler.applyPartial('welcome to our exhibition hall and let me introduce our company background');
+    expect(assembler.applyFinal('welcome to our exhibition hall')).toBe(
+      'welcome to our exhibition hall and let me introduce our company background'
+    );
+  });
+
   test('deduplicates overlapping Chinese segment boundaries', () => {
     const assembler = new AsrTranscriptAssembler();
 
