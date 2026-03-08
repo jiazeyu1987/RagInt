@@ -10,11 +10,10 @@ RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 
 COPY backend /app/backend
 COPY ragflow_demo /app/ragflow_demo
-COPY fuasr_demo /app/fuasr_demo
+COPY asr_demo /app/asr_demo
 COPY tts_demo /app/tts_demo
 
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000
 CMD ["python", "-m", "backend"]
-

@@ -30,9 +30,10 @@ def redact_secrets(obj):
 
 
 def diagnostics_authorized(req) -> bool:
-    required = DiagnosticsEnvConfig.from_env().key
+    cfg = DiagnosticsEnvConfig.from_env()
+    required = cfg.key
     if not required:
-        return True
+        return bool(cfg.allow_without_key)
     supplied = str(req.headers.get("X-Diagnostics-Key") or req.args.get("key") or "").strip()
     return supplied == required
 

@@ -2,11 +2,17 @@ function safeTrim(value) {
   return String(value == null ? '' : value).trim();
 }
 
+const FILTER_CACHE_TTL_MS = 30000;
+
 function parseWakeWordList(raw) {
   return String(raw || '')
     .split(/[,\uFF0C;]/g)
     .map((item) => String(item || '').trim())
     .filter(Boolean);
+}
+
+function buildFilterCacheKey({ text, prompt, chatName, domainTerms }) {
+  return [safeTrim(text), safeTrim(prompt), safeTrim(chatName), safeTrim(domainTerms)].join('\n');
 }
 
 function buildAsrFilterDomainTerms({ domainTermsText, wakeWordText }) {
@@ -53,6 +59,8 @@ export class AsrPostProcessPipeline {
     this._wakeHoldMs = Math.max(0, Number(wakeHoldMs) || 8000);
     this._pendingAsrText = '';
     this._wakeHoldUntilMs = 0;
+    this._filterCache = null;
+    this._filterInFlight = null;
   }
 
   setPendingAsrText(text) {
@@ -65,6 +73,97 @@ export class AsrPostProcessPipeline {
 
   getWakeHoldUntilMs() {
     return this._wakeHoldUntilMs;
+  }
+
+  _getCachedFilterText(cacheKey) {
+    const key = safeTrim(cacheKey);
+    if (!key || !this._filterCache || safeTrim(this._filterCache.key) !== key) return '';
+    const createdAtMs = Number(this._filterCache.createdAtMs || 0);
+    if (!Number.isFinite(createdAtMs) || this._now() - createdAtMs > FILTER_CACHE_TTL_MS) return '';
+    return safeTrim(this._filterCache.text);
+  }
+
+  _setCachedFilterText(cacheKey, text) {
+    const key = safeTrim(cacheKey);
+    const nextText = safeTrim(text);
+    if (!key || !nextText) return;
+    this._filterCache = {
+      key,
+      text: nextText,
+      createdAtMs: this._now(),
+    };
+  }
+
+  async _resolveFilteredText({
+    text,
+    prompt,
+    chatName,
+    domainTerms,
+  } = {}) {
+    const sourceText = safeTrim(text);
+    if (!sourceText) return '';
+    if (!this._filterAsrText) return sourceText;
+    const cacheKey = buildFilterCacheKey({ text: sourceText, prompt, chatName, domainTerms });
+    const cachedText = this._getCachedFilterText(cacheKey);
+    if (cachedText) return cachedText;
+
+    if (this._filterInFlight && safeTrim(this._filterInFlight.key) === cacheKey && this._filterInFlight.promise) {
+      const sharedText = await this._filterInFlight.promise;
+      return safeTrim(sharedText) || sourceText;
+    }
+
+    const inFlightPromise = (async () => {
+      const res = await this._filterAsrText({
+        text: sourceText,
+        prompt: safeTrim(prompt),
+        chatName: safeTrim(chatName),
+        domainTerms: safeTrim(domainTerms),
+      });
+      const correctedText = safeTrim(res && res.text) || sourceText;
+      this._setCachedFilterText(cacheKey, correctedText);
+      return correctedText;
+    })();
+
+    this._filterInFlight = { key: cacheKey, promise: inFlightPromise };
+    try {
+      return await inFlightPromise;
+    } finally {
+      if (this._filterInFlight && safeTrim(this._filterInFlight.key) === cacheKey) this._filterInFlight = null;
+    }
+  }
+
+  async prefetchFilter({
+    text,
+    wakeWordEnabled,
+    wakeWord,
+    asrTextFilterEnabled,
+    asrTextFilterPrompt,
+    asrTextFilterChatName,
+    asrTextFilterTerms,
+  } = {}) {
+    const sourceText = safeTrim(text);
+    if (!sourceText) return { ok: false, reason: 'empty_text', text: '' };
+    if (!asrTextFilterEnabled || !this._filterAsrText) return { ok: false, reason: 'filter_disabled', text: sourceText };
+
+    const prompt = safeTrim(asrTextFilterPrompt);
+    const chatName = safeTrim(asrTextFilterChatName);
+    if (!prompt || !chatName) return { ok: false, reason: 'filter_config_missing', text: sourceText };
+
+    const domainTerms = buildAsrFilterDomainTerms({
+      domainTermsText: asrTextFilterTerms,
+      wakeWordText: wakeWordEnabled ? wakeWord : '',
+    });
+    try {
+      const correctedText = await this._resolveFilteredText({
+        text: sourceText,
+        prompt,
+        chatName,
+        domainTerms,
+      });
+      return { ok: true, reason: 'prefetched', text: correctedText, correctedText };
+    } catch (_) {
+      return { ok: false, reason: 'prefetch_failed', text: sourceText };
+    }
   }
 
   async process({
@@ -127,13 +226,13 @@ export class AsrPostProcessPipeline {
           if (typeof onStageChange === 'function') onStageChange('filtering');
           if (typeof onStatusChange === 'function') onStatusChange('processing_asr_text');
           emitEvent('filtering_started', { text: originalText, rawText: originalText, chatName, domainTerms });
-          const res = await this._filterAsrText({
-            text: originalText,
-            prompt,
-            chatName,
-            domainTerms,
-          });
-          correctedText = safeTrim(res && res.text) || originalText;
+          correctedText =
+            (await this._resolveFilteredText({
+              text: originalText,
+              prompt,
+              chatName,
+              domainTerms,
+            })) || originalText;
           emitEvent('filtering_finished', { text: correctedText, rawText: originalText, correctedText });
         } catch (_) {
           correctedText = originalText;

@@ -180,7 +180,12 @@ def create_blueprint(deps):
         t_submit = time.perf_counter()
         deps.logger.info("received ask request")
         data = json_body_dict(request, silent=False)
-        deps.logger.info(f"ask payload: {data}")
+        try:
+            payload_keys = sorted(list((data or {}).keys())) if isinstance(data, dict) else []
+            question_chars = len(str((data or {}).get("question") or "").strip()) if isinstance(data, dict) else 0
+            deps.logger.info("ask payload summary: keys=%s question_chars=%s", payload_keys, question_chars)
+        except Exception:
+            deps.logger.info("ask payload summary unavailable")
 
         parsed, err = parse_ask_request(deps=deps, data=data)
         if err is not None:

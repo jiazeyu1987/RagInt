@@ -6,7 +6,8 @@ From repo root:
 
 - `python -m backend`
   - ASR WS runs via VoiceKit at `/voicekit/ws/asr`
-  - 依赖：需安装 `asr-voicekit`（例如安装已构建的 wheel）
+  - 依赖：建议安装 `asr-voicekit`（例如安装已构建的 wheel）
+  - 若希望缺失 VoiceKit 时启动直接失败：设置 `RAGINT_REQUIRE_VOICEKIT=1`
 
 Key endpoints:
 
@@ -27,6 +28,13 @@ Key endpoints:
 ## Environment variables
 
 See `backend/.env.example`.
+
+Security defaults:
+
+- Ops APIs are closed by default when ops tokens are not configured.
+  - To explicitly allow anonymous local access: `RAGINT_OPS_OPEN_ACCESS=1` (not recommended in deployment).
+- Diagnostics download (`/api/diagnostics`) requires `RAGINT_DIAGNOSTICS_KEY` when configured.
+  - For local debug only, you can allow no-key access via `RAGINT_DIAGNOSTICS_ALLOW_NO_KEY=1`.
 
 ### TTS speed
 

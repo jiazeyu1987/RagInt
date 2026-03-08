@@ -7,10 +7,11 @@ from backend.app import create_app
 
 def test_ops_heartbeat_and_config_flow(tmp_path):
     os.environ["RAGINT_OPS_DB_PATH"] = str(tmp_path / "ops.db")
-    # no token => open ops admin endpoints for tests
+    # Explicitly allow anonymous ops access for this test case.
     os.environ.pop("RAGINT_OPS_TOKEN", None)
     os.environ.pop("RAGINT_OPS_ADMIN_TOKEN", None)
     os.environ.pop("RAGINT_OPS_VIEW_TOKEN", None)
+    os.environ["RAGINT_OPS_OPEN_ACCESS"] = "1"
     os.environ.pop("RAGINT_DEVICE_SHARED_SECRET", None)
     os.environ.pop("RAGINT_DEVICE_AUTH_REQUIRED", None)
 
@@ -43,6 +44,7 @@ def test_ops_heartbeat_and_config_flow(tmp_path):
 def test_ops_token_protects_admin_endpoints(tmp_path):
     os.environ["RAGINT_OPS_DB_PATH"] = str(tmp_path / "ops.db")
     os.environ.pop("RAGINT_OPS_TOKEN", None)
+    os.environ["RAGINT_OPS_OPEN_ACCESS"] = "0"
     os.environ["RAGINT_OPS_ADMIN_TOKEN"] = "t1"
     os.environ["RAGINT_OPS_VIEW_TOKEN"] = "v1"
     app = create_app()
@@ -67,6 +69,7 @@ def test_ops_device_register_and_token_auth(tmp_path):
     os.environ.pop("RAGINT_OPS_TOKEN", None)
     os.environ.pop("RAGINT_OPS_ADMIN_TOKEN", None)
     os.environ.pop("RAGINT_OPS_VIEW_TOKEN", None)
+    os.environ["RAGINT_OPS_OPEN_ACCESS"] = "0"
     os.environ["RAGINT_DEVICE_SHARED_SECRET"] = "s1"
     os.environ["RAGINT_DEVICE_AUTH_REQUIRED"] = "1"
 
@@ -93,6 +96,7 @@ def test_ops_device_register_and_token_auth(tmp_path):
 def test_ops_console_page_served(tmp_path):
     os.environ["RAGINT_OPS_DB_PATH"] = str(tmp_path / "ops.db")
     os.environ.pop("RAGINT_OPS_TOKEN", None)
+    os.environ["RAGINT_OPS_OPEN_ACCESS"] = "1"
     app = create_app()
     c = app.test_client()
     r = c.get("/ops")

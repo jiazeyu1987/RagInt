@@ -73,4 +73,41 @@ describe('AsrPostProcessPipeline', () => {
     expect(result.reason).toBe('wake_word_missing');
     expect(result.feedback).toBe('wake_word_missing');
   });
+
+  test('reuses prefetched filter result at submit time', async () => {
+    const filterAsrText = jest.fn().mockResolvedValue({ text: '你好小助手 介绍一下指引导丝' });
+    const pipeline = new AsrPostProcessPipeline({
+      filterAsrText,
+      now: () => 1000,
+      wakeHoldMs: 5000,
+    });
+    pipeline.setPendingAsrText('你好小助手 介绍一下指引导致');
+
+    const prefetched = await pipeline.prefetchFilter({
+      text: '你好小助手 介绍一下指引导致',
+      wakeWordEnabled: true,
+      wakeWord: '你好小助手',
+      asrTextFilterEnabled: true,
+      asrTextFilterPrompt: 'prompt',
+      asrTextFilterChatName: 'voice model',
+      asrTextFilterTerms: '指引导丝',
+    });
+    expect(prefetched.ok).toBe(true);
+
+    const result = await pipeline.process({
+      text: '你好小助手 介绍一下指引导致',
+      trigger: 'text',
+      wakeWordEnabled: true,
+      wakeWord: '你好小助手',
+      wakeWordStrict: false,
+      asrTextFilterEnabled: true,
+      asrTextFilterPrompt: 'prompt',
+      asrTextFilterChatName: 'voice model',
+      asrTextFilterTerms: '指引导丝',
+    });
+
+    expect(filterAsrText).toHaveBeenCalledTimes(1);
+    expect(result.accepted).toBe(true);
+    expect(result.text).toBe('介绍一下指引导丝');
+  });
 });

@@ -11,11 +11,14 @@ class OpsAuth:
 
     @staticmethod
     def auth_disabled() -> bool:
+        cfg = OpsEnvConfig.from_env()
         # When device auth is required, do NOT implicitly open ops endpoints even if ops tokens are unset.
-        if OpsEnvConfig.from_env().device_auth_required:
+        if cfg.device_auth_required:
             return False
-        admin, view = OpsAuth._tokens()
-        return not admin and not view
+        # Secure-by-default: do not open ops endpoints unless explicitly requested.
+        if not cfg.open_access:
+            return False
+        return not cfg.admin_token and not cfg.view_token
 
     @staticmethod
     def role(req) -> str | None:

@@ -26,6 +26,7 @@ def _req(headers=None):
 def test_ops_auth_role_admin_and_view_tokens():
     os.environ["RAGINT_OPS_ADMIN_TOKEN"] = "a1"
     os.environ["RAGINT_OPS_VIEW_TOKEN"] = "v1"
+    os.environ["RAGINT_OPS_OPEN_ACCESS"] = "0"
     os.environ.pop("RAGINT_DEVICE_AUTH_REQUIRED", None)
 
     assert OpsAuth.role(_req({"X-Ops-Token": "a1"})) == "admin"
@@ -33,10 +34,22 @@ def test_ops_auth_role_admin_and_view_tokens():
     assert OpsAuth.role(_req({"X-Ops-Token": "x"})) is None
 
 
-def test_ops_auth_disabled_when_no_tokens_and_no_device_auth():
+def test_ops_auth_closed_by_default_when_no_tokens():
     os.environ.pop("RAGINT_OPS_ADMIN_TOKEN", None)
     os.environ.pop("RAGINT_OPS_VIEW_TOKEN", None)
     os.environ.pop("RAGINT_OPS_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_OPEN_ACCESS", None)
+    os.environ["RAGINT_DEVICE_AUTH_REQUIRED"] = "0"
+
+    assert OpsAuth.auth_disabled() is False
+    assert OpsAuth.require_admin(_req()) is False
+
+
+def test_ops_auth_can_be_opened_explicitly():
+    os.environ.pop("RAGINT_OPS_ADMIN_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_VIEW_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_TOKEN", None)
+    os.environ["RAGINT_OPS_OPEN_ACCESS"] = "1"
     os.environ["RAGINT_DEVICE_AUTH_REQUIRED"] = "0"
 
     assert OpsAuth.auth_disabled() is True
@@ -44,6 +57,7 @@ def test_ops_auth_disabled_when_no_tokens_and_no_device_auth():
 
 
 def test_device_token_and_shared_secret_checks():
+    os.environ["RAGINT_OPS_OPEN_ACCESS"] = "0"
     os.environ["RAGINT_DEVICE_SHARED_SECRET"] = "sec1"
     deps = _Deps()
     req = _req({"X-Device-Shared-Secret": "sec1", "X-Device-Token": "tok1"})

@@ -158,6 +158,7 @@ def test_ops_blueprint_console_and_device_flow():
     os.environ.pop("RAGINT_OPS_TOKEN", None)
     os.environ.pop("RAGINT_OPS_ADMIN_TOKEN", None)
     os.environ.pop("RAGINT_OPS_VIEW_TOKEN", None)
+    os.environ["RAGINT_OPS_OPEN_ACCESS"] = "1"
     os.environ.pop("RAGINT_DEVICE_AUTH_REQUIRED", None)
     os.environ.pop("RAGINT_DEVICE_SHARED_SECRET", None)
 
@@ -171,6 +172,7 @@ def test_ops_blueprint_console_and_device_flow():
 
 
 def test_ops_blueprint_token_guard():
+    os.environ["RAGINT_OPS_OPEN_ACCESS"] = "0"
     os.environ["RAGINT_OPS_ADMIN_TOKEN"] = "a1"
     os.environ["RAGINT_OPS_VIEW_TOKEN"] = "v1"
     os.environ.pop("RAGINT_DEVICE_AUTH_REQUIRED", None)
@@ -186,6 +188,7 @@ def test_ops_blueprint_qa_audio_pairs_routes():
     os.environ.pop("RAGINT_OPS_TOKEN", None)
     os.environ.pop("RAGINT_OPS_ADMIN_TOKEN", None)
     os.environ.pop("RAGINT_OPS_VIEW_TOKEN", None)
+    os.environ["RAGINT_OPS_OPEN_ACCESS"] = "1"
 
     c = _app().test_client()
 

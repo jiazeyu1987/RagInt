@@ -321,6 +321,9 @@ function AppShell() {
   const wakeWordHoldUntilRef = useRef(0);
   const pendingAsrClientEventsRef = useRef([]);
   const asrPostProcessPipelineRef = useRef(null);
+  const wakeWordStatusTimerRef = useRef(null);
+  const asrPrefetchTimerRef = useRef(null);
+  const asrPrefetchSeqRef = useRef(0);
   if (!asrPostProcessPipelineRef.current) {
     asrPostProcessPipelineRef.current = new AsrPostProcessPipeline({
       filterAsrText: filterAsrTextExt,
@@ -376,11 +379,14 @@ function AppShell() {
     if (!text) return;
     setQueueStatus(text);
     try {
-      window.clearTimeout(window.__wakeWordStatusTimer);
+      if (wakeWordStatusTimerRef.current) window.clearTimeout(wakeWordStatusTimerRef.current);
     } catch (_) {
       // ignore
     }
-    window.__wakeWordStatusTimer = window.setTimeout(() => setQueueStatus(''), durationMs);
+    wakeWordStatusTimerRef.current = window.setTimeout(() => {
+      wakeWordStatusTimerRef.current = null;
+      setQueueStatus('');
+    }, durationMs);
   };
 
   const setInputText = (next) => {
@@ -948,6 +954,85 @@ function AppShell() {
     resetTour,
     startTour,
   });
+
+  useEffect(() => {
+    const text = String(inputText || '').trim();
+    const pendingAsrText = String(pendingAsrFinalTextRef.current || '').trim();
+    const asrActive =
+      !!isRecognizing ||
+      recognitionStage === 'receiving_partial' ||
+      recognitionStage === 'awaiting_final' ||
+      recognitionStage === 'final_received' ||
+      recognitionStage === 'streaming' ||
+      recognitionStage === 'wake_detected';
+    if (!asrActive) return () => {};
+    if (!text || !pendingAsrText || text !== pendingAsrText) return () => {};
+    if (!asrTextFilterEnabled) return () => {};
+    const prompt = String(asrTextFilterPrompt || '').trim();
+    const chatName = String(asrTextFilterChatName || '').trim();
+    if (!prompt || !chatName) return () => {};
+    const pipeline = asrPostProcessPipelineRef.current;
+    if (!pipeline || typeof pipeline.prefetchFilter !== 'function') return () => {};
+
+    const seq = Number(asrPrefetchSeqRef.current || 0) + 1;
+    asrPrefetchSeqRef.current = seq;
+    try {
+      if (asrPrefetchTimerRef.current) window.clearTimeout(asrPrefetchTimerRef.current);
+    } catch (_) {
+      // ignore
+    }
+    asrPrefetchTimerRef.current = window.setTimeout(() => {
+      asrPrefetchTimerRef.current = null;
+      if (asrPrefetchSeqRef.current !== seq) return;
+      pipeline
+        .prefetchFilter({
+          text,
+          wakeWordEnabled,
+          wakeWord,
+          asrTextFilterEnabled,
+          asrTextFilterPrompt,
+          asrTextFilterChatName,
+          asrTextFilterTerms,
+        })
+        .catch(() => {});
+    }, 120);
+
+    return () => {
+      try {
+        if (asrPrefetchTimerRef.current) window.clearTimeout(asrPrefetchTimerRef.current);
+      } catch (_) {
+        // ignore
+      }
+      asrPrefetchTimerRef.current = null;
+    };
+  }, [
+    inputText,
+    isRecognizing,
+    recognitionStage,
+    asrTextFilterEnabled,
+    asrTextFilterPrompt,
+    asrTextFilterChatName,
+    asrTextFilterTerms,
+    wakeWordEnabled,
+    wakeWord,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      try {
+        if (wakeWordStatusTimerRef.current) window.clearTimeout(wakeWordStatusTimerRef.current);
+      } catch (_) {
+        // ignore
+      }
+      wakeWordStatusTimerRef.current = null;
+      try {
+        if (asrPrefetchTimerRef.current) window.clearTimeout(asrPrefetchTimerRef.current);
+      } catch (_) {
+        // ignore
+      }
+      asrPrefetchTimerRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (!messagesEndRef.current) return;

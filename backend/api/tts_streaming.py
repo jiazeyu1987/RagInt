@@ -26,15 +26,28 @@ class TtsStreamContext:
 
 def _fallback_tts_providers(*, primary: str, app_config: dict) -> list[str]:
     primary_norm = str(primary or "").strip().lower()
-    if primary_norm in ("modelscope", "bailian", "dashscope", "flash"):
-        tts_cfg = app_config.get("tts") if isinstance(app_config, dict) else {}
-        tts_cfg = tts_cfg if isinstance(tts_cfg, dict) else {}
-        edge_cfg = tts_cfg.get("edge")
-        edge_cfg = edge_cfg if isinstance(edge_cfg, dict) else {}
-        if edge_cfg.get("enabled") is not False:
-            return ["edge"]
+    tts_cfg = app_config.get("tts") if isinstance(app_config, dict) else {}
+    tts_cfg = tts_cfg if isinstance(tts_cfg, dict) else {}
+
+    # Fallback is opt-in: only use explicitly configured chain.
+    # Supported config:
+    # tts.fallback_chain = {"flash": ["edge"], "modelscope": ["edge"]}
+    fallback_chain = tts_cfg.get("fallback_chain")
+    if not isinstance(fallback_chain, dict):
         return []
-    return []
+    raw_list = fallback_chain.get(primary_norm)
+    if not isinstance(raw_list, list):
+        return []
+
+    out: list[str] = []
+    for item in raw_list:
+        provider = str(item or "").strip().lower()
+        if not provider or provider == primary_norm:
+            continue
+        if provider in out:
+            continue
+        out.append(provider)
+    return out
 
 
 def _should_skip_provider(*, ctx: TtsStreamContext, provider: str) -> bool:

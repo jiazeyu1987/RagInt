@@ -199,11 +199,16 @@ def register_voicekit(*, app: Flask, deps: AppDeps, logger) -> None:
         from asr_voicekit.providers.dashscope_provider import DashScopeProvider
         from asr_voicekit.wake_window import WakeWindowService
     except Exception as e:
-        raise RuntimeError(
-            "VoiceKit backend package is required but not installed. "
+        strict = env_bool("RAGINT_REQUIRE_VOICEKIT", False)
+        msg = (
+            "VoiceKit backend package is not installed. "
             "Install it with: pip install asr-voicekit (or install the built wheel). "
             f"Original error: {e}"
-        ) from e
+        )
+        if strict:
+            raise RuntimeError(msg) from e
+        logger.warning("%s; continuing without /voicekit/ws/asr (set RAGINT_REQUIRE_VOICEKIT=1 to fail fast).", msg)
+        return
 
     app_cfg = {}
     try:
