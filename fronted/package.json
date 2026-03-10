@@ -12,7 +12,14 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:headed": "playwright test --headed",
+    "pw:install": "playwright install chromium",
     "eject": "react-scripts eject"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0"
   },
   "eslintConfig": {
     "extends": [

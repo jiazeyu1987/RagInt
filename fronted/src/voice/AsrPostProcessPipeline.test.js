@@ -110,4 +110,21 @@ describe('AsrPostProcessPipeline', () => {
     expect(result.accepted).toBe(true);
     expect(result.text).toBe('介绍一下指引导丝');
   });
+
+  test('accepts fuzzy wake word near prefix', async () => {
+    const pipeline = new AsrPostProcessPipeline({ now: () => 1000, wakeHoldMs: 5000 });
+    pipeline.setPendingAsrText('你好小助守 介绍一下展品');
+
+    const result = await pipeline.process({
+      text: '你好小助守 介绍一下展品',
+      trigger: 'wake_word',
+      wakeWordEnabled: true,
+      wakeWord: '你好小助手',
+      wakeWordStrict: false,
+      asrTextFilterEnabled: false,
+    });
+
+    expect(result.accepted).toBe(true);
+    expect(result.text).toBe('介绍一下展品');
+  });
 });

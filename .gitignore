@@ -182,3 +182,20 @@ resource/
 /fronted/node_modules
 /fronted/node_modules/
 /Auth/new_backend/data/uploads
+
+# Frontend test artifacts
+/fronted/coverage/
+/fronted/test-results/
+/fronted/playwright-report/
+/fronted/.pw-browsers/
+
+# Python/local temp workdirs
+/.pytest_tmp/
+/.pytest_tmp_local/
+/backend/.tmp_pytest/
+/backend/tests/.tmp_workdirs/
+/offline_api_test_*/
+/recording_store_test_*/
+/tmp_pyroot/
+/tmp_pyroot2/
+/tmp_test_rw/

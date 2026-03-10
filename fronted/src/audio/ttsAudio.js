@@ -664,7 +664,19 @@ export async function playWavStreamViaWebAudio(url, audioContextRef, currentAudi
     }
 
     ended = true;
+    // If backend returns non-audio payload, we may never parse a WAV header.
+    // Throw here so upper fallback/guard path can exit instead of hanging.
+    if (!wavInfo) {
+      throw new Error('TTS stream ended before WAV header');
+    }
     scheduleAudioIfPossible();
+    if (queuedSamples <= 0 && scheduledCount === endedCount) {
+      try {
+        if (drainedResolver) drainedResolver();
+      } catch (_) {
+        // ignore
+      }
+    }
     await drainedPromise;
   } catch (err) {
     stopAllSources();

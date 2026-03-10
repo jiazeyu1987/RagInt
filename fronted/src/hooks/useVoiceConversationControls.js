@@ -1,7 +1,9 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useVoiceInputManager } from './useVoiceInputManager';
 
 const CONVERSATION_START_TIMEOUT_MS = 12000;
+const AUTO_RESUME_RETRY_MS = 500;
+const AUTO_SUBMIT_DEDUPE_MS = 1500;
 
 function safeTrim(v) {
   return String(v == null ? '' : v).trim();
@@ -57,9 +59,22 @@ export function useVoiceConversationControls({
   questionPriority,
   useAgentMode,
   selectedAgentId,
+  continueTour,
+  autoBargeInSubmitEnabled = true,
+  autoResumeAfterQaEnabled = true,
+  shouldAutoResumeTour,
+  canAutoResumeTour,
+  isRunActive,
+  isAsrBusyForResume,
+  autoResumeTourAfterQaMs = 2200,
 } = {}) {
   const [conversationEnabled, setConversationEnabled] = useState(false);
   const [conversationBusy, setConversationBusy] = useState(false);
+  const autoQuestionSeqRef = useRef(0);
+  const resumeWantedRef = useRef(false);
+  const resumeLatestSeqRef = useRef(0);
+  const resumeTimerRef = useRef(null);
+  const lastAutoSubmitRef = useRef({ text: '', at: 0 });
 
   const showTransientStatus = useCallback(
     (message, durationMs = 2200) => {
@@ -75,6 +90,77 @@ export function useVoiceConversationControls({
     },
     [setQueueStatus]
   );
+
+  const clearResumeTimer = useCallback(() => {
+    try {
+      if (resumeTimerRef.current) window.clearTimeout(resumeTimerRef.current);
+    } catch (_) {
+      // ignore
+    }
+    resumeTimerRef.current = null;
+  }, []);
+
+  const runResumeCheck = useCallback(
+    async (seq) => {
+      const currentSeq = Number(seq) || 0;
+      if (!currentSeq) return;
+      if (!resumeWantedRef.current) return;
+      if (Number(resumeLatestSeqRef.current || 0) !== currentSeq) return;
+      if (typeof canAutoResumeTour === 'function' && !canAutoResumeTour()) {
+        resumeWantedRef.current = false;
+        resumeLatestSeqRef.current = 0;
+        clearResumeTimer();
+        return;
+      }
+      const runBusy = typeof isRunActive === 'function' ? !!isRunActive() : false;
+      const asrBusy = typeof isAsrBusyForResume === 'function' ? !!isAsrBusyForResume() : false;
+      if (runBusy || asrBusy) {
+        clearResumeTimer();
+        resumeTimerRef.current = window.setTimeout(() => {
+          void runResumeCheck(currentSeq);
+        }, AUTO_RESUME_RETRY_MS);
+        return;
+      }
+      resumeWantedRef.current = false;
+      resumeLatestSeqRef.current = 0;
+      clearResumeTimer();
+      if (typeof continueTour === 'function') {
+        try {
+          await continueTour();
+          showTransientStatus('继续讲解', 1500);
+        } catch (_) {
+          // ignore
+        }
+      }
+    },
+    [canAutoResumeTour, clearResumeTimer, continueTour, isAsrBusyForResume, isRunActive, showTransientStatus]
+  );
+
+  const scheduleTourResume = useCallback(
+    (seq, delayMs = autoResumeTourAfterQaMs) => {
+      const currentSeq = Number(seq) || 0;
+      if (!currentSeq) return;
+      clearResumeTimer();
+      const waitMs = Math.max(250, Number(delayMs) || Number(autoResumeTourAfterQaMs) || 2200);
+      resumeTimerRef.current = window.setTimeout(() => {
+        void runResumeCheck(currentSeq);
+      }, waitMs);
+    },
+    [autoResumeTourAfterQaMs, clearResumeTimer, runResumeCheck]
+  );
+
+  useEffect(() => {
+    return () => {
+      clearResumeTimer();
+    };
+  }, [clearResumeTimer]);
+
+  useEffect(() => {
+    if (autoResumeAfterQaEnabled) return;
+    resumeWantedRef.current = false;
+    resumeLatestSeqRef.current = 0;
+    clearResumeTimer();
+  }, [autoResumeAfterQaEnabled, clearResumeTimer]);
 
   const wakeWordFeedback = useCallback(
     ({ message } = {}) => {
@@ -94,10 +180,144 @@ export function useVoiceConversationControls({
         priority: 'normal',
         useAgentMode,
         selectedAgentId,
+        skipTourCommand: true,
       });
     },
     [selectedAgentId, speakerName, submitUserText, useAgentMode]
   );
+
+  const handleAsrFinalText = useCallback(
+    async (text) => {
+      const finalText = safeTrim(text);
+      if (typeof onAsrFinalText === 'function') {
+        try {
+          onAsrFinalText(finalText);
+        } catch (_) {
+          // ignore
+        }
+      }
+      if (!conversationEnabled) return;
+      if (!wakeWordEnabled) return;
+      if (!autoBargeInSubmitEnabled) return;
+      if (!finalText) return;
+      if (typeof submitUserText !== 'function') return;
+      if (useAgentMode && !selectedAgentId) {
+        showTransientStatus('请先选择智能体后再提问', 1800);
+        return;
+      }
+
+      const nowMs = Date.now();
+      const last = lastAutoSubmitRef.current || { text: '', at: 0 };
+      if (last.text === finalText && nowMs - Number(last.at || 0) < AUTO_SUBMIT_DEDUPE_MS) return;
+      lastAutoSubmitRef.current = { text: finalText, at: nowMs };
+
+      const seq = Number(autoQuestionSeqRef.current || 0) + 1;
+      autoQuestionSeqRef.current = seq;
+
+      const resumeContextLikely =
+        !!autoResumeAfterQaEnabled &&
+        ((typeof shouldAutoResumeTour === 'function' && !!shouldAutoResumeTour()) || !!resumeWantedRef.current);
+      if (resumeContextLikely) {
+        resumeWantedRef.current = true;
+        resumeLatestSeqRef.current = seq;
+        clearResumeTimer();
+      }
+
+      showTransientStatus('识别到问题，正在回答...', 1200);
+      let result = null;
+      try {
+        result = await submitUserText({
+          text: finalText,
+          trigger: 'wake_word',
+          groupMode: false,
+          speakerName,
+          priority: 'normal',
+          useAgentMode,
+          selectedAgentId,
+          skipTourCommand: true,
+        });
+      } catch (_) {
+        if (resumeContextLikely && Number(resumeLatestSeqRef.current || 0) === seq) {
+          resumeWantedRef.current = false;
+          resumeLatestSeqRef.current = 0;
+          clearResumeTimer();
+        }
+        return;
+      }
+
+      const isLatest = Number(resumeLatestSeqRef.current || 0) === seq;
+      const asked = !!(result && result.ok && result.kind === 'asked');
+      if (!asked) {
+        if (resumeContextLikely && isLatest) {
+          resumeWantedRef.current = false;
+          resumeLatestSeqRef.current = 0;
+          clearResumeTimer();
+        }
+        return;
+      }
+      if (autoResumeAfterQaEnabled && resumeWantedRef.current && isLatest) scheduleTourResume(seq);
+    },
+    [
+      autoBargeInSubmitEnabled,
+      autoResumeAfterQaEnabled,
+      clearResumeTimer,
+      conversationEnabled,
+      onAsrFinalText,
+      scheduleTourResume,
+      selectedAgentId,
+      shouldAutoResumeTour,
+      showTransientStatus,
+      speakerName,
+      submitUserText,
+      useAgentMode,
+      wakeWordEnabled,
+    ]
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return () => {};
+    const bridge = window.__RAGINT_E2E__;
+    if (!bridge || !bridge.enableAsrMock) return () => {};
+
+    // Test-only bridge for deterministic E2E voice flow.
+    const prevEmitAsrFinal = bridge.emitAsrFinal;
+    const prevSetConversationEnabled = bridge.setConversationEnabled;
+    const prevGetConversationState = bridge.getConversationState;
+
+    const emitAsrFinal = (text) => {
+      // Test bridge should not block on async ask/tts completion.
+      void handleAsrFinalText(text);
+      return true;
+    };
+    const setConversationEnabledForTest = (value) => {
+      const next = !!value;
+      setConversationEnabled(next);
+      return next;
+    };
+    const getConversationState = () => ({
+      enabled: !!conversationEnabled,
+      busy: !!conversationBusy,
+    });
+
+    bridge.emitAsrFinal = emitAsrFinal;
+    bridge.setConversationEnabled = setConversationEnabledForTest;
+    bridge.getConversationState = getConversationState;
+
+    return () => {
+      if (bridge.emitAsrFinal === emitAsrFinal) {
+        if (typeof prevEmitAsrFinal === 'function') bridge.emitAsrFinal = prevEmitAsrFinal;
+        else delete bridge.emitAsrFinal;
+      }
+      if (bridge.setConversationEnabled === setConversationEnabledForTest) {
+        if (typeof prevSetConversationEnabled === 'function') bridge.setConversationEnabled = prevSetConversationEnabled;
+        else delete bridge.setConversationEnabled;
+      }
+      if (bridge.getConversationState === getConversationState) {
+        if (typeof prevGetConversationState === 'function') bridge.getConversationState = prevGetConversationState;
+        else delete bridge.getConversationState;
+      }
+    };
+  }, [conversationBusy, conversationEnabled, handleAsrFinalText]);
 
   const {
     isRecording,
@@ -141,7 +361,7 @@ export function useVoiceConversationControls({
       saucShowUtterances,
       saucEnableNonstream,
       onWakeWordFeedback: wakeWordFeedback,
-      onAsrFinalText,
+      onAsrFinalText: handleAsrFinalText,
       askQuestion,
       submitText: wakeWordSubmitText,
     });

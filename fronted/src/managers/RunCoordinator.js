@@ -174,6 +174,7 @@ export class RunCoordinator {
     priority,
     useAgentMode,
     selectedAgentId,
+    skipTourCommand = false,
   } = {}) {
     const q = String(text || '').trim();
     if (!q) return { ok: false, kind: 'empty' };
@@ -185,7 +186,7 @@ export class RunCoordinator {
     try {
       const { guideEnabledRef, clientIdRef, getTourStops, parseTourCommand, setQueueStatus } = this.deps || {};
       const guideOn = !!(guideEnabledRef && guideEnabledRef.current);
-      if (guideOn && typeof parseTourCommand === 'function') {
+      if (guideOn && !skipTourCommand && typeof parseTourCommand === 'function') {
         const stops = typeof getTourStops === 'function' ? getTourStops() : [];
         const res = await parseTourCommand({
           clientId: clientIdRef ? clientIdRef.current : '',

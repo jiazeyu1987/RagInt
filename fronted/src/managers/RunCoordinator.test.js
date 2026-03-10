@@ -94,4 +94,43 @@ describe('RunCoordinator', () => {
     expect(queueRef.current).toEqual([]);
     expect(setQuestionQueue).toHaveBeenCalled();
   });
+
+  test('submitUserText skips tour command parsing when skipTourCommand is true', async () => {
+    const askQuestion = jest.fn().mockResolvedValue('');
+    const parseTourCommand = jest.fn().mockResolvedValue({
+      intent: 'tour_command',
+      action: 'next',
+      confidence: 0.99,
+    });
+    const c = new RunCoordinator({
+      askQuestion,
+      parseTourCommand,
+      beginDebugRun: jest.fn(),
+      setInputText: jest.fn(),
+      setQueueStatus: jest.fn(),
+      ttsEnabledRef: { current: false },
+      audioContextRef: { current: null },
+      unlockAudio: jest.fn(),
+      getIsLoading: () => false,
+      askAbortRef: { current: null },
+      currentAudioRef: { current: null },
+      ttsManagerRef: { current: null },
+      guideEnabledRef: { current: true },
+      clientIdRef: { current: 'client-1' },
+      getTourStops: () => ['A'],
+    });
+
+    const res = await c.submitUserText({
+      text: 'next stop please',
+      trigger: 'wake_word',
+      groupMode: false,
+      useAgentMode: false,
+      selectedAgentId: '',
+      skipTourCommand: true,
+    });
+
+    expect(res).toEqual({ ok: true, kind: 'asked' });
+    expect(parseTourCommand).not.toHaveBeenCalled();
+    expect(askQuestion).toHaveBeenCalledWith('next stop please', undefined);
+  });
 });

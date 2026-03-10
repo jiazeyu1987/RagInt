@@ -144,6 +144,12 @@ function AppShell() {
     setWakeWordCooldownMs,
     wakeWordStrict,
     setWakeWordStrict,
+    asrAutoSubmitOnWakeEnabled,
+    setAsrAutoSubmitOnWakeEnabled,
+    asrAutoResumeAfterAnswerEnabled,
+    setAsrAutoResumeAfterAnswerEnabled,
+    asrAutoResumeAfterAnswerDelayMs,
+    setAsrAutoResumeAfterAnswerDelayMs,
     globalPromptPrefix,
     setGlobalPromptPrefix,
     asrTextFilterEnabled,
@@ -318,6 +324,7 @@ function AppShell() {
   const lastSpeakerRef = useRef('');
   const globalPromptPrefixRef = useRef(globalPromptPrefix);
   const pendingAsrFinalTextRef = useRef('');
+  const lastAsrInputChangeAtRef = useRef(0);
   const wakeWordHoldUntilRef = useRef(0);
   const pendingAsrClientEventsRef = useRef([]);
   const asrPostProcessPipelineRef = useRef(null);
@@ -399,6 +406,7 @@ function AppShell() {
   };
 
   const setInputTextFromAsr = (next) => {
+    lastAsrInputChangeAtRef.current = Date.now();
     setInputTextState(next);
   };
 
@@ -886,6 +894,36 @@ function AppShell() {
     },
   });
 
+  const isRunActiveForBargeIn = () => {
+    const askActive = !!(askAbortRef && askAbortRef.current);
+    const loading = !!isLoading;
+    const audioActive = !!(currentAudioRef && currentAudioRef.current);
+    const ttsBusy = !!(ttsManagerRef && ttsManagerRef.current && ttsManagerRef.current.isBusy && ttsManagerRef.current.isBusy());
+    const pipelineActive =
+      !!(tourPipelineRef && tourPipelineRef.current && tourPipelineRef.current.isActive && tourPipelineRef.current.isActive());
+    return askActive || loading || audioActive || ttsBusy || pipelineActive;
+  };
+
+  const canAutoResumeTour = () => {
+    const state = tourStateRef && tourStateRef.current ? tourStateRef.current : null;
+    if (!state) return false;
+    if (String(state.mode || '') === 'idle') return false;
+    return Number.isFinite(Number(state.stopIndex)) && Number(state.stopIndex) >= 0;
+  };
+
+  const shouldAutoResumeTour = () => {
+    if (!canAutoResumeTour()) return false;
+    const state = tourStateRef && tourStateRef.current ? tourStateRef.current : null;
+    const runningMode = String((state && state.mode) || '') === 'running';
+    return runningMode || isRunActiveForBargeIn();
+  };
+
+  const isAsrBusyForResume = () => {
+    const lastChangeAt = Number(lastAsrInputChangeAtRef.current || 0);
+    if (!Number.isFinite(lastChangeAt) || lastChangeAt <= 0) return false;
+    return Date.now() - lastChangeAt < 700;
+  };
+
   const {
     isRecording,
     isRecognizing,
@@ -940,6 +978,14 @@ function AppShell() {
     questionPriority,
     useAgentMode,
     selectedAgentId,
+    continueTour,
+    autoBargeInSubmitEnabled: asrAutoSubmitOnWakeEnabled,
+    autoResumeAfterQaEnabled: asrAutoResumeAfterAnswerEnabled,
+    shouldAutoResumeTour,
+    canAutoResumeTour,
+    isRunActive: isRunActiveForBargeIn,
+    isAsrBusyForResume,
+    autoResumeTourAfterQaMs: asrAutoResumeAfterAnswerDelayMs,
   });
 
   const stagePanelProps = useStagePanelProps({
@@ -1181,6 +1227,12 @@ function AppShell() {
     setWakeWordCooldownMs,
     wakeWordStrict,
     setWakeWordStrict,
+    asrAutoSubmitOnWakeEnabled,
+    setAsrAutoSubmitOnWakeEnabled,
+    asrAutoResumeAfterAnswerEnabled,
+    setAsrAutoResumeAfterAnswerEnabled,
+    asrAutoResumeAfterAnswerDelayMs,
+    setAsrAutoResumeAfterAnswerDelayMs,
     tourState,
     currentIntent,
     tourStops,
@@ -1281,6 +1333,74 @@ function AppShell() {
     sendBtnClassName,
     submitDisabled
   });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return () => {};
+    const bridge = window.__RAGINT_E2E__;
+    if (!bridge || typeof bridge !== 'object') return () => {};
+
+    const prevSetGroupMode = bridge.setGroupMode;
+    const prevSetQuestionPriority = bridge.setQuestionPriority;
+    const prevSetUseAgentMode = bridge.setUseAgentMode;
+    const prevSetSelectedAgentId = bridge.setSelectedAgentId;
+    const prevGetUiState = bridge.getUiState;
+
+    const setGroupModeForTest = (value) => {
+      const next = !!value;
+      setGroupMode(next);
+      return next;
+    };
+    const setQuestionPriorityForTest = (value) => {
+      const next = String(value || '').trim() === 'high' ? 'high' : 'normal';
+      setQuestionPriority(next);
+      return next;
+    };
+    const setUseAgentModeForTest = (value) => {
+      const next = !!value;
+      setUseAgentMode(next);
+      return next;
+    };
+    const setSelectedAgentIdForTest = (value) => {
+      const next = String(value || '').trim();
+      setSelectedAgentId(next);
+      return next;
+    };
+    const getUiState = () => ({
+      groupMode: !!groupMode,
+      questionPriority: String(questionPriority || 'normal'),
+      useAgentMode: !!useAgentMode,
+      selectedAgentId: String(selectedAgentId || ''),
+    });
+
+    bridge.setGroupMode = setGroupModeForTest;
+    bridge.setQuestionPriority = setQuestionPriorityForTest;
+    bridge.setUseAgentMode = setUseAgentModeForTest;
+    bridge.setSelectedAgentId = setSelectedAgentIdForTest;
+    bridge.getUiState = getUiState;
+
+    return () => {
+      if (bridge.setGroupMode === setGroupModeForTest) {
+        if (typeof prevSetGroupMode === 'function') bridge.setGroupMode = prevSetGroupMode;
+        else delete bridge.setGroupMode;
+      }
+      if (bridge.setQuestionPriority === setQuestionPriorityForTest) {
+        if (typeof prevSetQuestionPriority === 'function') bridge.setQuestionPriority = prevSetQuestionPriority;
+        else delete bridge.setQuestionPriority;
+      }
+      if (bridge.setUseAgentMode === setUseAgentModeForTest) {
+        if (typeof prevSetUseAgentMode === 'function') bridge.setUseAgentMode = prevSetUseAgentMode;
+        else delete bridge.setUseAgentMode;
+      }
+      if (bridge.setSelectedAgentId === setSelectedAgentIdForTest) {
+        if (typeof prevSetSelectedAgentId === 'function') bridge.setSelectedAgentId = prevSetSelectedAgentId;
+        else delete bridge.setSelectedAgentId;
+      }
+      if (bridge.getUiState === getUiState) {
+        if (typeof prevGetUiState === 'function') bridge.getUiState = prevGetUiState;
+        else delete bridge.getUiState;
+      }
+    };
+  }, [groupMode, questionPriority, selectedAgentId, setGroupMode, setQuestionPriority, setSelectedAgentId, setUseAgentMode, useAgentMode]);
 
   const guideTemplateList = Array.isArray(tourGuideTemplates) ? tourGuideTemplates : [];
   const selectedGuideTemplate =

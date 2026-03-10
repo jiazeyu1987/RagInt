@@ -602,6 +602,48 @@ function AsrTab({ controlBarProps }) {
             </label>
           ) : null}
 
+          {c.wakeWordEnabled ? (
+            <label className="settings-toggle">
+              <input
+                type="checkbox"
+                checked={!!c.asrAutoSubmitOnWakeEnabled}
+                onChange={(e) => c.onChangeAsrAutoSubmitOnWakeEnabled && c.onChangeAsrAutoSubmitOnWakeEnabled(e.target.checked)}
+              />
+              <span>唤醒词后自动发送问题</span>
+            </label>
+          ) : null}
+
+          {c.wakeWordEnabled ? (
+            <label className="settings-toggle">
+              <input
+                type="checkbox"
+                checked={!!c.asrAutoResumeAfterAnswerEnabled}
+                onChange={(e) =>
+                  c.onChangeAsrAutoResumeAfterAnswerEnabled && c.onChangeAsrAutoResumeAfterAnswerEnabled(e.target.checked)
+                }
+              />
+              <span>回答后自动恢复讲解</span>
+            </label>
+          ) : null}
+
+          {c.wakeWordEnabled && c.asrAutoResumeAfterAnswerEnabled ? (
+            <label className="settings-field">
+              <span>恢复等待时间(ms)</span>
+              <input
+                type="number"
+                min="300"
+                max="20000"
+                step="100"
+                value={String(c.asrAutoResumeAfterAnswerDelayMs || 2200)}
+                onChange={(e) =>
+                  c.onChangeAsrAutoResumeAfterAnswerDelayMs &&
+                  c.onChangeAsrAutoResumeAfterAnswerDelayMs(Number(e.target.value) || 2200)
+                }
+                placeholder="2200"
+              />
+            </label>
+          ) : null}
+
           <label className="settings-field">
             <span>最短录音时长（毫秒）</span>
             <input

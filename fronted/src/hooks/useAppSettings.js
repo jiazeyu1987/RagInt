@@ -118,6 +118,10 @@ function normalizeQaAudioCacheConfidenceThreshold(value) {
   return String(Math.max(0, Math.min(1, n)));
 }
 
+function normalizeAutoResumeDelayMs(value, fallback = 2200) {
+  return normalizeInteger(value, fallback, { min: 300, max: 20000 });
+}
+
 function normalizeStringList(value) {
   if (!Array.isArray(value)) return [];
   return value.map((item) => String(item || '').trim()).filter(Boolean);
@@ -230,6 +234,9 @@ function buildDefaultSettings() {
     wakeWord: '你好小D',
     wakeWordCooldownMs: 5000,
     wakeWordStrict: false,
+    asrAutoSubmitOnWakeEnabled: true,
+    asrAutoResumeAfterAnswerEnabled: true,
+    asrAutoResumeAfterAnswerDelayMs: 2200,
     globalPromptPrefix: '',
     asrTextFilterEnabled: false,
     asrTextFilterChatName: DEFAULT_ASR_FILTER_CHAT_NAME,
@@ -301,6 +308,12 @@ function normalizeAppSettings(value) {
     wakeWord: String(raw.wakeWord == null ? defaults.wakeWord : raw.wakeWord) || defaults.wakeWord,
     wakeWordCooldownMs: normalizeInteger(raw.wakeWordCooldownMs, defaults.wakeWordCooldownMs, { min: 0, max: 120000 }),
     wakeWordStrict: normalizeBoolean(raw.wakeWordStrict, defaults.wakeWordStrict),
+    asrAutoSubmitOnWakeEnabled: normalizeBoolean(raw.asrAutoSubmitOnWakeEnabled, defaults.asrAutoSubmitOnWakeEnabled),
+    asrAutoResumeAfterAnswerEnabled: normalizeBoolean(raw.asrAutoResumeAfterAnswerEnabled, defaults.asrAutoResumeAfterAnswerEnabled),
+    asrAutoResumeAfterAnswerDelayMs: normalizeAutoResumeDelayMs(
+      raw.asrAutoResumeAfterAnswerDelayMs,
+      defaults.asrAutoResumeAfterAnswerDelayMs
+    ),
     globalPromptPrefix: String(raw.globalPromptPrefix == null ? defaults.globalPromptPrefix : raw.globalPromptPrefix),
     asrTextFilterEnabled: normalizeBoolean(raw.asrTextFilterEnabled, defaults.asrTextFilterEnabled),
     asrTextFilterChatName:
@@ -383,6 +396,9 @@ function readLegacySettingsFromLocalStorage() {
   assign('wakeWord', 'wakeWord');
   assign('wakeWordCooldownMs', 'wakeWordCooldownMs', Number);
   assign('wakeWordStrict', 'wakeWordStrict');
+  assign('asrAutoSubmitOnWakeEnabled', 'asrAutoSubmitOnWakeEnabled');
+  assign('asrAutoResumeAfterAnswerEnabled', 'asrAutoResumeAfterAnswerEnabled');
+  assign('asrAutoResumeAfterAnswerDelayMs', 'asrAutoResumeAfterAnswerDelayMs', Number);
   assign('globalPromptPrefix', 'globalPromptPrefix');
   assign('asrTextFilterEnabled', 'asrTextFilterEnabled');
   assign('asrTextFilterChatName', 'asrTextFilterChatName');
@@ -536,6 +552,15 @@ export function useAppSettings(clientId) {
   const setWakeWord = useCallback((value) => updateSetting('wakeWord', value), [updateSetting]);
   const setWakeWordCooldownMs = useCallback((value) => updateSetting('wakeWordCooldownMs', value), [updateSetting]);
   const setWakeWordStrict = useCallback((value) => updateSetting('wakeWordStrict', value), [updateSetting]);
+  const setAsrAutoSubmitOnWakeEnabled = useCallback((value) => updateSetting('asrAutoSubmitOnWakeEnabled', value), [updateSetting]);
+  const setAsrAutoResumeAfterAnswerEnabled = useCallback(
+    (value) => updateSetting('asrAutoResumeAfterAnswerEnabled', value),
+    [updateSetting]
+  );
+  const setAsrAutoResumeAfterAnswerDelayMs = useCallback(
+    (value) => updateSetting('asrAutoResumeAfterAnswerDelayMs', value),
+    [updateSetting]
+  );
   const setGlobalPromptPrefix = useCallback((value) => updateSetting('globalPromptPrefix', value), [updateSetting]);
   const setAsrTextFilterEnabled = useCallback((value) => updateSetting('asrTextFilterEnabled', value), [updateSetting]);
   const setAsrTextFilterChatName = useCallback((value) => updateSetting('asrTextFilterChatName', value), [updateSetting]);
@@ -595,6 +620,9 @@ export function useAppSettings(clientId) {
     setWakeWord,
     setWakeWordCooldownMs,
     setWakeWordStrict,
+    setAsrAutoSubmitOnWakeEnabled,
+    setAsrAutoResumeAfterAnswerEnabled,
+    setAsrAutoResumeAfterAnswerDelayMs,
     setGlobalPromptPrefix,
     setAsrTextFilterEnabled,
     setAsrTextFilterChatName,

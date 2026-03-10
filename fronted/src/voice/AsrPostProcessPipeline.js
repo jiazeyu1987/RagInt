@@ -11,6 +11,123 @@ function parseWakeWordList(raw) {
     .filter(Boolean);
 }
 
+function isWakeTokenChar(ch) {
+  return /^[A-Za-z0-9\u4e00-\u9fff]$/.test(String(ch || ''));
+}
+
+function foldWakeTextWithMap(text) {
+  const source = String(text || '');
+  const map = [];
+  let folded = '';
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source.charAt(i);
+    if (!isWakeTokenChar(ch)) continue;
+    folded += ch.toLowerCase();
+    map.push(i);
+  }
+  return { folded, map };
+}
+
+function foldWakeText(text) {
+  return foldWakeTextWithMap(text).folded;
+}
+
+function levenshteinDistance(a, b) {
+  const left = String(a || '');
+  const right = String(b || '');
+  if (!left) return right.length;
+  if (!right) return left.length;
+
+  const prev = new Array(right.length + 1);
+  for (let j = 0; j <= right.length; j += 1) prev[j] = j;
+  for (let i = 1; i <= left.length; i += 1) {
+    let currDiag = prev[0];
+    prev[0] = i;
+    for (let j = 1; j <= right.length; j += 1) {
+      const tmp = prev[j];
+      const cost = left.charAt(i - 1) === right.charAt(j - 1) ? 0 : 1;
+      prev[j] = Math.min(prev[j] + 1, prev[j - 1] + 1, currDiag + cost);
+      currDiag = tmp;
+    }
+  }
+  return prev[right.length];
+}
+
+function maxWakeEditDistance(wordLen) {
+  const n = Math.max(1, Number(wordLen) || 1);
+  if (n <= 3) return 1;
+  if (n <= 6) return 2;
+  return Math.max(2, Math.round(n * 0.34));
+}
+
+function findFuzzyWakeWordMatch(text, wakeWord, strict) {
+  const source = String(text || '').trim();
+  const word = String(wakeWord || '').trim();
+  if (!source || !word) return null;
+
+  const foldedWord = foldWakeText(word);
+  if (!foldedWord) return null;
+
+  const foldedSourceInfo = foldWakeTextWithMap(source);
+  const foldedSource = foldedSourceInfo.folded;
+  const map = foldedSourceInfo.map;
+  if (!foldedSource) return null;
+
+  const maxLead = strict ? 0 : Math.min(4, Math.max(0, foldedSource.length - 1));
+  const minLen = Math.max(1, foldedWord.length - 1);
+  const maxLen = Math.min(foldedSource.length, foldedWord.length + 1);
+  const maxDist = maxWakeEditDistance(foldedWord.length);
+  let bestMatch = null;
+
+  for (let start = 0; start <= maxLead && start < foldedSource.length; start += 1) {
+    for (let len = minLen; len <= maxLen; len += 1) {
+      const end = start + len;
+      if (end > foldedSource.length) break;
+      const candidate = foldedSource.slice(start, end);
+      const dist = levenshteinDistance(candidate, foldedWord);
+      if (dist > maxDist) continue;
+      const similarity = 1 - dist / Math.max(candidate.length, foldedWord.length);
+      if (similarity < 0.6) continue;
+
+      const rawStart = map[start];
+      const rawLast = map[end - 1];
+      if (!Number.isFinite(rawStart) || !Number.isFinite(rawLast)) continue;
+      const next = {
+        word,
+        index: rawStart,
+        endIndex: rawLast + 1,
+        matchedText: source.slice(rawStart, rawLast + 1),
+        kind: 'fuzzy',
+        distance: dist,
+        similarity,
+        foldedLength: len,
+      };
+      if (!bestMatch) {
+        bestMatch = next;
+        continue;
+      }
+      const prevSimilarity = Number(bestMatch.similarity) || 0;
+      const nextSimilarity = Number(next.similarity) || 0;
+      const prevDistance = Number(bestMatch.distance) || 0;
+      const nextDistance = Number(next.distance) || 0;
+      const prevLen = Number(bestMatch.foldedLength) || 0;
+      const nextLen = Number(next.foldedLength) || 0;
+      const prevStart = Number(bestMatch.index) || 0;
+      const nextStart = Number(next.index) || 0;
+      const better =
+        nextSimilarity > prevSimilarity ||
+        (nextSimilarity === prevSimilarity && nextDistance < prevDistance) ||
+        (nextSimilarity === prevSimilarity && nextDistance === prevDistance && nextLen > prevLen) ||
+        (nextSimilarity === prevSimilarity && nextDistance === prevDistance && nextLen === prevLen && nextStart < prevStart);
+      if (better) bestMatch = next;
+    }
+  }
+
+  if (!bestMatch) return null;
+  delete bestMatch.foldedLength;
+  return bestMatch;
+}
+
 function buildFilterCacheKey({ text, prompt, chatName, domainTerms }) {
   return [safeTrim(text), safeTrim(prompt), safeTrim(chatName), safeTrim(domainTerms)].join('\n');
 }
@@ -31,10 +148,16 @@ function resolveWakeWordMatch(text, wakeWords, strict) {
     const idx = source.indexOf(word);
     if (idx < 0) continue;
     if (strict) {
-      if (idx === 0) return { word, index: idx };
+      if (idx === 0) return { word, index: idx, endIndex: idx + String(word).length, kind: 'exact' };
       continue;
     }
-    if (idx <= 2) return { word, index: idx };
+    if (idx <= 2) return { word, index: idx, endIndex: idx + String(word).length, kind: 'exact' };
+  }
+  for (const rawWord of wakeWords || []) {
+    const word = String(rawWord || '').trim();
+    if (!word) continue;
+    const fuzzyMatch = findFuzzyWakeWordMatch(source, word, !!strict);
+    if (fuzzyMatch) return fuzzyMatch;
   }
   return null;
 }
@@ -44,7 +167,7 @@ function stripWakeWordPrefix(text, match) {
   if (!source) return '';
   if (!match || !match.word) return source;
   const start = Math.max(0, Number(match.index) || 0);
-  const end = start + String(match.word).length;
+  const end = Math.max(start, Number(match.endIndex) || start + String(match.word).length);
   return source.slice(end).replace(/^[\s锛?銆傦紒锛??:锛?锛涖€?]+/, '').trim();
 }
 
