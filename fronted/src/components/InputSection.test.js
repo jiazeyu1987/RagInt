@@ -42,6 +42,7 @@ describe('InputSection', () => {
   });
 
   test('passes action props to HomeActions and input props to TextInputControls', () => {
+    const onBackToSimple = jest.fn();
     const onTourToggle = jest.fn();
     const onReset = jest.fn();
     const onSubmit = jest.fn();
@@ -49,6 +50,7 @@ describe('InputSection', () => {
 
     const view = render(
       <InputSection
+        onBackToSimple={onBackToSimple}
         onTourToggle={onTourToggle}
         tourToggleLabel="toggle"
         tourToggleDanger
@@ -65,6 +67,7 @@ describe('InputSection', () => {
     const homeActionsProps = HomeActions.mock.calls[0][0];
     expect(homeActionsProps).toEqual(
       expect.objectContaining({
+        onBackToSimple,
         onTourToggle,
         tourToggleLabel: 'toggle',
         tourToggleDanger: true,

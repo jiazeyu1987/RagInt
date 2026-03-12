@@ -1,18 +1,32 @@
 import React from 'react';
 
-export function HomeActions({ onTourToggle, tourToggleLabel, tourToggleDanger, tourToggleDisabled, onReset }) {
+export function HomeActions({
+  onBackToSimple,
+  onTourToggle,
+  tourToggleLabel,
+  tourToggleDanger,
+  tourToggleDisabled,
+  onReset,
+}) {
+  const showBackButton = typeof onBackToSimple === 'function';
+
   return (
-    <div className="home-actions">
+    <div className={`home-actions ${showBackButton ? 'home-actions-with-back' : ''}`}>
+      {showBackButton ? (
+        <button type="button" className="home-action-btn home-action-neutral" onClick={onBackToSimple}>
+          {'\u6781\u7b80\u9875'}
+        </button>
+      ) : null}
       <button
         type="button"
         className={`home-action-btn ${tourToggleDanger ? 'home-action-danger' : 'home-action-primary'}`}
         onClick={onTourToggle}
         disabled={!!tourToggleDisabled}
       >
-        {tourToggleLabel || '开始讲解'}
+        {tourToggleLabel || '\u5f00\u59cb\u8bb2\u89e3'}
       </button>
       <button type="button" className="home-action-btn" onClick={onReset}>
-        复位
+        {'\u590d\u4f4d'}
       </button>
     </div>
   );

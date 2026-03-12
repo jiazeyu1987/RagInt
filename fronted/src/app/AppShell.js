@@ -18,6 +18,7 @@ import { SettingsPanel } from '../components/SettingsPanel';
 import { MainLayout } from '../components/MainLayout';
 import { HomeStatusBar } from '../components/HomeStatusBar';
 import { RightPanelTabs } from '../components/RightPanelTabs';
+import { SimpleTourControlPage } from '../components/SimpleTourControlPage';
 import { useBackendStatus } from '../hooks/useBackendStatus';
 import { useBackendEvents } from '../hooks/useBackendEvents';
 import { useAppSettings } from '../hooks/useAppSettings';
@@ -52,6 +53,21 @@ const TOUR_BTN_MODE = {
   INTERRUPT: 'interrupt',
   CONTINUE: 'continue',
 };
+const UI_VIEW_MODE_STORAGE_KEY = 'ragint_ui_view_mode_v1';
+
+function normalizeUiViewMode(value) {
+  const mode = String(value || '').trim();
+  return mode === 'simple' ? 'simple' : 'full';
+}
+
+function readInitialUiViewMode() {
+  if (typeof window === 'undefined' || !window.localStorage) return 'full';
+  try {
+    return normalizeUiViewMode(window.localStorage.getItem(UI_VIEW_MODE_STORAGE_KEY));
+  } catch (_) {
+    return 'full';
+  }
+}
 
 function reduceTourButtonState(state, event) {
   const type = String((event && event.type) || '').trim();
@@ -76,6 +92,8 @@ function AppShell() {
   const [asrPostProcessStage, setAsrPostProcessStage] = useState('idle');
   const [asrPostProcessEvents, setAsrPostProcessEvents] = useState([]);
   const [tourButtonState, setTourButtonState] = useState({ started: false, mode: TOUR_BTN_MODE.START });
+  const [uiViewMode, setUiViewMode] = useState(readInitialUiViewMode);
+  const [simpleTtsPlaying, setSimpleTtsPlaying] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const clientId = useClientId();
   const {
@@ -1111,6 +1129,32 @@ function AppShell() {
     wasTourActiveRef.current = active;
   }, [isLoading, tourState, askAbortRef, currentAudioRef, ttsManagerRef]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return () => {};
+    if (uiViewMode !== 'simple') {
+      setSimpleTtsPlaying(false);
+      return () => {};
+    }
+
+    const timer = window.setInterval(() => {
+      const playing = !!(currentAudioRef && currentAudioRef.current);
+      setSimpleTtsPlaying((prev) => (prev === playing ? prev : playing));
+    }, 120);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [uiViewMode, currentAudioRef]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    try {
+      window.localStorage.setItem(UI_VIEW_MODE_STORAGE_KEY, normalizeUiViewMode(uiViewMode));
+    } catch (_) {
+      // ignore
+    }
+  }, [uiViewMode]);
+
   const submitDisabled = isRecording || !String(inputText || '').trim() || (useAgentMode && !selectedAgentId);
   const interruptDisabled =
     !isLoading && !((ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false) || currentAudioRef.current);
@@ -1172,6 +1216,18 @@ function AppShell() {
     setCurrentIntent(null);
     setIsLoading(false);
     setTourSelectedStopIndex(0);
+  };
+
+  const openFullUi = () => setUiViewMode('full');
+  const openSimpleUi = () => setUiViewMode('simple');
+  const simpleTourRunning = !!(tourButtonState && tourButtonState.started);
+  const onSimpleTourToggle = async () => {
+    if (simpleTourRunning) {
+      await onResetAll();
+      return;
+    }
+    setTourButtonState((s) => reduceTourButtonState(s, { type: 'START_CLICK' }));
+    await startTour();
   };
 
   const controlBarProps = useControlBarProps({
@@ -1467,6 +1523,21 @@ function AppShell() {
   const wakeWordLabel = wakeWordEnabled ? String(wakeWord || '').trim() || '未设置' : '未启用';
   const audienceProfileLabel = String(audienceProfile || '').trim() || '未设置';
 
+  if (uiViewMode === 'simple') {
+    return (
+      <div className="app">
+        <div className="container simple-tour-container">
+          <SimpleTourControlPage
+            isRunning={simpleTourRunning}
+            showWave={simpleTtsPlaying}
+            onToggle={onSimpleTourToggle}
+            onOpenMainPage={openFullUi}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <div className="container">
@@ -1569,6 +1640,7 @@ function AppShell() {
         </div>
 
         <InputSection
+          onBackToSimple={openSimpleUi}
           onTourToggle={onTourToggle}
           tourToggleLabel={tourToggleLabel}
           tourToggleDanger={tourToggleDanger}

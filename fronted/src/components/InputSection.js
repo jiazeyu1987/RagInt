@@ -3,6 +3,7 @@ import { HomeActions } from './HomeActions';
 import { TextInputControls } from './TextInputControls';
 
 export function InputSection({
+  onBackToSimple,
   onTourToggle,
   tourToggleLabel,
   tourToggleDanger,
@@ -15,6 +16,7 @@ export function InputSection({
   return (
     <div className="input-section">
       <HomeActions
+        onBackToSimple={onBackToSimple}
         onTourToggle={onTourToggle}
         tourToggleLabel={tourToggleLabel}
         tourToggleDanger={tourToggleDanger}

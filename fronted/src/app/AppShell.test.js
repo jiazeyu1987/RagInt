@@ -403,6 +403,9 @@ function render(ui) {
 
 describe('AppShell', () => {
   beforeEach(() => {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.clear();
+    }
     mockLatestInputSectionProps = null;
     mockOrchestrationSpies.startTour.mockClear();
     mockOrchestrationSpies.continueTour.mockClear();
@@ -429,6 +432,50 @@ describe('AppShell', () => {
     });
     expect(mockOrchestrationSpies.onInterruptManual).toHaveBeenCalledTimes(1);
     expect(mockOrchestrationSpies.resetTour).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  test('switches between full ui and simple control page', async () => {
+    const view = render(React.createElement(AppShell));
+
+    expect(mockLatestInputSectionProps).toBeTruthy();
+    expect(typeof mockLatestInputSectionProps.onBackToSimple).toBe('function');
+
+    await act(async () => {
+      await mockLatestInputSectionProps.onBackToSimple();
+    });
+
+    const mainBtn = view.container.querySelector('.simple-tour-main-btn');
+    const titleBtn = view.container.querySelector('.simple-tour-title-btn');
+    expect(mainBtn).toBeTruthy();
+    expect(titleBtn).toBeTruthy();
+    expect(window.localStorage.getItem('ragint_ui_view_mode_v1')).toBe('simple');
+
+    await act(async () => {
+      mainBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(mockOrchestrationSpies.startTour).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      mainBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(mockOrchestrationSpies.onInterruptManual).toHaveBeenCalledTimes(1);
+    expect(mockOrchestrationSpies.resetTour).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      titleBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(view.container.querySelector('[data-testid="input-section-mock"]')).toBeTruthy();
+    expect(window.localStorage.getItem('ragint_ui_view_mode_v1')).toBe('full');
+    view.unmount();
+  });
+
+  test('restores last ui page from local storage', () => {
+    window.localStorage.setItem('ragint_ui_view_mode_v1', 'simple');
+    const view = render(React.createElement(AppShell));
+
+    expect(view.container.querySelector('.simple-tour-main-btn')).toBeTruthy();
+    expect(view.container.querySelector('[data-testid="input-section-mock"]')).toBeFalsy();
     view.unmount();
   });
 });
