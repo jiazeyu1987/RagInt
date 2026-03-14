@@ -36,12 +36,10 @@ def _parse_bool(value: str | None, default: bool = False) -> bool:
 def _parse_cors_origins(raw: str | None) -> list[str]:
     if not raw:
         return [
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
+            "http://localhost:4981",
+            "http://127.0.0.1:4981",
             "http://localhost:3001",
             "http://127.0.0.1:3001",
-            "http://localhost:3792",
-            "http://127.0.0.1:3792",
         ]
     items = []
     for part in str(raw).split(","):
@@ -49,12 +47,10 @@ def _parse_cors_origins(raw: str | None) -> list[str]:
         if o:
             items.append(o)
     return items or [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
+        "http://localhost:4981",
+        "http://127.0.0.1:4981",
         "http://localhost:3001",
         "http://127.0.0.1:3001",
-        "http://localhost:3792",
-        "http://127.0.0.1:3792",
     ]
 
 

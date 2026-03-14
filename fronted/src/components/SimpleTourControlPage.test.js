@@ -27,7 +27,9 @@ describe('SimpleTourControlPage', () => {
   test('renders start state and forwards click handlers', () => {
     const onToggle = jest.fn();
     const onOpenMainPage = jest.fn();
-    const view = render(<SimpleTourControlPage isRunning={false} onToggle={onToggle} onOpenMainPage={onOpenMainPage} />);
+    const view = render(
+      <SimpleTourControlPage isRunning={false} showWave={false} onToggle={onToggle} onOpenMainPage={onOpenMainPage} />
+    );
 
     const mainBtn = view.container.querySelector('.simple-tour-main-btn');
     const titleBtn = view.container.querySelector('.simple-tour-title-btn');
@@ -38,6 +40,7 @@ describe('SimpleTourControlPage', () => {
     expect(titleBtn).toBeTruthy();
     expect(wave).toBeTruthy();
     expect(wave.className).toContain('is-hidden');
+    expect(view.container.querySelector('.simple-tour-main-icon')).toBeNull();
 
     act(() => {
       mainBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -50,13 +53,13 @@ describe('SimpleTourControlPage', () => {
   });
 
   test('switches to stop state', () => {
-    const view = render(<SimpleTourControlPage isRunning={false} onToggle={() => {}} onOpenMainPage={() => {}} />);
+    const view = render(<SimpleTourControlPage isRunning={false} showWave={false} onToggle={() => {}} onOpenMainPage={() => {}} />);
     view.rerender(<SimpleTourControlPage isRunning showWave onToggle={() => {}} onOpenMainPage={() => {}} />);
 
     const mainBtn = view.container.querySelector('.simple-tour-main-btn');
     const wave = view.container.querySelector('.simple-tour-wave');
     expect(mainBtn.className).toContain('is-stop');
-    expect(mainBtn.textContent).toContain('\u505c\u6b62');
+    expect(mainBtn.textContent).toContain('\u7ed3\u675f');
     expect(wave.className).not.toContain('is-hidden');
     expect(view.container.querySelectorAll('.simple-tour-wave-bar').length).toBe(9);
     view.unmount();

@@ -3,11 +3,19 @@ from __future__ import annotations
 from flask import Blueprint, request
 
 from backend.api.http_responses import bad_request_json, error_json, ok_json
-from backend.api.request_context import get_client_id
+
+GLOBAL_SCOPE_ID = "single_user"
 
 
-def _resolve_scope_id(req, data: dict | None = None) -> str:
-    return get_client_id(req, data=data, default="default")
+def _get_unified_settings_record(deps):
+    rec = deps.app_settings_store.get(scope_id=GLOBAL_SCOPE_ID)
+    if rec:
+        return rec
+    latest = deps.app_settings_store.get_latest()
+    if not latest:
+        return None
+    migrated = deps.app_settings_store.upsert(scope_id=GLOBAL_SCOPE_ID, settings=latest.settings)
+    return migrated or latest
 
 
 def create_blueprint(deps):
@@ -15,10 +23,9 @@ def create_blueprint(deps):
 
     @bp.route("/api/app_settings", methods=["GET"])
     def get_app_settings():
-        scope_id = _resolve_scope_id(request)
-        rec = deps.app_settings_store.get(scope_id=scope_id)
+        rec = _get_unified_settings_record(deps)
         if not rec:
-            return ok_json(scope_id=scope_id, settings={}, created_at_ms=None, updated_at_ms=None)
+            return ok_json(scope_id=GLOBAL_SCOPE_ID, settings={}, created_at_ms=None, updated_at_ms=None)
         return ok_json(
             scope_id=rec.scope_id,
             settings=rec.settings,
@@ -33,8 +40,7 @@ def create_blueprint(deps):
         if not isinstance(settings, dict):
             return bad_request_json(error="settings_dict_required")
 
-        scope_id = _resolve_scope_id(request, data=data)
-        rec = deps.app_settings_store.upsert(scope_id=scope_id, settings=settings)
+        rec = deps.app_settings_store.upsert(scope_id=GLOBAL_SCOPE_ID, settings=settings)
         if not rec:
             return error_json(error="save_failed", status=500)
         return ok_json(

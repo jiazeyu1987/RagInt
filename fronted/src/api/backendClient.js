@@ -106,3 +106,15 @@ export async function saveAppSettings({ clientId, settings } = {}) {
   });
 }
 
+export async function fetchRagflowConfig() {
+  return fetchJson('/api/ragflow/config', { method: 'GET' });
+}
+
+export async function saveRagflowConfig({ apiKey } = {}) {
+  return fetchJson('/api/ragflow/config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key: String(apiKey || '').trim() }),
+  });
+}
+

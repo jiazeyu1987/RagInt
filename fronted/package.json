@@ -9,7 +9,7 @@
     "voicekit-js": "file:../../CustomModules/ASR/dist/voicekit-js-0.1.0.tgz"
   },
   "scripts": {
-    "start": "react-scripts start",
+    "start": "set PORT=4981&& react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "test:e2e": "playwright test",

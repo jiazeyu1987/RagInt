@@ -13,7 +13,7 @@ module.exports = defineConfig({
   retries: process.env.CI ? 2 : 0,
   reporter: [['list']],
   use: {
-    baseURL: 'http://127.0.0.1:3000',
+    baseURL: 'http://127.0.0.1:4981',
     headless: true,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
@@ -26,7 +26,7 @@ module.exports = defineConfig({
   ],
   webServer: {
     command: 'npm start',
-    url: 'http://127.0.0.1:3000',
+    url: 'http://127.0.0.1:4981',
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },

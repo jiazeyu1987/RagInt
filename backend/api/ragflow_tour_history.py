@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+
 from flask import Blueprint, jsonify, request
 
 from backend.api.ragflow_config_cache import get_ragflow_app_config, get_ragflow_bundle, get_ragflow_config
@@ -44,6 +46,41 @@ def create_blueprint(deps):
         except Exception:
             pass
         return jsonify(res)
+
+    @bp.route("/api/ragflow/config", methods=["GET"])
+    def ragflow_get_config():
+        cfg = deps.ragflow_service.load_config() or {}
+        cfg = cfg if isinstance(cfg, dict) else {}
+        return jsonify(
+            {
+                "ok": True,
+                "config": {
+                    "api_key": str(cfg.get("api_key") or ""),
+                },
+            }
+        )
+
+    @bp.route("/api/ragflow/config", methods=["PUT"])
+    def ragflow_set_config():
+        data = request.get_json(silent=True) or {}
+        if "api_key" not in data:
+            return jsonify({"ok": False, "error": "api_key_required"}), 400
+        api_key = str(data.get("api_key") or "").strip()
+        cfg = deps.ragflow_service.load_config(force=True) or {}
+        cfg = copy.deepcopy(cfg if isinstance(cfg, dict) else {})
+        cfg.pop("__meta", None)
+        cfg["api_key"] = api_key
+        deps.ragflow_service.save_config(cfg)
+        connected = bool(deps.ragflow_service.init())
+        deps.ragflow_default_chat_name = str(deps.ragflow_service.default_chat_name or "").strip()
+        deps.session = deps.ragflow_service.get_session(deps.ragflow_default_chat_name) if connected else None
+        return jsonify(
+            {
+                "ok": True,
+                "config": {"api_key": api_key},
+                "ragflow_connected": connected,
+            }
+        )
 
     @bp.route("/api/history", methods=["GET"])
     def api_history_list():

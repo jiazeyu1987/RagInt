@@ -3,8 +3,8 @@ import React from 'react';
 export function SimpleTourControlPage({ isRunning, showWave, onToggle, onOpenMainPage }) {
   const running = !!isRunning;
   const waveVisible = !!showWave;
-  const mainBtnLabel = running ? '\u505c\u6b62' : '\u5f00\u59cb';
-  const mainBtnAriaLabel = running ? '\u505c\u6b62\u8bb2\u89e3' : '\u5f00\u59cb\u8bb2\u89e3';
+  const mainBtnLabel = running ? '\u7ed3\u675f' : '\u5f00\u59cb';
+  const mainBtnAriaLabel = running ? '\u7ed3\u675f\u8bb2\u89e3' : '\u5f00\u59cb\u8bb2\u89e3';
   const waveBars = [0, 1, 2, 3, 4, 5, 6, 7, 8];
 
   return (
@@ -30,10 +30,6 @@ export function SimpleTourControlPage({ isRunning, showWave, onToggle, onOpenMai
             onClick={onToggle}
             aria-label={mainBtnAriaLabel}
           >
-            <span
-              className={`simple-tour-main-icon ${running ? 'simple-tour-main-icon-stop' : 'simple-tour-main-icon-start'}`}
-              aria-hidden="true"
-            />
             <span className="simple-tour-main-label">{mainBtnLabel}</span>
           </button>
         </div>

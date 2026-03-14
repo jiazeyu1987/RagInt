@@ -5,6 +5,7 @@ import { StagePanel } from './StagePanel';
 import { TourModePanel } from './TourModePanel';
 import { QaAudioCachePanel } from './QaAudioCachePanel';
 import { RecordingArchivePreviewPanel } from './RecordingArchivePreviewPanel';
+import { fetchRagflowConfig, saveRagflowConfig } from '../api/backendClient';
 
 const TABS = [
   { key: 'tts', label: 'TTS设置' },
@@ -212,6 +213,54 @@ function DebugTab({
 }
 
 function OpsTab({ stagePanelProps, onQuickSummary, onPrevStop, onNextStop }) {
+  const [ragflowApiKey, setRagflowApiKey] = useState('');
+  const [ragflowLoading, setRagflowLoading] = useState(true);
+  const [ragflowSaving, setRagflowSaving] = useState(false);
+  const [ragflowError, setRagflowError] = useState('');
+  const [ragflowMessage, setRagflowMessage] = useState('');
+
+  useEffect(() => {
+    let disposed = false;
+    const loadRagflowConfig = async () => {
+      setRagflowLoading(true);
+      setRagflowError('');
+      setRagflowMessage('');
+      try {
+        const payload = await fetchRagflowConfig();
+        if (disposed) return;
+        const nextApiKey = String(payload && payload.config && payload.config.api_key ? payload.config.api_key : '');
+        setRagflowApiKey(nextApiKey);
+      } catch (e) {
+        if (disposed) return;
+        setRagflowError(String((e && e.message) || e || 'load_failed'));
+      } finally {
+        if (disposed) return;
+        setRagflowLoading(false);
+      }
+    };
+    loadRagflowConfig();
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  const onSaveRagflowApiKey = async () => {
+    if (ragflowSaving) return;
+    setRagflowSaving(true);
+    setRagflowError('');
+    setRagflowMessage('');
+    try {
+      const payload = await saveRagflowConfig({ apiKey: ragflowApiKey });
+      const savedApiKey = String(payload && payload.config && payload.config.api_key ? payload.config.api_key : ragflowApiKey);
+      setRagflowApiKey(savedApiKey);
+      setRagflowMessage('RAGFlow API Key 已保存');
+    } catch (e) {
+      setRagflowError(String((e && e.message) || e || 'save_failed'));
+    } finally {
+      setRagflowSaving(false);
+    }
+  };
+
   return (
     <SettingsGroup title="运维动作">
       <StagePanel {...(stagePanelProps || {})} />
@@ -227,6 +276,32 @@ function OpsTab({ stagePanelProps, onQuickSummary, onPrevStop, onNextStop }) {
           下一站
         </button>
       </div>
+      <div className="settings-divider" />
+      <div className="settings-form">
+        <label className="settings-field">
+          <span>RAGFlow API Key</span>
+          <input
+            type="text"
+            value={ragflowApiKey}
+            onChange={(e) => setRagflowApiKey(e.target.value)}
+            placeholder="ragflow-..."
+            autoComplete="off"
+          />
+        </label>
+      </div>
+      <div className="settings-actions">
+        <button
+          type="button"
+          className="settings-action-btn settings-action-btn-primary"
+          onClick={onSaveRagflowApiKey}
+          disabled={ragflowLoading || ragflowSaving}
+        >
+          {ragflowSaving ? '保存中...' : '保存 RAGFlow Key'}
+        </button>
+      </div>
+      {ragflowLoading ? <div className="debug-muted">正在读取当前 key...</div> : null}
+      {ragflowMessage ? <div style={{ color: '#166534', fontSize: 12 }}>{ragflowMessage}</div> : null}
+      {ragflowError ? <div style={{ color: '#b91c1c', fontSize: 12 }}>{ragflowError}</div> : null}
     </SettingsGroup>
   );
 }

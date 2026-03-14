@@ -206,6 +206,13 @@ class RagflowService:
     def reload_config(self) -> dict:
         return self.load_config(force=True)
 
+    def save_config(self, cfg: dict) -> dict:
+        data = cfg if isinstance(cfg, dict) else {}
+        self._config_path.parent.mkdir(parents=True, exist_ok=True)
+        text = json.dumps(data, ensure_ascii=False, indent=2)
+        self._config_path.write_text(text + "\n", encoding="utf-8")
+        return self.load_config(force=True)
+
     def init(self) -> bool:
         cfg = self.load_config()
         api_key = cfg.get("api_key", "")

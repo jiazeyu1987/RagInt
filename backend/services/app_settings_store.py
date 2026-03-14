@@ -51,6 +51,26 @@ class AppSettingsStore:
             finally:
                 conn.close()
 
+    @staticmethod
+    def _row_to_record(row, *, fallback_scope_id: str = "") -> AppSettingsRecord | None:
+        if not row:
+            return None
+        sid = str(row["scope_id"] or fallback_scope_id or "").strip()
+        if not sid:
+            return None
+        try:
+            settings = json.loads(str(row["settings_json"] or "{}"))
+        except Exception:
+            settings = {}
+        if not isinstance(settings, dict):
+            settings = {}
+        return AppSettingsRecord(
+            scope_id=sid,
+            settings=settings,
+            created_at_ms=int(row["created_at_ms"] or 0),
+            updated_at_ms=int(row["updated_at_ms"] or 0),
+        )
+
     def get(self, *, scope_id: str) -> AppSettingsRecord | None:
         sid = str(scope_id or "").strip()
         if not sid:
@@ -67,20 +87,23 @@ class AppSettingsStore:
                     """,
                     (sid,),
                 ).fetchone()
-                if not row:
-                    return None
-                try:
-                    settings = json.loads(str(row["settings_json"] or "{}"))
-                except Exception:
-                    settings = {}
-                if not isinstance(settings, dict):
-                    settings = {}
-                return AppSettingsRecord(
-                    scope_id=str(row["scope_id"] or sid),
-                    settings=settings,
-                    created_at_ms=int(row["created_at_ms"] or 0),
-                    updated_at_ms=int(row["updated_at_ms"] or 0),
-                )
+                return self._row_to_record(row, fallback_scope_id=sid)
+            finally:
+                conn.close()
+
+    def get_latest(self) -> AppSettingsRecord | None:
+        with self._lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    """
+                    SELECT scope_id, settings_json, created_at_ms, updated_at_ms
+                    FROM app_settings
+                    ORDER BY updated_at_ms DESC, created_at_ms DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                return self._row_to_record(row)
             finally:
                 conn.close()
 

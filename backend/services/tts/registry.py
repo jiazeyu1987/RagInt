@@ -17,6 +17,49 @@ def _is_rate_quota_error(exc: Exception) -> bool:
     return "Throttling.RateQuota" in text or "Requests rate limit exceeded" in text
 
 
+def _is_bailian_missing_config_error(exc: Exception) -> bool:
+    text = str(exc or "").strip().lower()
+    if not text:
+        return False
+    markers = (
+        "tts.bailian.api_key is required",
+        "tts.bailian.voice is required",
+        "tts.bailian.url is required",
+        "dashscope sdk not available",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _provider_enabled(config: dict, provider: str) -> bool:
+    cfg = get_nested(config, ["tts", str(provider).strip().lower()], {}) or {}
+    if not isinstance(cfg, dict):
+        return True
+    return cfg.get("enabled") is not False
+
+
+def _stream_with_edge_then_sapi(
+    *,
+    text: str,
+    request_id: str,
+    config: dict,
+    logger: logging.Logger,
+    cancel_event: threading.Event | None = None,
+    reason: str = "",
+):
+    if _provider_enabled(config, "edge"):
+        try:
+            logger.warning(f"[{request_id}] {reason} -> fallback_to=edge")
+            yield from stream_edge(text=text, request_id=request_id, config=config, logger=logger, cancel_event=cancel_event)
+            return
+        except Exception as edge_exc:  # noqa: BLE001
+            logger.warning(f"[{request_id}] edge_fallback_failed err={edge_exc}")
+    if _provider_enabled(config, "sapi"):
+        logger.warning(f"[{request_id}] {reason} -> fallback_to=sapi")
+        yield from stream_sapi_tts(text=text, request_id=request_id, config=config, logger=logger, cancel_event=cancel_event)
+        return
+    raise RuntimeError("tts_fallback_unavailable: edge_and_sapi_disabled_or_failed")
+
+
 def stream_tts(
     *,
     text: str,
@@ -52,11 +95,26 @@ def stream_tts(
             return
         except Exception as exc:  # noqa: BLE001
             if _is_rate_quota_error(exc):
-                edge_cfg = get_nested(config, ["tts", "edge"], {}) or {}
-                if edge_cfg.get("enabled") is not False:
-                    logger.warning(f"[{request_id}] modelscope_rate_limited -> fallback_to=edge")
-                    yield from stream_edge(text=text, request_id=request_id, config=config, logger=logger, cancel_event=cancel_event)
-                    return
+                yield from _stream_with_edge_then_sapi(
+                    text=text,
+                    request_id=request_id,
+                    config=config,
+                    logger=logger,
+                    cancel_event=cancel_event,
+                    reason="modelscope_rate_limited",
+                )
+                return
+            if _is_bailian_missing_config_error(exc):
+                logger.warning(f"[{request_id}] modelscope_not_configured err={exc}")
+                yield from _stream_with_edge_then_sapi(
+                    text=text,
+                    request_id=request_id,
+                    config=config,
+                    logger=logger,
+                    cancel_event=cancel_event,
+                    reason="modelscope_not_configured",
+                )
+                return
             raise
 
     local_provider = provider_norm
