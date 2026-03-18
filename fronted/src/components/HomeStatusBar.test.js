@@ -42,6 +42,7 @@ describe('HomeStatusBar', () => {
         onChangeAudienceProfile={onChangeAudienceProfile}
         wakeWordLabel="hello assistant"
         currentStopLabel="Stop A"
+        ragflowConversationLabel="展厅聊天"
       />
     );
 
@@ -63,7 +64,14 @@ describe('HomeStatusBar', () => {
     expect(onChangeAudienceProfile).toHaveBeenCalledWith('Kids');
     expect(view.container.textContent).toContain('hello assistant');
     expect(view.container.textContent).toContain('Stop A');
+    expect(view.container.textContent).toContain('展厅聊天');
 
+    view.unmount();
+  });
+
+  test('falls back to 无 when ragflow conversation is absent', () => {
+    const view = render(<HomeStatusBar ragflowConversationLabel="" />);
+    expect(view.container.textContent).toContain('无');
     view.unmount();
   });
 });

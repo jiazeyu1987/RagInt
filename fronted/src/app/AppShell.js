@@ -54,6 +54,7 @@ const TOUR_BTN_MODE = {
   CONTINUE: 'continue',
 };
 const UI_VIEW_MODE_STORAGE_KEY = 'ragint_ui_view_mode_v1';
+const TOUR_RAGFLOW_CHAT_NAME = '展厅聊天';
 
 function normalizeUiViewMode(value) {
   const mode = String(value || '').trim();
@@ -226,6 +227,7 @@ function AppShell() {
   } = useAppSettings(clientId);
   const [chatOptions, setChatOptions] = useState([]);
   const [selectedChat, setSelectedChat] = useState('展厅聊天');
+  const [activeRagflowConversationName, setActiveRagflowConversationName] = useState('');
   const [agentOptions, setAgentOptions] = useState([]);
   const [selectedAgentId, setSelectedAgentId] = useState('');
   const [useAgentMode, setUseAgentMode] = useState(false);
@@ -1271,6 +1273,31 @@ function AppShell() {
       : ragflowConnection && ragflowConnection.connected === true
         ? 'status-ok'
         : '';
+  const resolveCurrentRagflowConversationName = useCallback(() => {
+    if (ragflowUnavailable || useAgentMode) return '';
+    return String((selectedChatRef && selectedChatRef.current) || selectedChat || '').trim();
+  }, [ragflowUnavailable, selectedChat, selectedChatRef, useAgentMode]);
+
+  const resolveTourRagflowConversationName = useCallback(() => {
+    const currentName = resolveCurrentRagflowConversationName();
+    const names = Array.isArray(chatOptions) ? chatOptions.map((name) => String(name || '').trim()).filter(Boolean) : [];
+    if (names.includes(TOUR_RAGFLOW_CHAT_NAME)) return TOUR_RAGFLOW_CHAT_NAME;
+    if (currentName) return currentName;
+    return TOUR_RAGFLOW_CHAT_NAME;
+  }, [chatOptions, resolveCurrentRagflowConversationName]);
+
+  const prepareTourRagflowConversation = useCallback(() => {
+    const nextName = resolveTourRagflowConversationName();
+    if (!nextName) return '';
+    if (selectedChatRef) selectedChatRef.current = nextName;
+    setSelectedChat(nextName);
+    setActiveRagflowConversationName(nextName);
+    return nextName;
+  }, [resolveTourRagflowConversationName, selectedChatRef, setSelectedChat]);
+
+  const ragflowConversationLabel = !ragflowUnavailable && !useAgentMode && String(activeRagflowConversationName || '').trim()
+    ? String(activeRagflowConversationName || '').trim()
+    : '无';
   const submitDisabled = isRecording || !String(inputText || '').trim() || (useAgentMode && !selectedAgentId) || ragflowUnavailable;
   const interruptDisabled =
     !isLoading && !((ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false) || currentAudioRef.current);
@@ -1294,6 +1321,7 @@ function AppShell() {
     if (tourButtonState.mode === TOUR_BTN_MODE.CONTINUE) {
       setTourButtonState((s) => reduceTourButtonState(s, { type: 'CONTINUE_CLICK' }));
       try {
+        setActiveRagflowConversationName((prev) => prev || resolveCurrentRagflowConversationName());
         await continueTour();
         markRagflowAvailable();
       } catch (error) {
@@ -1304,6 +1332,7 @@ function AppShell() {
     }
     setTourButtonState((s) => reduceTourButtonState(s, { type: 'START_CLICK' }));
     try {
+      prepareTourRagflowConversation();
       await startTour();
       markRagflowAvailable();
     } catch (error) {
@@ -1327,6 +1356,7 @@ function AppShell() {
     if (voiceConversationTurnsRef) voiceConversationTurnsRef.current = [];
     if (activeAskRequestIdRef) activeAskRequestIdRef.current = null;
     if (askAbortRef) askAbortRef.current = null;
+    setActiveRagflowConversationName('');
     try {
       if (ttsManagerRef && ttsManagerRef.current) ttsManagerRef.current.stop('reset_all');
     } catch (_) {
@@ -1357,6 +1387,7 @@ function AppShell() {
     }
     setTourButtonState((s) => reduceTourButtonState(s, { type: 'START_CLICK' }));
     try {
+      prepareTourRagflowConversation();
       await startTour();
       markRagflowAvailable();
     } catch (error) {
@@ -1364,6 +1395,12 @@ function AppShell() {
       setTourButtonState({ started: false, mode: TOUR_BTN_MODE.START });
     }
   };
+
+  useEffect(() => {
+    if (ragflowUnavailable || useAgentMode) {
+      setActiveRagflowConversationName('');
+    }
+  }, [ragflowUnavailable, useAgentMode]);
 
   const controlBarProps = useControlBarProps({
     useAgentMode,
@@ -1715,6 +1752,7 @@ function AppShell() {
           onChangeAudienceProfile={(value) => setAudienceProfile(String(value || '').trim())}
           ragflowStatusLabel={ragflowStatusLabel}
           ragflowStatusTone={ragflowStatusTone}
+          ragflowConversationLabel={ragflowConversationLabel}
           wakeWordLabel={wakeWordLabel}
           currentStopLabel={currentStopLabel}
         />

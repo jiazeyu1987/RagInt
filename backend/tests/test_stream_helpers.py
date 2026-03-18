@@ -5,6 +5,7 @@ from backend.orchestrators.ragflow_streaming import (
     _close_response_safely,
     _update_safety_stream_tail_and_check,
 )
+from backend.orchestrators.ragflow_streaming_helpers import _ThinkTagStreamSanitizer
 
 
 class _Resp:
@@ -66,3 +67,25 @@ def test_update_safety_stream_tail_and_check_updates_tail_and_matches():
     matched, tail = _update_safety_stream_tail_and_check(safety_filter=s, tail_norm="", new_text="xxbadyy")
     assert matched == "bad"
     assert "bad" in tail
+
+
+def test_think_tag_stream_sanitizer_removes_single_chunk_block():
+    sanitizer = _ThinkTagStreamSanitizer()
+    out = sanitizer.feed("回答:<think>内部推理</think>你好")
+    assert out == "回答:你好"
+
+
+def test_think_tag_stream_sanitizer_handles_cross_chunk_tags():
+    sanitizer = _ThinkTagStreamSanitizer()
+    out1 = sanitizer.feed("回答:<thi")
+    out2 = sanitizer.feed("nk>内部推理</th")
+    out3 = sanitizer.feed("ink>你好")
+    assert out1 == "回答:"
+    assert out2 == ""
+    assert out3 == "你好"
+
+
+def test_think_tag_stream_sanitizer_removes_orphan_close_tag():
+    sanitizer = _ThinkTagStreamSanitizer()
+    out = sanitizer.feed("a</think>b")
+    assert out == "ab"

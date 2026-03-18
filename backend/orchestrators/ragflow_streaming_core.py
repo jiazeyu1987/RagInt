@@ -4,6 +4,7 @@ import contextlib
 import time
 
 from backend.orchestrators.ragflow_streaming_helpers import (
+    _ThinkTagStreamSanitizer,
     _apply_no_self_intro_prefix,
     _apply_qa_max_chars_limit,
     _close_response_safely,
@@ -54,6 +55,7 @@ def _stream_ragflow_response(
     last_complete_content = ""
     last_ragflow_content = ""
     safety_stream_tail_norm = ""
+    think_sanitizer = _ThinkTagStreamSanitizer()
 
     try:
         if agent_id:
@@ -109,6 +111,7 @@ def _stream_ragflow_response(
                         new_part, last_ragflow_content = _diff_stream_content(
                             content=str(fallback_content), last_content=last_ragflow_content
                         )
+                        new_part = think_sanitizer.feed(new_part)
                         if new_part:
                             yield make_chunk(new_part)
                             last_complete_content += new_part
@@ -142,6 +145,7 @@ def _stream_ragflow_response(
                 timings_set(request_id, t_ragflow_first_text=first_ragflow_text_at)
 
             new_part, last_ragflow_content = _diff_stream_content(content=content, last_content=last_ragflow_content)
+            new_part = think_sanitizer.feed(new_part)
             if not new_part:
                 continue
 

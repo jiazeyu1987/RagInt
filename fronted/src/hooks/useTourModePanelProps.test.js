@@ -54,5 +54,46 @@ describe('useTourModePanelProps', () => {
 
     hook.unmount();
   });
+
+  test('filters legacy fallback stops when business stops exist', async () => {
+    fetchJson.mockResolvedValue({
+      stops: [
+        'company_overview',
+        'core_products',
+        'orthopedics',
+        'urology',
+        'other_products_and_scenarios',
+        'summary_and_qa',
+        '公司与孵化转化平台介绍',
+      ],
+    });
+    const hook = renderHook((p) => useTourModePanelProps(p), {
+      tourGuideTemplates: [
+        {
+          id: 'tpl-1',
+          name: 'Template 1',
+          stops: [
+            { name: 'company_overview', enabled: true, duration_s: 120 },
+            { name: '公司与孵化转化平台介绍', enabled: true, duration_s: 120 },
+          ],
+        },
+      ],
+      setTourGuideTemplates: jest.fn(),
+      tourGuideTemplateId: 'tpl-1',
+      setTourGuideTemplateId: jest.fn(),
+      tourStops: ['company_overview', '公司与孵化转化平台介绍'],
+      setTourStopsOverride: jest.fn(),
+      setTourStopDurationsOverride: jest.fn(),
+    });
+
+    await hook.flush();
+    await hook.flush();
+
+    const rows = hook.result().selectedTemplate?.stops || [];
+    const names = rows.map((x) => String(x.name || '').trim());
+    expect(names).toEqual(['公司与孵化转化平台介绍']);
+
+    hook.unmount();
+  });
 });
 

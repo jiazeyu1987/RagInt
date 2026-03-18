@@ -51,6 +51,7 @@ export function HomeStatusBar({
   currentStopLabel,
   ragflowStatusLabel,
   ragflowStatusTone,
+  ragflowConversationLabel,
 } = {}) {
   return (
     <div className="home-status-bar" role="status" aria-label={'\u5f53\u524d\u8bb2\u89e3\u72b6\u6001'}>
@@ -64,6 +65,7 @@ export function HomeStatusBar({
         onChange={onChangeAudienceProfile}
       />
       <StatusText label="RAGFlow" value={ragflowStatusLabel || '\u68c0\u6d4b\u4e2d'} tone={ragflowStatusTone} />
+      <StatusText label={'RAGFlow 对话'} value={ragflowConversationLabel || '\u65e0'} />
       <StatusText label={'\u5524\u9192\u8bcd'} value={wakeWordLabel} />
       <StatusText label={'\u5f53\u524d\u7ad9\u70b9'} value={currentStopLabel} />
     </div>

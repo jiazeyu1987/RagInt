@@ -13,6 +13,7 @@ const mockOrchestrationSpies = {
 };
 
 let mockLatestInputSectionProps = null;
+let mockLatestStatusBarProps = null;
 
 function mockBuildAppSettings() {
   return {
@@ -193,7 +194,8 @@ jest.mock('../components/MainLayout', () => ({
 }));
 
 jest.mock('../components/HomeStatusBar', () => ({
-  HomeStatusBar: () => {
+  HomeStatusBar: (props) => {
+    mockLatestStatusBarProps = props;
     const ReactRef = require('react');
     return ReactRef.createElement('div', { 'data-testid': 'status-bar-mock' });
   },
@@ -417,6 +419,7 @@ describe('AppShell', () => {
       window.localStorage.clear();
     }
     mockLatestInputSectionProps = null;
+    mockLatestStatusBarProps = null;
     mockOrchestrationSpies.startTour.mockClear();
     mockOrchestrationSpies.continueTour.mockClear();
     mockOrchestrationSpies.resetTour.mockClear();
@@ -431,17 +434,20 @@ describe('AppShell', () => {
     expect(view.container.querySelector('[data-testid="main-layout-mock"]')).toBeTruthy();
     expect(view.container.querySelector('[data-testid="right-tabs-mock"]')).toBeTruthy();
     expect(mockLatestInputSectionProps).toBeTruthy();
+    expect(mockLatestStatusBarProps && mockLatestStatusBarProps.ragflowConversationLabel).toBe('无');
 
     await act(async () => {
       await mockLatestInputSectionProps.onTourToggle();
     });
     expect(mockOrchestrationSpies.startTour).toHaveBeenCalledTimes(1);
+    expect(mockLatestStatusBarProps && mockLatestStatusBarProps.ragflowConversationLabel).toBe('展厅聊天');
 
     await act(async () => {
       await mockLatestInputSectionProps.onReset();
     });
     expect(mockOrchestrationSpies.onInterruptManual).toHaveBeenCalledTimes(1);
     expect(mockOrchestrationSpies.resetTour).toHaveBeenCalledTimes(1);
+    expect(mockLatestStatusBarProps && mockLatestStatusBarProps.ragflowConversationLabel).toBe('无');
     view.unmount();
   });
 

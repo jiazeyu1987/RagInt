@@ -2,12 +2,29 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchJson } from '../api/backendClient';
 import { TourTemplateManager } from '../managers/TourTemplateManager';
 
+const LEGACY_FALLBACK_STOPS = new Set([
+  'company_overview',
+  'core_products',
+  'orthopedics',
+  'urology',
+  'other_products_and_scenarios',
+  'summary_and_qa',
+]);
+
 function normalizeStringList(value) {
   return Array.isArray(value)
     ? value
         .map((item) => String(item || '').trim())
         .filter(Boolean)
     : [];
+}
+
+function stripLegacyFallbackStops(stops) {
+  const list = TourTemplateManager.normalizeStops(stops);
+  if (!list.length) return [];
+  const hasBusinessStops = list.some((name) => !LEGACY_FALLBACK_STOPS.has(name));
+  if (!hasBusinessStops) return list;
+  return list.filter((name) => !LEGACY_FALLBACK_STOPS.has(name));
 }
 
 function sameStringList(a, b) {
@@ -60,10 +77,10 @@ export function useTourModePanelProps({
   const runtimeStops = useMemo(() => TourTemplateManager.normalizeStops(tourStops), [tourStops]);
   const rawTemplates = useMemo(() => (Array.isArray(tourGuideTemplates) ? tourGuideTemplates : []), [tourGuideTemplates]);
   const templateStops = useMemo(() => TourTemplateManager.extractTemplateStops(rawTemplates), [rawTemplates]);
-  const allStops = useMemo(
-    () => TourTemplateManager.mergeUniqueStops(catalogStops, runtimeStops, templateStops),
-    [catalogStops, runtimeStops, templateStops]
-  );
+  const allStops = useMemo(() => {
+    const merged = TourTemplateManager.mergeUniqueStops(catalogStops, runtimeStops, templateStops);
+    return stripLegacyFallbackStops(merged);
+  }, [catalogStops, runtimeStops, templateStops]);
 
   useEffect(() => {
     let cancelled = false;

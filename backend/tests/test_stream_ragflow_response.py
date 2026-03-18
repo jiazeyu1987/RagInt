@@ -160,3 +160,51 @@ def test_stream_ragflow_response_cancel_does_not_emit_done_and_disables_save():
     assert outcome.save_allowed is False
     assert outcome.cache_put_allowed is False
     assert resp.closed is True
+
+
+def test_stream_ragflow_response_strips_think_blocks_from_visible_output():
+    logger = _Logger()
+    cancel = _Cancel(False)
+    resp = _Resp(
+        [
+            _Chunk("答:"),
+            _Chunk("答:<think>内部推理"),
+            _Chunk("答:<think>内部推理</think>你好"),
+        ]
+    )
+    session = _Session(resp)
+
+    def timings_set(_rid: str, **_kw) -> None:
+        return None
+
+    gen = _stream_ragflow_response(
+        request_id="r2",
+        client_id="c2",
+        agent_id="",
+        question_for_rag="q",
+        rag_session=session,
+        ragflow_agent_service=None,
+        cancel_event=cancel,
+        t_submit=0.0,
+        logger=logger,
+        timings_set=timings_set,
+        settings=RagflowStreamSettings(
+            apply_qa_constraints=False,
+            qa_no_self_intro=False,
+            qa_max_answer_chars=0,
+            safety_filter=_Safety(),
+            safety_block_msg="blocked",
+            enable_cleaning=False,
+            text_cleaner=None,
+            tts_buffer=None,
+            start_tts_on_first_chunk=False,
+            first_segment_min_chars=1,
+            segment_flush_interval_s=0.8,
+            segment_min_chars=3,
+        ),
+    )
+
+    yielded, outcome = _drain(gen)
+    chunks = [it["chunk"] for it in yielded if "chunk" in it]
+    assert chunks == ["答:", "你好", ""]
+    assert outcome.answer == "答:你好"

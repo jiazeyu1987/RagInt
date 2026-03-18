@@ -12,6 +12,100 @@ _SELF_INTRO_PREFIX_RE = re.compile(
 )
 
 
+def _is_think_tag_boundary_char(ch: str) -> bool:
+    return ch in ("", ">", "/", " ", "\t", "\r", "\n")
+
+
+def _find_token_with_boundary(lower_text: str, token: str, start: int) -> int:
+    pos = lower_text.find(token, start)
+    while pos >= 0:
+        tail_i = pos + len(token)
+        tail = lower_text[tail_i] if tail_i < len(lower_text) else ""
+        if _is_think_tag_boundary_char(tail):
+            return pos
+        pos = lower_text.find(token, pos + 1)
+    return -1
+
+
+def _find_partial_think_tag_start(lower_text: str, start: int) -> int:
+    lt = lower_text.rfind("<", start)
+    if lt < 0:
+        return -1
+    suffix = lower_text[lt:]
+    if "<think".startswith(suffix) or "</think".startswith(suffix):
+        return lt
+    return -1
+
+
+class _ThinkTagStreamSanitizer:
+    """
+    Streaming sanitizer that removes <think>...</think> blocks, including
+    blocks that span multiple chunks.
+    """
+
+    def __init__(self) -> None:
+        self._in_think = False
+        self._pending = ""
+
+    def feed(self, text: str) -> str:
+        data = self._pending + str(text or "")
+        self._pending = ""
+        if not data:
+            return ""
+
+        low = data.lower()
+        out: list[str] = []
+        i = 0
+
+        while i < len(data):
+            if self._in_think:
+                close_i = _find_token_with_boundary(low, "</think", i)
+                if close_i < 0:
+                    partial_i = _find_partial_think_tag_start(low, i)
+                    self._pending = data[partial_i:] if partial_i >= 0 else ""
+                    return "".join(out)
+                gt = data.find(">", close_i)
+                if gt < 0:
+                    self._pending = data[close_i:]
+                    return "".join(out)
+                self._in_think = False
+                i = gt + 1
+                continue
+
+            open_i = _find_token_with_boundary(low, "<think", i)
+            close_i = _find_token_with_boundary(low, "</think", i)
+            if open_i < 0 and close_i < 0:
+                partial_i = _find_partial_think_tag_start(low, i)
+                if partial_i >= 0:
+                    out.append(data[i:partial_i])
+                    self._pending = data[partial_i:]
+                else:
+                    out.append(data[i:])
+                return "".join(out)
+
+            is_close = close_i >= 0 and (open_i < 0 or close_i < open_i)
+            tag_i = close_i if is_close else open_i
+            out.append(data[i:tag_i])
+
+            gt = data.find(">", tag_i)
+            if gt < 0:
+                self._pending = data[tag_i:]
+                return "".join(out)
+
+            if not is_close:
+                tag = data[tag_i : gt + 1]
+                if not tag.rstrip().endswith("/>"):
+                    self._in_think = True
+            i = gt + 1
+
+        return "".join(out)
+
+    def flush(self) -> str:
+        # Pending leftovers are always partial think tags; never expose them.
+        self._pending = ""
+        return ""
+
+
 def _intro_should_flush(intro_buf: str) -> bool:
     if len(intro_buf) >= 30:
         return True
