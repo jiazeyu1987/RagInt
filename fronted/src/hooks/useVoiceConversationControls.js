@@ -4,6 +4,8 @@ import { useVoiceInputManager } from './useVoiceInputManager';
 const CONVERSATION_START_TIMEOUT_MS = 12000;
 const AUTO_RESUME_RETRY_MS = 500;
 const AUTO_SUBMIT_DEDUPE_MS = 1500;
+const AUTO_SUBMIT_SILENCE_MIN_MS = 500;
+const AUTO_SUBMIT_SILENCE_MAX_MS = 3000;
 
 function safeTrim(v) {
   return String(v == null ? '' : v).trim();
@@ -17,6 +19,13 @@ function withTimeout(promise, timeoutMs) {
       setTimeout(() => resolve({ started: false, timeout: true }), ms);
     }),
   ]);
+}
+
+function normalizeAutoSubmitScope(value) {
+  const scope = String(value || 'voice_only')
+    .trim()
+    .toLowerCase();
+  return scope === 'voice_and_text' ? 'voice_and_text' : 'voice_only';
 }
 
 export function useVoiceConversationControls({
@@ -61,6 +70,8 @@ export function useVoiceConversationControls({
   selectedAgentId,
   continueTour,
   autoBargeInSubmitEnabled = true,
+  autoSubmitSilenceMs = 1200,
+  autoSubmitScope = 'voice_only',
   autoResumeAfterQaEnabled = true,
   shouldAutoResumeTour,
   canAutoResumeTour,
@@ -74,6 +85,7 @@ export function useVoiceConversationControls({
   const resumeWantedRef = useRef(false);
   const resumeLatestSeqRef = useRef(0);
   const resumeTimerRef = useRef(null);
+  const autoSubmitTimerRef = useRef(null);
   const lastAutoSubmitRef = useRef({ text: '', at: 0 });
 
   const showTransientStatus = useCallback(
@@ -98,6 +110,15 @@ export function useVoiceConversationControls({
       // ignore
     }
     resumeTimerRef.current = null;
+  }, []);
+
+  const clearAutoSubmitTimer = useCallback(() => {
+    try {
+      if (autoSubmitTimerRef.current) window.clearTimeout(autoSubmitTimerRef.current);
+    } catch (_) {
+      // ignore
+    }
+    autoSubmitTimerRef.current = null;
   }, []);
 
   const runResumeCheck = useCallback(
@@ -156,11 +177,27 @@ export function useVoiceConversationControls({
   }, [clearResumeTimer]);
 
   useEffect(() => {
+    return () => {
+      clearAutoSubmitTimer();
+    };
+  }, [clearAutoSubmitTimer]);
+
+  useEffect(() => {
     if (autoResumeAfterQaEnabled) return;
     resumeWantedRef.current = false;
     resumeLatestSeqRef.current = 0;
     clearResumeTimer();
   }, [autoResumeAfterQaEnabled, clearResumeTimer]);
+
+  useEffect(() => {
+    if (conversationEnabled) return;
+    clearAutoSubmitTimer();
+  }, [clearAutoSubmitTimer, conversationEnabled]);
+
+  useEffect(() => {
+    if (autoBargeInSubmitEnabled) return;
+    clearAutoSubmitTimer();
+  }, [autoBargeInSubmitEnabled, clearAutoSubmitTimer]);
 
   const wakeWordFeedback = useCallback(
     ({ message } = {}) => {
@@ -197,10 +234,11 @@ export function useVoiceConversationControls({
         }
       }
       if (!conversationEnabled) return;
-      if (!wakeWordEnabled) return;
       if (!autoBargeInSubmitEnabled) return;
       if (!finalText) return;
       if (typeof submitUserText !== 'function') return;
+      const scope = normalizeAutoSubmitScope(autoSubmitScope);
+      if (scope !== 'voice_only' && scope !== 'voice_and_text') return;
       if (useAgentMode && !selectedAgentId) {
         showTransientStatus('请先选择智能体后再提问', 1800);
         return;
@@ -223,43 +261,55 @@ export function useVoiceConversationControls({
         clearResumeTimer();
       }
 
-      showTransientStatus('识别到问题，正在回答...', 1200);
-      let result = null;
-      try {
-        result = await submitUserText({
-          text: finalText,
-          trigger: 'wake_word',
-          groupMode: false,
-          speakerName,
-          priority: 'normal',
-          useAgentMode,
-          selectedAgentId,
-          skipTourCommand: true,
-        });
-      } catch (_) {
-        if (resumeContextLikely && Number(resumeLatestSeqRef.current || 0) === seq) {
-          resumeWantedRef.current = false;
-          resumeLatestSeqRef.current = 0;
-          clearResumeTimer();
+      clearAutoSubmitTimer();
+      const waitMs = Math.max(
+        AUTO_SUBMIT_SILENCE_MIN_MS,
+        Math.min(AUTO_SUBMIT_SILENCE_MAX_MS, Number(autoSubmitSilenceMs) || 1200)
+      );
+      showTransientStatus('识别到问题，准备发送...', Math.max(800, waitMs));
+      autoSubmitTimerRef.current = window.setTimeout(async () => {
+        autoSubmitTimerRef.current = null;
+        showTransientStatus('识别到问题，正在回答...', 1200);
+        let result = null;
+        try {
+          result = await submitUserText({
+            text: finalText,
+            trigger: 'voice',
+            groupMode: false,
+            speakerName,
+            priority: 'normal',
+            useAgentMode,
+            selectedAgentId,
+            skipTourCommand: true,
+          });
+        } catch (_) {
+          if (resumeContextLikely && Number(resumeLatestSeqRef.current || 0) === seq) {
+            resumeWantedRef.current = false;
+            resumeLatestSeqRef.current = 0;
+            clearResumeTimer();
+          }
+          return;
         }
-        return;
-      }
 
-      const isLatest = Number(resumeLatestSeqRef.current || 0) === seq;
-      const asked = !!(result && result.ok && result.kind === 'asked');
-      if (!asked) {
-        if (resumeContextLikely && isLatest) {
-          resumeWantedRef.current = false;
-          resumeLatestSeqRef.current = 0;
-          clearResumeTimer();
+        const isLatest = Number(resumeLatestSeqRef.current || 0) === seq;
+        const asked = !!(result && result.ok && result.kind === 'asked');
+        if (!asked) {
+          if (resumeContextLikely && isLatest) {
+            resumeWantedRef.current = false;
+            resumeLatestSeqRef.current = 0;
+            clearResumeTimer();
+          }
+          return;
         }
-        return;
-      }
-      if (autoResumeAfterQaEnabled && resumeWantedRef.current && isLatest) scheduleTourResume(seq);
+        if (autoResumeAfterQaEnabled && resumeWantedRef.current && isLatest) scheduleTourResume(seq);
+      }, waitMs);
     },
     [
       autoBargeInSubmitEnabled,
+      autoSubmitScope,
+      autoSubmitSilenceMs,
       autoResumeAfterQaEnabled,
+      clearAutoSubmitTimer,
       clearResumeTimer,
       conversationEnabled,
       onAsrFinalText,
@@ -270,7 +320,6 @@ export function useVoiceConversationControls({
       speakerName,
       submitUserText,
       useAgentMode,
-      wakeWordEnabled,
     ]
   );
 
@@ -371,6 +420,7 @@ export function useVoiceConversationControls({
 
     if (conversationEnabled) {
       setConversationEnabled(false);
+      clearAutoSubmitTimer();
       stopRecording();
       showTransientStatus('已结束语音对话');
       return;
@@ -409,7 +459,7 @@ export function useVoiceConversationControls({
     } finally {
       setConversationBusy(false);
     }
-  }, [conversationBusy, conversationEnabled, isRecording, showTransientStatus, startRecording, stopRecording]);
+  }, [clearAutoSubmitTimer, conversationBusy, conversationEnabled, isRecording, showTransientStatus, startRecording, stopRecording]);
 
   const handleTextSubmit = useCallback(
     async (e) => {
@@ -473,3 +523,4 @@ export function useVoiceConversationControls({
     submitTextAuto,
   };
 }
+

@@ -41,6 +41,8 @@ function buildHookProps(overrides = {}) {
     selectedAgentId: '',
     continueTour: jest.fn().mockResolvedValue(undefined),
     autoBargeInSubmitEnabled: true,
+    autoSubmitSilenceMs: 500,
+    autoSubmitScope: 'voice_only',
     autoResumeAfterQaEnabled: true,
     shouldAutoResumeTour: () => true,
     canAutoResumeTour: () => true,
@@ -80,7 +82,7 @@ describe('useVoiceConversationControls', () => {
   });
 
   test('auto-submits ASR final text and resumes tour after answer', async () => {
-    const props = buildHookProps();
+    const props = buildHookProps({ wakeWordEnabled: false });
     const hook = renderHook((p) => useVoiceConversationControls(p), props);
 
     await act(async () => {
@@ -91,11 +93,17 @@ describe('useVoiceConversationControls', () => {
     await act(async () => {
       await mockState.latestArgs.onAsrFinalText('question one');
     });
+    expect(props.submitUserText).toHaveBeenCalledTimes(0);
+
+    act(() => {
+      jest.advanceTimersByTime(501);
+    });
+    await hook.flush();
 
     expect(props.submitUserText).toHaveBeenCalledWith(
       expect.objectContaining({
         text: 'question one',
-        trigger: 'wake_word',
+        trigger: 'voice',
         skipTourCommand: true,
       })
     );
@@ -121,6 +129,10 @@ describe('useVoiceConversationControls', () => {
       await mockState.latestArgs.onAsrFinalText('same q');
       await mockState.latestArgs.onAsrFinalText('same q');
     });
+    act(() => {
+      jest.advanceTimersByTime(501);
+    });
+    await hook.flush();
 
     expect(props.submitUserText).toHaveBeenCalledTimes(1);
     hook.unmount();
@@ -142,6 +154,10 @@ describe('useVoiceConversationControls', () => {
     await act(async () => {
       await window.__RAGINT_E2E__.emitAsrFinal('bridge q');
     });
+    act(() => {
+      jest.advanceTimersByTime(501);
+    });
+    await hook.flush();
     expect(props.submitUserText).toHaveBeenCalledWith(expect.objectContaining({ text: 'bridge q' }));
 
     hook.unmount();

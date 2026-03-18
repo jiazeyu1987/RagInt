@@ -2,6 +2,78 @@ import { tourStateOnInterrupt, tourStateOnReady, tourStateOnTourAction, tourStat
 import { RUN_REASON } from './RunReasons';
 import { classifyInterrupt } from './RunPolicies';
 
+const MAX_CONTEXT_TURNS = 200;
+const CONTEXT_MARKER_MEMORY = '[CONTEXT_MEMORY]';
+const CONTEXT_MARKER_SUMMARY = '[CONTEXT_SUMMARY]';
+const CONTEXT_MARKER_RECENT = '[RECENT_TURNS]';
+const CONTEXT_MARKER_CURRENT = '[CURRENT_QUESTION]';
+
+function clampInt(value, fallback, min, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(n)));
+}
+
+function safeTrim(value) {
+  return String(value == null ? '' : value).trim();
+}
+
+function shortenLine(value, maxLen = 120) {
+  const text = safeTrim(value).replace(/\s+/g, ' ');
+  if (!text) return '';
+  if (text.length <= maxLen) return text;
+  return `${text.slice(0, Math.max(0, maxLen - 3))}...`;
+}
+
+function estimateTokensByChars(text) {
+  const chars = safeTrim(text).length;
+  if (!chars) return 0;
+  return Math.ceil(chars / 4);
+}
+
+function normalizeContextStrategy(value) {
+  const strategy = safeTrim(value).toLowerCase();
+  return strategy === 'full' ? 'full' : 'smart_recent_current';
+}
+
+function sanitizeTurns(turns) {
+  const src = Array.isArray(turns) ? turns : [];
+  const out = [];
+  for (const item of src) {
+    if (!item || typeof item !== 'object') continue;
+    const q = safeTrim(item.question);
+    const a = safeTrim(item.answer);
+    if (!q || !a) continue;
+    out.push({
+      question: q,
+      answer: a,
+      ts: Number(item.ts) || Date.now(),
+    });
+  }
+  return out.slice(-MAX_CONTEXT_TURNS);
+}
+
+function formatFullTurns(turns) {
+  return turns
+    .map((item, idx) => `T${idx + 1} Q: ${item.question}\nT${idx + 1} A: ${item.answer}`)
+    .join('\n');
+}
+
+function formatSummary(turns) {
+  return turns
+    .map((item, idx) => `T${idx + 1}: Q=${shortenLine(item.question, 70)} | A=${shortenLine(item.answer, 90)}`)
+    .join('\n');
+}
+
+function formatRecent(turns, startIndex) {
+  return turns
+    .map((item, idx) => {
+      const turnNo = startIndex + idx + 1;
+      return `T${turnNo} Q: ${item.question}\nT${turnNo} A: ${item.answer}`;
+    })
+    .join('\n');
+}
+
 export class AskWorkflowManager {
   constructor(deps) {
     this.deps = deps || {};
@@ -26,6 +98,115 @@ export class AskWorkflowManager {
     } finally {
       currentAudioRef.current = null;
     }
+  }
+
+  _getConversationTurnsRef() {
+    const { voiceConversationTurnsRef } = this.deps || {};
+    if (!voiceConversationTurnsRef || typeof voiceConversationTurnsRef !== 'object') return null;
+    if (!Array.isArray(voiceConversationTurnsRef.current)) voiceConversationTurnsRef.current = [];
+    return voiceConversationTurnsRef;
+  }
+
+  _readConversationTurns() {
+    const ref = this._getConversationTurnsRef();
+    if (!ref) return [];
+    return sanitizeTurns(ref.current);
+  }
+
+  _appendConversationTurn(question, answer) {
+    const q = safeTrim(question);
+    const a = safeTrim(answer);
+    if (!q || !a) return;
+    const ref = this._getConversationTurnsRef();
+    if (!ref) return;
+    const next = sanitizeTurns([...(Array.isArray(ref.current) ? ref.current : []), { question: q, answer: a, ts: Date.now() }]);
+    ref.current = next.slice(-MAX_CONTEXT_TURNS);
+  }
+
+  _buildQuestionWithContext(question, options = {}) {
+    const baseQuestion = safeTrim(question);
+    if (!baseQuestion) return baseQuestion;
+    const opts = options && typeof options === 'object' ? options : {};
+    if (opts.tourAction) return baseQuestion;
+
+    const strategyRef = this.deps && this.deps.voiceConversationContextStrategyRef;
+    const recentRef = this.deps && this.deps.voiceConversationContextRecentTurnsRef;
+    const maxTokensRef = this.deps && this.deps.voiceConversationContextMaxTokensRef;
+    const strategy = normalizeContextStrategy(strategyRef && strategyRef.current);
+    const recentTurns = clampInt(recentRef && recentRef.current, 10, 1, 20);
+    const maxTokens = clampInt(maxTokensRef && maxTokensRef.current, 16000, 2000, 64000);
+
+    const allTurns = this._readConversationTurns();
+    if (!allTurns.length) return baseQuestion;
+
+    if (strategy === 'full') {
+      const contextBlock = formatFullTurns(allTurns);
+      if (!safeTrim(contextBlock)) return baseQuestion;
+      return [
+        baseQuestion,
+        '',
+        CONTEXT_MARKER_MEMORY,
+        contextBlock,
+        '',
+        CONTEXT_MARKER_CURRENT,
+        baseQuestion,
+      ].join('\n');
+    }
+
+    let recent = allTurns.slice(-recentTurns);
+    const older = allTurns.slice(0, Math.max(0, allTurns.length - recent.length));
+    let summary = formatSummary(older);
+    let recentText = formatRecent(recent, Math.max(0, allTurns.length - recent.length));
+
+    let draft = [
+      baseQuestion,
+      '',
+      CONTEXT_MARKER_SUMMARY,
+      summary || 'none',
+      '',
+      CONTEXT_MARKER_RECENT,
+      recentText || 'none',
+      '',
+      CONTEXT_MARKER_CURRENT,
+      baseQuestion,
+    ].join('\n');
+
+    while (estimateTokensByChars(draft) > maxTokens && summary) {
+      const lines = summary.split('\n');
+      lines.shift();
+      summary = lines.join('\n');
+      draft = [
+        baseQuestion,
+        '',
+        CONTEXT_MARKER_SUMMARY,
+        summary || 'none',
+        '',
+        CONTEXT_MARKER_RECENT,
+        recentText || 'none',
+        '',
+        CONTEXT_MARKER_CURRENT,
+        baseQuestion,
+      ].join('\n');
+    }
+
+    while (estimateTokensByChars(draft) > maxTokens && recent.length > 1) {
+      recent = recent.slice(1);
+      recentText = formatRecent(recent, Math.max(0, allTurns.length - recent.length));
+      draft = [
+        baseQuestion,
+        '',
+        CONTEXT_MARKER_SUMMARY,
+        summary || 'none',
+        '',
+        CONTEXT_MARKER_RECENT,
+        recentText || 'none',
+        '',
+        CONTEXT_MARKER_CURRENT,
+        baseQuestion,
+      ].join('\n');
+    }
+
+    return draft;
   }
 
   interrupt(reason) {
@@ -235,6 +416,8 @@ export class AskWorkflowManager {
     } = this.deps;
 
     const options = opts && typeof opts === 'object' ? opts : {};
+    const userQuestion = safeTrim(text);
+    const questionForRequest = this._buildQuestionWithContext(userQuestion, options);
     const interruptMgr = interruptManagerRef && interruptManagerRef.current ? interruptManagerRef.current : null;
 
     // Interrupt any previous in-flight /api/ask stream.
@@ -272,7 +455,7 @@ export class AskWorkflowManager {
     if (askAbortRef) askAbortRef.current = abortController;
 
     if (debugRef && !debugRef.current && typeof beginDebugRun === 'function') beginDebugRun('unknown');
-    if (typeof setLastQuestion === 'function') setLastQuestion(text);
+    if (typeof setLastQuestion === 'function') setLastQuestion(userQuestion || text);
     if (typeof setAnswer === 'function') setAnswer('');
     if (typeof setAnswerCacheMeta === 'function') setAnswerCacheMeta({ hit: false, type: '' });
     if (typeof setQaCacheDebug === 'function') setQaCacheDebug(null);
@@ -606,7 +789,7 @@ export class AskWorkflowManager {
           ...(recordingIdForThisAsk ? { 'X-Recording-ID': recordingIdForThisAsk } : {}),
         },
         body: JSON.stringify({
-          question: text,
+          question: questionForRequest || userQuestion || text,
           request_id: requestId,
           client_id: clientIdRef ? clientIdRef.current : '',
           recording_id: recordingIdForThisAsk || null,
@@ -927,6 +1110,15 @@ export class AskWorkflowManager {
         if (allow() && typeof setTourState === 'function') {
           const tail = String(fullAnswer || '').trim().slice(-80);
           setTourState((prev) => tourStateOnReady(prev, { fullAnswerTail: tail }));
+        }
+      } catch (_) {
+        // ignore
+      }
+
+      try {
+        if (allow() && !options.tourAction && !isAbortRun) {
+          const normalizedAnswer = safeTrim(fullAnswer);
+          if (userQuestion && normalizedAnswer) this._appendConversationTurn(userQuestion, normalizedAnswer);
         }
       } catch (_) {
         // ignore

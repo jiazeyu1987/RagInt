@@ -168,6 +168,16 @@ function AppShell() {
     setAsrAutoResumeAfterAnswerEnabled,
     asrAutoResumeAfterAnswerDelayMs,
     setAsrAutoResumeAfterAnswerDelayMs,
+    asrConversationAutoSubmitSilenceMs,
+    setAsrConversationAutoSubmitSilenceMs,
+    asrConversationAutoSubmitScope,
+    setAsrConversationAutoSubmitScope,
+    asrConversationContextStrategy,
+    setAsrConversationContextStrategy,
+    asrConversationContextRecentTurns,
+    setAsrConversationContextRecentTurns,
+    asrConversationContextMaxTokens,
+    setAsrConversationContextMaxTokens,
     globalPromptPrefix,
     setGlobalPromptPrefix,
     asrTextFilterEnabled,
@@ -341,6 +351,10 @@ function AppShell() {
   const queueRef = useRef([]);
   const lastSpeakerRef = useRef('');
   const globalPromptPrefixRef = useRef(globalPromptPrefix);
+  const voiceConversationTurnsRef = useRef([]);
+  const asrConversationContextStrategyRef = useRef(asrConversationContextStrategy);
+  const asrConversationContextRecentTurnsRef = useRef(asrConversationContextRecentTurns);
+  const asrConversationContextMaxTokensRef = useRef(asrConversationContextMaxTokens);
   const pendingAsrFinalTextRef = useRef('');
   const lastAsrInputChangeAtRef = useRef(0);
   const wakeWordHoldUntilRef = useRef(0);
@@ -632,6 +646,26 @@ function AppShell() {
     globalPromptPrefixRef,
   });
 
+  useEffect(() => {
+    globalPromptPrefixRef.current = String(globalPromptPrefix || '');
+  }, [globalPromptPrefix]);
+
+  useEffect(() => {
+    asrConversationContextStrategyRef.current = String(asrConversationContextStrategy || 'smart_recent_current')
+      .trim()
+      .toLowerCase();
+  }, [asrConversationContextStrategy]);
+
+  useEffect(() => {
+    const n = Number(asrConversationContextRecentTurns);
+    asrConversationContextRecentTurnsRef.current = Number.isFinite(n) ? n : 10;
+  }, [asrConversationContextRecentTurns]);
+
+  useEffect(() => {
+    const n = Number(asrConversationContextMaxTokens);
+    asrConversationContextMaxTokensRef.current = Number.isFinite(n) ? n : 16000;
+  }, [asrConversationContextMaxTokens]);
+
   const getTourStopName = (index) => {
     const stops = Array.isArray(tourStops) ? tourStops : [];
     if (!stops.length) return '';
@@ -823,6 +857,10 @@ function AppShell() {
     fetchHistory,
     runCoordinatorRef,
     globalPromptPrefixRef,
+    voiceConversationTurnsRef,
+    voiceConversationContextStrategyRef: asrConversationContextStrategyRef,
+    voiceConversationContextRecentTurnsRef: asrConversationContextRecentTurnsRef,
+    voiceConversationContextMaxTokensRef: asrConversationContextMaxTokensRef,
     consumePendingAsrClientEvents: () => {
       const items = Array.isArray(pendingAsrClientEventsRef.current) ? [...pendingAsrClientEventsRef.current].reverse() : [];
       pendingAsrClientEventsRef.current = [];
@@ -998,6 +1036,8 @@ function AppShell() {
     selectedAgentId,
     continueTour,
     autoBargeInSubmitEnabled: asrAutoSubmitOnWakeEnabled,
+    autoSubmitSilenceMs: asrConversationAutoSubmitSilenceMs,
+    autoSubmitScope: asrConversationAutoSubmitScope,
     autoResumeAfterQaEnabled: asrAutoResumeAfterAnswerEnabled,
     shouldAutoResumeTour,
     canAutoResumeTour,
@@ -1196,6 +1236,7 @@ function AppShell() {
       // ignore
     }
     if (queueRef) queueRef.current = [];
+    if (voiceConversationTurnsRef) voiceConversationTurnsRef.current = [];
     if (activeAskRequestIdRef) activeAskRequestIdRef.current = null;
     if (askAbortRef) askAbortRef.current = null;
     try {
@@ -1289,6 +1330,16 @@ function AppShell() {
     setAsrAutoResumeAfterAnswerEnabled,
     asrAutoResumeAfterAnswerDelayMs,
     setAsrAutoResumeAfterAnswerDelayMs,
+    asrConversationAutoSubmitSilenceMs,
+    setAsrConversationAutoSubmitSilenceMs,
+    asrConversationAutoSubmitScope,
+    setAsrConversationAutoSubmitScope,
+    asrConversationContextStrategy,
+    setAsrConversationContextStrategy,
+    asrConversationContextRecentTurns,
+    setAsrConversationContextRecentTurns,
+    asrConversationContextMaxTokens,
+    setAsrConversationContextMaxTokens,
     tourState,
     currentIntent,
     tourStops,

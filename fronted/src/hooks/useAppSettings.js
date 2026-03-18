@@ -11,6 +11,8 @@ const ALLOWED_TTS_FETCH_CONCURRENCY = new Set([2, 4, 6, 8, 10]);
 const ALLOWED_TTS_MODES = new Set(['sovtts1', 'sovtts2', 'modelscope', 'flash', 'sapi', 'edge']);
 const ALLOWED_ASR_PROVIDER_TYPES = new Set(['voicekit_ws', 'sauc_ws']);
 const ALLOWED_ASR_FINAL_TIMEOUT_STRATEGIES = new Set(['keep_partial', 'keep_input', 'clear_input']);
+const ALLOWED_ASR_AUTO_SUBMIT_SCOPES = new Set(['voice_only', 'voice_and_text']);
+const ALLOWED_ASR_CONTEXT_STRATEGIES = new Set(['smart_recent_current', 'full']);
 const FLASH_VOICE_OPTIONS = new Set(['longanyang', 'longanhuan']);
 const STOP_DURATION_TEMPLATE_KEYS = ['tpl_1m', 'tpl_2m', 'tpl_3m', 'tpl_4m', 'tpl_5m'];
 const STOP_DURATION_TEMPLATE_BASE_SECONDS = {
@@ -120,6 +122,32 @@ function normalizeQaAudioCacheConfidenceThreshold(value) {
 
 function normalizeAutoResumeDelayMs(value, fallback = 2200) {
   return normalizeInteger(value, fallback, { min: 300, max: 20000 });
+}
+
+function normalizeAsrConversationAutoSubmitSilenceMs(value, fallback = 1200) {
+  return normalizeInteger(value, fallback, { min: 500, max: 3000 });
+}
+
+function normalizeAsrConversationAutoSubmitScope(value) {
+  const scope = String(value || 'voice_only')
+    .trim()
+    .toLowerCase();
+  return ALLOWED_ASR_AUTO_SUBMIT_SCOPES.has(scope) ? scope : 'voice_only';
+}
+
+function normalizeAsrConversationContextStrategy(value) {
+  const strategy = String(value || 'smart_recent_current')
+    .trim()
+    .toLowerCase();
+  return ALLOWED_ASR_CONTEXT_STRATEGIES.has(strategy) ? strategy : 'smart_recent_current';
+}
+
+function normalizeAsrConversationContextRecentTurns(value, fallback = 10) {
+  return normalizeInteger(value, fallback, { min: 1, max: 20 });
+}
+
+function normalizeAsrConversationContextMaxTokens(value, fallback = 16000) {
+  return normalizeInteger(value, fallback, { min: 2000, max: 64000 });
 }
 
 function normalizeStringList(value) {
@@ -237,6 +265,11 @@ function buildDefaultSettings() {
     asrAutoSubmitOnWakeEnabled: true,
     asrAutoResumeAfterAnswerEnabled: true,
     asrAutoResumeAfterAnswerDelayMs: 2200,
+    asrConversationAutoSubmitSilenceMs: 1200,
+    asrConversationAutoSubmitScope: 'voice_only',
+    asrConversationContextStrategy: 'smart_recent_current',
+    asrConversationContextRecentTurns: 10,
+    asrConversationContextMaxTokens: 16000,
     globalPromptPrefix: '',
     asrTextFilterEnabled: false,
     asrTextFilterChatName: DEFAULT_ASR_FILTER_CHAT_NAME,
@@ -313,6 +346,20 @@ function normalizeAppSettings(value) {
     asrAutoResumeAfterAnswerDelayMs: normalizeAutoResumeDelayMs(
       raw.asrAutoResumeAfterAnswerDelayMs,
       defaults.asrAutoResumeAfterAnswerDelayMs
+    ),
+    asrConversationAutoSubmitSilenceMs: normalizeAsrConversationAutoSubmitSilenceMs(
+      raw.asrConversationAutoSubmitSilenceMs,
+      defaults.asrConversationAutoSubmitSilenceMs
+    ),
+    asrConversationAutoSubmitScope: normalizeAsrConversationAutoSubmitScope(raw.asrConversationAutoSubmitScope),
+    asrConversationContextStrategy: normalizeAsrConversationContextStrategy(raw.asrConversationContextStrategy),
+    asrConversationContextRecentTurns: normalizeAsrConversationContextRecentTurns(
+      raw.asrConversationContextRecentTurns,
+      defaults.asrConversationContextRecentTurns
+    ),
+    asrConversationContextMaxTokens: normalizeAsrConversationContextMaxTokens(
+      raw.asrConversationContextMaxTokens,
+      defaults.asrConversationContextMaxTokens
     ),
     globalPromptPrefix: String(raw.globalPromptPrefix == null ? defaults.globalPromptPrefix : raw.globalPromptPrefix),
     asrTextFilterEnabled: normalizeBoolean(raw.asrTextFilterEnabled, defaults.asrTextFilterEnabled),
@@ -399,6 +446,11 @@ function readLegacySettingsFromLocalStorage() {
   assign('asrAutoSubmitOnWakeEnabled', 'asrAutoSubmitOnWakeEnabled');
   assign('asrAutoResumeAfterAnswerEnabled', 'asrAutoResumeAfterAnswerEnabled');
   assign('asrAutoResumeAfterAnswerDelayMs', 'asrAutoResumeAfterAnswerDelayMs', Number);
+  assign('asrConversationAutoSubmitSilenceMs', 'asrConversationAutoSubmitSilenceMs', Number);
+  assign('asrConversationAutoSubmitScope', 'asrConversationAutoSubmitScope');
+  assign('asrConversationContextStrategy', 'asrConversationContextStrategy');
+  assign('asrConversationContextRecentTurns', 'asrConversationContextRecentTurns', Number);
+  assign('asrConversationContextMaxTokens', 'asrConversationContextMaxTokens', Number);
   assign('globalPromptPrefix', 'globalPromptPrefix');
   assign('asrTextFilterEnabled', 'asrTextFilterEnabled');
   assign('asrTextFilterChatName', 'asrTextFilterChatName');
@@ -561,6 +613,26 @@ export function useAppSettings(clientId) {
     (value) => updateSetting('asrAutoResumeAfterAnswerDelayMs', value),
     [updateSetting]
   );
+  const setAsrConversationAutoSubmitSilenceMs = useCallback(
+    (value) => updateSetting('asrConversationAutoSubmitSilenceMs', value),
+    [updateSetting]
+  );
+  const setAsrConversationAutoSubmitScope = useCallback(
+    (value) => updateSetting('asrConversationAutoSubmitScope', value),
+    [updateSetting]
+  );
+  const setAsrConversationContextStrategy = useCallback(
+    (value) => updateSetting('asrConversationContextStrategy', value),
+    [updateSetting]
+  );
+  const setAsrConversationContextRecentTurns = useCallback(
+    (value) => updateSetting('asrConversationContextRecentTurns', value),
+    [updateSetting]
+  );
+  const setAsrConversationContextMaxTokens = useCallback(
+    (value) => updateSetting('asrConversationContextMaxTokens', value),
+    [updateSetting]
+  );
   const setGlobalPromptPrefix = useCallback((value) => updateSetting('globalPromptPrefix', value), [updateSetting]);
   const setAsrTextFilterEnabled = useCallback((value) => updateSetting('asrTextFilterEnabled', value), [updateSetting]);
   const setAsrTextFilterChatName = useCallback((value) => updateSetting('asrTextFilterChatName', value), [updateSetting]);
@@ -623,6 +695,11 @@ export function useAppSettings(clientId) {
     setAsrAutoSubmitOnWakeEnabled,
     setAsrAutoResumeAfterAnswerEnabled,
     setAsrAutoResumeAfterAnswerDelayMs,
+    setAsrConversationAutoSubmitSilenceMs,
+    setAsrConversationAutoSubmitScope,
+    setAsrConversationContextStrategy,
+    setAsrConversationContextRecentTurns,
+    setAsrConversationContextMaxTokens,
     setGlobalPromptPrefix,
     setAsrTextFilterEnabled,
     setAsrTextFilterChatName,

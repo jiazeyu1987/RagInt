@@ -7,7 +7,11 @@ _QUESTION_CUT_MARKERS = (
     "\n\n讲解生成要求：",
     "\n\n【回答要求】",
     "\n\n【本展柜卖点 Top",
-    "\n\n【口播讲解稿约束】",
+    "\n\n【口播讲解约束】",
+    "\n\n[CONTEXT_MEMORY]",
+    "\n\n[CONTEXT_SUMMARY]",
+    "\n\n[RECENT_TURNS]",
+    "\n\n[CURRENT_QUESTION]",
 )
 
 
@@ -29,8 +33,6 @@ def extract_base_question(raw_question: str) -> str:
             cut_at = min(cut_at, i)
     text = text[:cut_at].strip()
 
-    # For front-end generated multi-line prompts, keep only the lead lines before
-    # section metadata like "【...】" / bullets.
     lines = [ln.strip() for ln in text.splitlines()]
     kept: list[str] = []
     for ln in lines:
@@ -78,20 +80,18 @@ def apply_explanation_script_requirements(
     if not enabled:
         return str(question_for_rag or "")
     base = str(question_for_rag or "")
-    marker = "【口播讲解稿约束】"
+    marker = "【口播讲解约束】"
 
     target_chars = _norm_answer_target_chars(answer_target_chars)
-    target_line = f"回答长度控制：{target_chars}个文字左右。\n" if target_chars > 0 else ""
+    target_line = f"回答长度控制：约{target_chars}个字。\n" if target_chars > 0 else ""
     profile = _norm_audience_profile(audience_profile)
     style_line = (
-        f"请用可直接播报的讲解稿风格回复，语言自然连贯，风格请参考人群画像：{profile}。\n"
+        f"请用可直接播报的讲解稿风格回复，语言自然连贯，风格参考受众画像：{profile}。\n"
         if profile
         else "请用可直接播报的讲解稿风格回复，语言自然连贯。\n"
     )
 
     if marker in base:
-        # Backward compatibility: if upstream already injected an old constraints block,
-        # rewrite style + length lines to current config.
         if not target_line and not profile:
             return base
         cleaned = base
@@ -108,7 +108,7 @@ def apply_explanation_script_requirements(
         return cleaned
 
     req = (
-        "\n\n【口播讲解稿约束】\n"
+        "\n\n【口播讲解约束】\n"
         f"{style_line}"
         "仅输出正文，不要标题、列表、分点、序号。\n"
         "不要使用特殊符号或格式标记（如【】[]{}<>#*`~^|）。\n"

@@ -36,6 +36,11 @@ describe('useAppSettings', () => {
         ttsFetchConcurrency: 9,
         wakeWordEnabled: 'true',
         asrAutoResumeAfterAnswerDelayMs: 100,
+        asrConversationAutoSubmitSilenceMs: 100,
+        asrConversationAutoSubmitScope: 'voice_and_text',
+        asrConversationContextStrategy: 'full',
+        asrConversationContextRecentTurns: 99,
+        asrConversationContextMaxTokens: 999999,
       },
     });
     saveAppSettings.mockResolvedValue({ ok: true });
@@ -48,6 +53,11 @@ describe('useAppSettings', () => {
     expect(hook.result().ttsFetchConcurrency).toBe(4);
     expect(hook.result().wakeWordEnabled).toBe(true);
     expect(hook.result().asrAutoResumeAfterAnswerDelayMs).toBe(300);
+    expect(hook.result().asrConversationAutoSubmitSilenceMs).toBe(500);
+    expect(hook.result().asrConversationAutoSubmitScope).toBe('voice_and_text');
+    expect(hook.result().asrConversationContextStrategy).toBe('full');
+    expect(hook.result().asrConversationContextRecentTurns).toBe(20);
+    expect(hook.result().asrConversationContextMaxTokens).toBe(64000);
 
     act(() => {
       hook.result().setWakeWord('new wake');
@@ -74,6 +84,8 @@ describe('useAppSettings', () => {
     window.localStorage.setItem('wakeWordEnabled', 'true');
     window.localStorage.setItem('wakeWord', 'legacy wake');
     window.localStorage.setItem('asrAutoResumeAfterAnswerDelayMs', '99999');
+    window.localStorage.setItem('asrConversationAutoSubmitSilenceMs', '2222');
+    window.localStorage.setItem('asrConversationContextRecentTurns', '7');
     window.localStorage.setItem('ttsMode', 'local');
 
     const hook = renderHook(() => useAppSettings('client-2'));
@@ -82,6 +94,8 @@ describe('useAppSettings', () => {
     expect(hook.result().wakeWordEnabled).toBe(true);
     expect(hook.result().wakeWord).toBe('legacy wake');
     expect(hook.result().asrAutoResumeAfterAnswerDelayMs).toBe(20000);
+    expect(hook.result().asrConversationAutoSubmitSilenceMs).toBe(2222);
+    expect(hook.result().asrConversationContextRecentTurns).toBe(7);
     expect(hook.result().ttsMode).toBe('sovtts1');
     hook.unmount();
   });

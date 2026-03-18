@@ -677,31 +677,100 @@ function AsrTab({ controlBarProps }) {
             </label>
           ) : null}
 
-          {c.wakeWordEnabled ? (
-            <label className="settings-toggle">
-              <input
-                type="checkbox"
-                checked={!!c.asrAutoSubmitOnWakeEnabled}
-                onChange={(e) => c.onChangeAsrAutoSubmitOnWakeEnabled && c.onChangeAsrAutoSubmitOnWakeEnabled(e.target.checked)}
-              />
-              <span>唤醒词后自动发送问题</span>
-            </label>
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={!!c.asrAutoSubmitOnWakeEnabled}
+              onChange={(e) => c.onChangeAsrAutoSubmitOnWakeEnabled && c.onChangeAsrAutoSubmitOnWakeEnabled(e.target.checked)}
+            />
+            <span>语音结束后自动发送问题</span>
+          </label>
+
+          <label className="settings-field">
+            <span>静音判定时长(ms)</span>
+            <input
+              type="number"
+              min="500"
+              max="3000"
+              step="100"
+              value={String(c.asrConversationAutoSubmitSilenceMs || 1200)}
+              onChange={(e) =>
+                c.onChangeAsrConversationAutoSubmitSilenceMs &&
+                c.onChangeAsrConversationAutoSubmitSilenceMs(Number(e.target.value) || 1200)
+              }
+              placeholder="1200"
+            />
+          </label>
+
+          <label className="settings-field">
+            <span>自动发送范围</span>
+            <select
+              value={String(c.asrConversationAutoSubmitScope || 'voice_only')}
+              onChange={(e) => c.onChangeAsrConversationAutoSubmitScope && c.onChangeAsrConversationAutoSubmitScope(e.target.value)}
+            >
+              <option value="voice_only">仅语音</option>
+              <option value="voice_and_text">语音和文本</option>
+            </select>
+          </label>
+
+          <label className="settings-field">
+            <span>上下文策略</span>
+            <select
+              value={String(c.asrConversationContextStrategy || 'smart_recent_current')}
+              onChange={(e) => c.onChangeAsrConversationContextStrategy && c.onChangeAsrConversationContextStrategy(e.target.value)}
+            >
+              <option value="smart_recent_current">摘要 + 最近轮次 + 当前问题</option>
+              <option value="full">全量历史</option>
+            </select>
+          </label>
+
+          {String(c.asrConversationContextStrategy || 'smart_recent_current') === 'smart_recent_current' ? (
+            <>
+              <label className="settings-field">
+                <span>最近轮次数</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="20"
+                  step="1"
+                  value={String(c.asrConversationContextRecentTurns || 10)}
+                  onChange={(e) =>
+                    c.onChangeAsrConversationContextRecentTurns &&
+                    c.onChangeAsrConversationContextRecentTurns(Number(e.target.value) || 10)
+                  }
+                  placeholder="10"
+                />
+              </label>
+              <label className="settings-field">
+                <span>上下文Token上限</span>
+                <input
+                  type="number"
+                  min="2000"
+                  max="64000"
+                  step="500"
+                  value={String(c.asrConversationContextMaxTokens || 16000)}
+                  onChange={(e) =>
+                    c.onChangeAsrConversationContextMaxTokens &&
+                    c.onChangeAsrConversationContextMaxTokens(Number(e.target.value) || 16000)
+                  }
+                  placeholder="16000"
+                />
+              </label>
+            </>
           ) : null}
 
-          {c.wakeWordEnabled ? (
-            <label className="settings-toggle">
-              <input
-                type="checkbox"
-                checked={!!c.asrAutoResumeAfterAnswerEnabled}
-                onChange={(e) =>
-                  c.onChangeAsrAutoResumeAfterAnswerEnabled && c.onChangeAsrAutoResumeAfterAnswerEnabled(e.target.checked)
-                }
-              />
-              <span>回答后自动恢复讲解</span>
-            </label>
-          ) : null}
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={!!c.asrAutoResumeAfterAnswerEnabled}
+              onChange={(e) =>
+                c.onChangeAsrAutoResumeAfterAnswerEnabled && c.onChangeAsrAutoResumeAfterAnswerEnabled(e.target.checked)
+              }
+            />
+            <span>回答后自动恢复讲解</span>
+          </label>
 
-          {c.wakeWordEnabled && c.asrAutoResumeAfterAnswerEnabled ? (
+          {c.asrAutoResumeAfterAnswerEnabled ? (
             <label className="settings-field">
               <span>恢复等待时间(ms)</span>
               <input
