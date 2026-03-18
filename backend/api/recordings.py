@@ -44,6 +44,37 @@ def _safe_file_part(value: str, *, fallback: str = "seg") -> str:
     return out or fallback
 
 
+def _detect_audio_mimetype(path: str) -> str:
+    head = b""
+    try:
+        with open(path, "rb") as f:
+            head = bytes(f.read(16) or b"")
+    except Exception:
+        head = b""
+
+    if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WAVE":
+        return "audio/wav"
+    if head.startswith(b"OggS"):
+        return "audio/ogg"
+    if head.startswith(b"fLaC"):
+        return "audio/flac"
+    if len(head) >= 3 and head[:3] == b"ID3":
+        return "audio/mpeg"
+    if len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0:
+        return "audio/mpeg"
+
+    ext = str(os.path.splitext(str(path))[1] or "").strip().lower()
+    if ext in (".wav", ".wave"):
+        return "audio/wav"
+    if ext == ".mp3":
+        return "audio/mpeg"
+    if ext == ".ogg":
+        return "audio/ogg"
+    if ext == ".flac":
+        return "audio/flac"
+    return "application/octet-stream"
+
+
 def create_blueprint(deps):
     bp = Blueprint("recordings_api", __name__)
 
@@ -111,8 +142,7 @@ def create_blueprint(deps):
 
     @bp.route("/api/recordings/<recording_id>/stop/<int:stop_index>", methods=["GET"])
     def get_recording_stop(recording_id: str, stop_index: int):
-        base_url = str(request.host_url).rstrip("/")
-        payload = deps.recording_store.get_stop_payload(recording_id=recording_id, stop_index=int(stop_index), base_url=base_url)
+        payload = deps.recording_store.get_stop_payload(recording_id=recording_id, stop_index=int(stop_index), base_url="")
         if not payload:
             return jsonify({"error": "not_found"}), 404
         return jsonify(payload)
@@ -126,7 +156,8 @@ def create_blueprint(deps):
             return jsonify({"error": "bad_path"}), 400
         if not path.exists() or not path.is_file():
             return jsonify({"error": "not_found"}), 404
-        return send_file(str(path), mimetype="audio/wav", conditional=True)
+        mimetype = _detect_audio_mimetype(str(path))
+        return send_file(str(path), mimetype=mimetype, conditional=True)
 
     @bp.route("/api/recordings/<recording_id>/segment/<int:segment_id>/regenerate", methods=["POST"])
     def regenerate_recording_segment(recording_id: str, segment_id: int):
@@ -228,10 +259,9 @@ def create_blueprint(deps):
             except Exception:
                 pass
 
-        base_url = str(request.host_url).rstrip("/")
         rel = str(updated.get("rel_path") or "").replace("\\", "/").lstrip("/")
         version_ms = int(updated.get("updated_at_ms") or updated.get("created_at_ms") or int(time.time() * 1000))
-        audio_url = f"{base_url}/api/recordings/{recording_id}/audio/{rel}"
+        audio_url = f"/api/recordings/{recording_id}/audio/{rel}"
         if version_ms > 0:
             audio_url = f"{audio_url}?v={version_ms}"
 

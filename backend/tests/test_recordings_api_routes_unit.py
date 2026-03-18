@@ -151,6 +151,9 @@ def test_recordings_audio_bad_path_not_found_and_success(work_dir: Path):
     wav = audio_dir / "ok.wav"
     wav_bytes = b"RIFF\x00\x00\x00\x00WAVE"
     wav.write_bytes(wav_bytes)
+    mp3 = audio_dir / "ok.mp3"
+    mp3_bytes = b"\xFF\xFB\x90\x64\x00\x00\x00\x00LAME"
+    mp3.write_bytes(mp3_bytes)
 
     c = app.test_client()
 
@@ -166,6 +169,11 @@ def test_recordings_audio_bad_path_not_found_and_success(work_dir: Path):
     assert ok.status_code == 200
     assert "audio/wav" in str(ok.headers.get("content-type", "")).lower()
     assert ok.data == wav_bytes
+
+    ok_mp3 = c.get("/api/recordings/rec_audio/audio/ok.mp3")
+    assert ok_mp3.status_code == 200
+    assert "audio/mpeg" in str(ok_mp3.headers.get("content-type", "")).lower()
+    assert ok_mp3.data == mp3_bytes
 
 
 def test_recordings_rename_and_delete_error_paths(work_dir: Path, monkeypatch):

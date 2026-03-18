@@ -131,6 +131,16 @@ class CacheRecallManager:
             top_k=max(1, min(int(top_k or 20), 50)),
         )
 
+    def search_candidates_any_bucket(self, *, question: str, top_k: int):
+        emb = self.embed_question(question)
+        return self._store.search_candidates(
+            query_embedding=emb,
+            tts_provider="",
+            tts_voice="",
+            tts_speed=None,
+            top_k=max(1, min(int(top_k or 20), 50)),
+        )
+
     def select_best(
         self,
         *,
@@ -358,6 +368,36 @@ class CacheWritebackManager:
         guess_sample_rate_fn,
         embed_fn,
     ) -> int | None:
+        def _looks_like_known_audio_container(data: bytes) -> bool:
+            b = bytes(data or b"")
+            if not b:
+                return False
+            if len(b) >= 12 and b[:4] == b"RIFF" and b[8:12] == b"WAVE":
+                return True
+            if len(b) >= 3 and b[:3] == b"ID3":
+                return True
+            if len(b) >= 2 and b[0] == 0xFF and (b[1] & 0xE0) == 0xE0:
+                return True
+            if b.startswith(b"OggS"):
+                return True
+            if b.startswith(b"fLaC"):
+                return True
+            return False
+
+        def _guess_audio_ext(data: bytes) -> str:
+            b = bytes(data or b"")
+            if len(b) >= 12 and b[:4] == b"RIFF" and b[8:12] == b"WAVE":
+                return ".wav"
+            if len(b) >= 3 and b[:3] == b"ID3":
+                return ".mp3"
+            if len(b) >= 2 and b[0] == 0xFF and (b[1] & 0xE0) == 0xE0:
+                return ".mp3"
+            if b.startswith(b"OggS"):
+                return ".ogg"
+            if b.startswith(b"fLaC"):
+                return ".flac"
+            return ".wav"
+
         data = {
             "tts_provider": str(provider or ""),
             "tts_voice": str(voice or ""),
@@ -382,28 +422,38 @@ class CacheWritebackManager:
             self._logger.warning(f"[QA_AUDIO] tts_no_audio request_id={request_id}")
             return None
 
-        wav_bytes_raw = b"".join(chunks)
+        audio_bytes_raw = b"".join(chunks)
         wav_bytes = ensure_wav_bytes(
-            wav_bytes_raw,
+            audio_bytes_raw,
             sample_rate=guess_sample_rate_fn(resolved_cfg=resolved_cfg, provider=str(provider_resolved or "")),
             channels=1,
             bits_per_sample=16,
         )
-        if not wav_bytes:
-            self._logger.warning(
-                f"[QA_AUDIO] tts_audio_unsupported_for_wav_cache request_id={request_id} bytes={len(wav_bytes_raw)}"
-            )
-            return None
 
-        if is_riff_wav(wav_bytes_raw) and wav_bytes != wav_bytes_raw:
+        audio_bytes_to_store = wav_bytes
+        audio_ext = ".wav"
+        if not audio_bytes_to_store:
+            if not _looks_like_known_audio_container(audio_bytes_raw):
+                self._logger.warning(
+                    f"[QA_AUDIO] tts_audio_unsupported_for_cache request_id={request_id} bytes={len(audio_bytes_raw)}"
+                )
+                return None
+            audio_bytes_to_store = audio_bytes_raw
+            audio_ext = _guess_audio_ext(audio_bytes_raw)
             self._logger.info(
-                f"[QA_AUDIO] wav_header_patched request_id={request_id} before={len(wav_bytes_raw)} after={len(wav_bytes)}"
+                f"[QA_AUDIO] non_wav_audio_cached request_id={request_id} ext={audio_ext} bytes={len(audio_bytes_raw)}"
+            )
+
+        if is_riff_wav(audio_bytes_raw) and wav_bytes and wav_bytes != audio_bytes_raw:
+            self._logger.info(
+                f"[QA_AUDIO] wav_header_patched request_id={request_id} before={len(audio_bytes_raw)} after={len(wav_bytes)}"
             )
 
         pair_id = self._store.upsert_pair_with_audio(
             question_text=question,
             answer_text=answer,
-            audio_bytes=wav_bytes,
+            audio_bytes=audio_bytes_to_store,
+            audio_ext=audio_ext,
             tts_provider=str(provider or ""),
             tts_voice=str(voice or ""),
             tts_speed=float(speed if speed is not None else 1.0),

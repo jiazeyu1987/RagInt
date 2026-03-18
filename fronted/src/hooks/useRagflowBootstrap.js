@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { fetchJson } from '../api/backendClient';
 
+const EXHIBIT_CHAT_NAME = '\u5c55\u5385\u804a\u5929';
+
 export function useRagflowBootstrap({
   setChatOptions,
   setSelectedChat,
@@ -40,10 +42,10 @@ export function useRagflowBootstrap({
         const nextSetters = settersRef.current || {};
         if (typeof nextSetters.setChatOptions === 'function') nextSetters.setChatOptions(names);
         const defName = (data && data.default ? String(data.default) : '').trim();
-        if (defName && names.includes(defName)) {
+        if (names.includes(EXHIBIT_CHAT_NAME)) {
+          if (typeof nextSetters.setSelectedChat === 'function') nextSetters.setSelectedChat(EXHIBIT_CHAT_NAME);
+        } else if (defName && names.includes(defName)) {
           if (typeof nextSetters.setSelectedChat === 'function') nextSetters.setSelectedChat(defName);
-        } else if (names.includes('展厅聊天')) {
-          if (typeof nextSetters.setSelectedChat === 'function') nextSetters.setSelectedChat('展厅聊天');
         } else if (names.length) {
           if (typeof nextSetters.setSelectedChat === 'function') nextSetters.setSelectedChat(names[0]);
         }
@@ -94,3 +96,5 @@ export function useRagflowBootstrap({
     };
   }, []);
 }
+
+

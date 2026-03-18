@@ -16,6 +16,24 @@ class _NoopTts:
             yield b""
 
 
+class _CountedClassifierSession:
+    def __init__(self, stats: dict[str, int]):
+        self._stats = stats
+
+    def ask(self, _prompt: str, stream: bool = False):  # noqa: ARG002
+        self._stats["ask"] = int(self._stats.get("ask") or 0) + 1
+        return '{"match": false, "candidate_id": null, "confidence": 0.0, "reason": "forced_no_match"}'
+
+
+class _CountedClassifierRagflow:
+    def __init__(self):
+        self.stats = {"get_session": 0, "ask": 0}
+
+    def get_session(self, _name):  # noqa: ANN001
+        self.stats["get_session"] = int(self.stats.get("get_session") or 0) + 1
+        return _CountedClassifierSession(self.stats)
+
+
 def test_find_match_hits_exact_question_without_classifier(tmp_path):
     root_dir = tmp_path / "qa_audio_root"
     db_path = tmp_path / "qa_audio.db"
@@ -111,7 +129,9 @@ def test_find_match_records_debug_reason_on_miss(tmp_path):
     )
     dbg = matcher.get_last_debug()
     assert hit is None
-    assert dbg.get("reason") in ("no_candidates_in_tts_bucket",)
+    assert str(dbg.get("reason") or "").startswith("classifier_no_match")
+    assert bool(dbg.get("no_candidates_in_any_bucket")) is True
+    assert str(dbg.get("candidate_source") or "") == "no_candidates_any_bucket"
 
 
 def test_entity_conflict_blocks_near_match_without_classifier(tmp_path):
@@ -151,3 +171,44 @@ def test_entity_conflict_blocks_near_match_without_classifier(tmp_path):
     c_terms = set(dbg.get("entity_candidate_terms") or [])
     assert "\u5bfc\u4e1d" in q_terms
     assert "\u5bfc\u7ba1" in c_terms
+
+
+def test_find_match_falls_back_to_all_buckets_and_runs_classifier(tmp_path):
+    root_dir = tmp_path / "qa_audio_root5"
+    db_path = tmp_path / "qa_audio5.db"
+    store = QaAudioCacheStore(root_dir=root_dir, db_path=db_path)
+    ragflow = _CountedClassifierRagflow()
+    matcher = QaAudioMatcher(store=store, ragflow_service=ragflow, tts_service=_NoopTts())
+
+    pcm = b"\x00\x00" * 8000
+    wav = wrap_pcm16le_as_wav(pcm, sample_rate=16000, channels=1, bits_per_sample=16)
+    pair_id = store.upsert_pair_with_audio(
+        question_text="alpha feature details",
+        answer_text="cached answer",
+        audio_bytes=wav,
+        tts_provider="flash",
+        tts_voice="",
+        tts_speed=1.25,
+        source_request_id="ask_fallback",
+        embedding=matcher._embed_question("alpha feature details"),
+    )
+    assert pair_id is not None
+
+    hit = matcher.find_match(
+        question="where is the parking lot",
+        tts_profile=TtsProfile(provider="flash", voice="", speed=1.0),
+        top_k=10,
+        threshold=0.85,
+        classifier_chat_name="问题比对",
+        base_url="",
+    )
+
+    dbg = matcher.get_last_debug()
+    assert hit is None
+    assert ragflow.stats.get("get_session") == 1
+    assert ragflow.stats.get("ask") == 1
+    assert str(dbg.get("candidate_source") or "") == "all_tts_buckets_fallback"
+    assert bool(dbg.get("candidate_fallback_used")) is True
+    assert int(dbg.get("candidate_count_in_tts_bucket") or 0) == 0
+    assert int(dbg.get("candidate_count_any_bucket") or 0) >= 1
+    assert str(dbg.get("reason") or "").startswith("classifier_no_match")

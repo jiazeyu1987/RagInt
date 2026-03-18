@@ -42,9 +42,9 @@ export function useTourRecordingOptions({ enabled, limit = 50, currentPlaybackSp
           const details = [
             provider ? `TTS:${provider}` : '',
             voice ? `Voice:${voice}` : '',
-            storedAudioSpeed != null ? `鍘熷:${storedAudioSpeed.toFixed(2)}x` : '',
-            recordPlaybackSpeed != null ? `褰曞埗鎾斁:${recordPlaybackSpeed.toFixed(2)}x` : '',
-            `褰撳墠鎾斁:${currentSpeed.toFixed(2)}x`,
+            storedAudioSpeed != null ? `原始:${storedAudioSpeed.toFixed(2)}x` : '',
+            recordPlaybackSpeed != null ? `录制播放:${recordPlaybackSpeed.toFixed(2)}x` : '',
+            `当前播放:${currentSpeed.toFixed(2)}x`,
           ].filter(Boolean);
           return {
             recording_id: rid,

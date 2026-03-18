@@ -60,7 +60,7 @@ def test_qa_audio_matcher_fixes_wav_header_before_store():
     assert isinstance(store.last_upsert["embedding"], np.ndarray)
 
 
-def test_qa_audio_matcher_skips_non_wav_container_for_wav_cache():
+def test_qa_audio_matcher_accepts_mp3_container_for_cache():
     store = _FakeStore()
     matcher = QaAudioMatcher(
         store=store,
@@ -76,5 +76,6 @@ def test_qa_audio_matcher_skips_non_wav_container_for_wav_cache():
         app_config={"tts": {"provider": "edge"}},
     )
 
-    assert store.last_upsert is None
-
+    assert store.last_upsert is not None
+    assert bytes(store.last_upsert["audio_bytes"]).startswith(b"ID3")
+    assert str(store.last_upsert.get("audio_ext") or "").lower() == ".mp3"

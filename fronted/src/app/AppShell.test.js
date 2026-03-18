@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 
@@ -14,6 +14,8 @@ const mockOrchestrationSpies = {
 
 let mockLatestInputSectionProps = null;
 let mockLatestStatusBarProps = null;
+let mockAppSettingsOverride = null;
+let mockTourRecordingOptionsOverride = null;
 
 function mockBuildAppSettings() {
   return {
@@ -217,7 +219,7 @@ jest.mock('../hooks/useBackendEvents', () => ({
 }));
 
 jest.mock('../hooks/useAppSettings', () => ({
-  useAppSettings: () => mockBuildAppSettings(),
+  useAppSettings: () => mockAppSettingsOverride || mockBuildAppSettings(),
 }));
 
 jest.mock('../hooks/useClientId', () => ({
@@ -357,7 +359,7 @@ jest.mock('../hooks/useUiActions', () => ({
 }));
 
 jest.mock('../hooks/useTourRecordingOptions', () => ({
-  useTourRecordingOptions: () => ({ options: [], refresh: jest.fn(), ready: true }),
+  useTourRecordingOptions: () => mockTourRecordingOptionsOverride || { options: [], refresh: jest.fn(), ready: true },
 }));
 
 jest.mock('../hooks/useTourRecordings', () => ({
@@ -420,6 +422,8 @@ describe('AppShell', () => {
     }
     mockLatestInputSectionProps = null;
     mockLatestStatusBarProps = null;
+    mockAppSettingsOverride = null;
+    mockTourRecordingOptionsOverride = null;
     mockOrchestrationSpies.startTour.mockClear();
     mockOrchestrationSpies.continueTour.mockClear();
     mockOrchestrationSpies.resetTour.mockClear();
@@ -434,20 +438,20 @@ describe('AppShell', () => {
     expect(view.container.querySelector('[data-testid="main-layout-mock"]')).toBeTruthy();
     expect(view.container.querySelector('[data-testid="right-tabs-mock"]')).toBeTruthy();
     expect(mockLatestInputSectionProps).toBeTruthy();
-    expect(mockLatestStatusBarProps && mockLatestStatusBarProps.ragflowConversationLabel).toBe('无');
+    expect(mockLatestStatusBarProps && mockLatestStatusBarProps.ragflowConversationLabel).toBe('\u5c55\u5385\u804a\u5929');
 
     await act(async () => {
       await mockLatestInputSectionProps.onTourToggle();
     });
     expect(mockOrchestrationSpies.startTour).toHaveBeenCalledTimes(1);
-    expect(mockLatestStatusBarProps && mockLatestStatusBarProps.ragflowConversationLabel).toBe('展厅聊天');
+    expect(mockLatestStatusBarProps && mockLatestStatusBarProps.ragflowConversationLabel).toBe('\u5c55\u5385\u804a\u5929');
 
     await act(async () => {
       await mockLatestInputSectionProps.onReset();
     });
     expect(mockOrchestrationSpies.onInterruptManual).toHaveBeenCalledTimes(1);
     expect(mockOrchestrationSpies.resetTour).toHaveBeenCalledTimes(1);
-    expect(mockLatestStatusBarProps && mockLatestStatusBarProps.ragflowConversationLabel).toBe('无');
+    expect(mockLatestStatusBarProps && mockLatestStatusBarProps.ragflowConversationLabel).toBe('\u5c55\u5385\u804a\u5929');
     view.unmount();
   });
 
@@ -494,4 +498,31 @@ describe('AppShell', () => {
     expect(view.container.querySelector('[data-testid="input-section-mock"]')).toBeFalsy();
     view.unmount();
   });
+
+  test('keeps playback mode enabled by auto-selecting first available archive when selected id is invalid', () => {
+    const setPlayTourRecordingEnabled = jest.fn();
+    const setSelectedTourRecordingId = jest.fn();
+    mockAppSettingsOverride = {
+      ...mockBuildAppSettings(),
+      playTourRecordingEnabled: true,
+      selectedTourRecordingId: 'rec-missing',
+      setPlayTourRecordingEnabled,
+      setSelectedTourRecordingId,
+    };
+    mockTourRecordingOptionsOverride = {
+      options: [
+        { recording_id: 'rec-1', label: 'archive-1' },
+        { recording_id: 'rec-2', label: 'archive-2' },
+      ],
+      refresh: jest.fn(),
+      ready: true,
+    };
+
+    const view = render(React.createElement(AppShell));
+    expect(setSelectedTourRecordingId).toHaveBeenCalledWith('rec-1');
+    expect(setPlayTourRecordingEnabled).not.toHaveBeenCalled();
+    view.unmount();
+  });
 });
+
+

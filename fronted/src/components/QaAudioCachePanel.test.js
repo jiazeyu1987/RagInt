@@ -35,6 +35,7 @@ async function flush() {
 describe('QaAudioCachePanel', () => {
   beforeEach(() => {
     fetchJson.mockReset();
+    window.localStorage.clear();
   });
 
   test('loads list and deletes item', async () => {
@@ -65,8 +66,23 @@ describe('QaAudioCachePanel', () => {
     });
     await flush();
 
-    expect(fetchJson).toHaveBeenCalledWith('/api/ops/qa_audio_pairs/1', { method: 'DELETE' });
+    expect(fetchJson).toHaveBeenCalledWith(
+      '/api/ops/qa_audio_pairs/1',
+      expect.objectContaining({ method: 'DELETE' })
+    );
     confirmSpy.mockRestore();
     view.unmount();
+  });
+
+  test('sends X-Ops-Token header when token exists in localStorage', async () => {
+    window.localStorage.setItem('ragint_ops_token', 'tok-1');
+    fetchJson.mockResolvedValue({ items: [] });
+
+    render(<QaAudioCachePanel />);
+    await flush();
+
+    const firstCall = fetchJson.mock.calls[0] || [];
+    expect(String(firstCall[0] || '')).toContain('/api/ops/qa_audio_pairs?');
+    expect(firstCall[1]).toEqual(expect.objectContaining({ headers: { 'X-Ops-Token': 'tok-1' } }));
   });
 });

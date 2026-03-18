@@ -101,6 +101,17 @@ describe('TtsQueueManager', () => {
     });
   });
 
+  test('resolve playback url normalizes same-host url to configured backend origin', () => {
+    const manager = new TtsQueueManager({
+      baseUrl: 'http://172.30.30.58:4981',
+      currentAudioRef: { current: null },
+      audioContextRef: { current: null },
+    });
+
+    const out = manager._resolvePlaybackUrl('http://172.30.30.58/api/recordings/rec_1/audio/a.wav?v=1');
+    expect(out).toBe('http://172.30.30.58:4981/api/recordings/rec_1/audio/a.wav?v=1');
+  });
+
   test('stop emits play_cancelled for active request and clears current audio', () => {
     const emitClientEvent = jest.fn();
     const stopAudio = jest.fn();

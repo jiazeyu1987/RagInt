@@ -495,7 +495,10 @@ class RecordingStore:
                 for r in tts_rows:
                     rel = str(r["rel_path"] or "").replace("\\", "/").lstrip("/")
                     v = int(r["updated_at_ms"] or r["created_at_ms"] or 0)
-                    url = f"{str(base_url).rstrip('/')}/api/recordings/{rid}/audio/{rel}"
+                    if str(base_url or "").strip():
+                        url = f"{str(base_url).rstrip('/')}/api/recordings/{rid}/audio/{rel}"
+                    else:
+                        url = f"/api/recordings/{rid}/audio/{rel}"
                     if v > 0:
                         url = f"{url}?v={v}"
                     seg_text = str(r["text"] or "")

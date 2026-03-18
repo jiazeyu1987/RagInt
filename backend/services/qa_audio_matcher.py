@@ -198,11 +198,20 @@ class QaAudioMatcher:
             debug["exact_pair_audio_missing"] = True
 
         candidates = self._recall_manager.search_candidates(question=ctx.question, tts_speed=ctx.speed, top_k=ctx.top_k)
-        debug["candidate_count"] = int(len(candidates))
+        debug["candidate_source"] = "tts_bucket"
+        debug["candidate_count_in_tts_bucket"] = int(len(candidates))
         if not candidates:
-            self._miss_manager.mark(debug, reason="no_candidates_in_tts_bucket")
-            self._set_last_debug(debug)
-            return None
+            fallback_candidates = self._recall_manager.search_candidates_any_bucket(question=ctx.question, top_k=ctx.top_k)
+            debug["candidate_count_any_bucket"] = int(len(fallback_candidates))
+            if fallback_candidates:
+                candidates = fallback_candidates
+                debug["candidate_source"] = "all_tts_buckets_fallback"
+                debug["candidate_fallback_used"] = True
+            else:
+                debug["candidate_source"] = "no_candidates_any_bucket"
+                debug["candidate_fallback_used"] = True
+                debug["no_candidates_in_any_bucket"] = True
+        debug["candidate_count"] = int(len(candidates))
 
         best_candidate, best_pair, best_recall, best_lexical, best_audio_url = self._recall_manager.select_best(
             question=ctx.question,

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { fetchJson } from '../api/backendClient';
+import { backendUrl, fetchJson } from '../api/backendClient';
 
 function normalizeStops(stops) {
   return Array.isArray(stops) ? stops.map((s) => String(s || '').trim()).filter(Boolean) : [];
@@ -8,6 +8,13 @@ function normalizeStops(stops) {
 function segmentKey(seg, fallbackKey) {
   if (Number.isFinite(Number(seg && seg.segment_id))) return `seg_${Number(seg.segment_id)}`;
   return String(fallbackKey || '');
+}
+
+function resolveAudioUrl(url) {
+  const s = String(url || '').trim();
+  if (!s) return '';
+  if (/^https?:\/\//i.test(s)) return s;
+  return backendUrl(s);
 }
 
 export function RecordingArchivePreviewPanel({ recordingId, ttsProvider, ttsVoice, ttsSpeed } = {}) {
@@ -46,15 +53,15 @@ export function RecordingArchivePreviewPanel({ recordingId, ttsProvider, ttsVoic
           const segments = Array.isArray(payload.segments)
             ? payload.segments.map((seg, segIdx) => {
                 const fallbackKey = `${idx}_${segIdx}`;
-                return {
-                  key: segmentKey(seg, fallbackKey),
-                  segment_id: Number.isFinite(Number(seg && seg.segment_id)) ? Number(seg.segment_id) : null,
-                  segment_index: Number.isFinite(Number(seg && seg.segment_index)) ? Number(seg.segment_index) : null,
-                  seq: Number.isFinite(Number(seg && seg.seq)) ? Number(seg.seq) : segIdx,
-                  text: String((seg && seg.text) || '').trim(),
-                  audio_url: String((seg && seg.audio_url) || '').trim(),
-                };
-              })
+                  return {
+                    key: segmentKey(seg, fallbackKey),
+                    segment_id: Number.isFinite(Number(seg && seg.segment_id)) ? Number(seg.segment_id) : null,
+                    segment_index: Number.isFinite(Number(seg && seg.segment_index)) ? Number(seg.segment_index) : null,
+                    seq: Number.isFinite(Number(seg && seg.seq)) ? Number(seg.seq) : segIdx,
+                    text: String((seg && seg.text) || '').trim(),
+                    audio_url: resolveAudioUrl((seg && seg.audio_url) || ''),
+                  };
+                })
             : [];
           return {
             stop_index: Number.isFinite(Number(payload.stop_index)) ? Number(payload.stop_index) : idx,
@@ -137,7 +144,7 @@ export function RecordingArchivePreviewPanel({ recordingId, ttsProvider, ttsVoic
                 return {
                   ...s,
                   text: String(outSeg.text || ''),
-                  audio_url: String(outSeg.audio_url || ''),
+                  audio_url: resolveAudioUrl(outSeg.audio_url || ''),
                 };
               }
               return s;
@@ -202,7 +209,7 @@ export function RecordingArchivePreviewPanel({ recordingId, ttsProvider, ttsVoic
                         style={{ width: '100%', resize: 'vertical', marginBottom: 6 }}
                         placeholder="可编辑本段文本，点击重新生成语音后生效"
                       />
-                      {seg.audio_url ? <audio controls preload="none" src={seg.audio_url} style={{ width: '100%' }} /> : null}
+                      {seg.audio_url ? <audio controls preload="metadata" src={seg.audio_url} style={{ width: '100%' }} /> : null}
                       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
                         <button type="button" className="settings-action-btn" disabled={regenBusy || !canRegen} onClick={() => regenerateSegment(seg)}>
                           {regenBusy ? '重新生成中...' : '重新生成语音'}

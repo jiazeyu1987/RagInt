@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { backendUrl, fetchJson } from '../api/backendClient';
 
+const OPS_TOKEN_KEY = 'ragint_ops_token';
+
 function normalizeSpeedInput(v) {
   const s = String(v || '').trim();
   if (!s) return '';
@@ -23,28 +25,59 @@ function resolveAudioUrl(url) {
   return backendUrl(s);
 }
 
+function readOpsToken() {
+  try {
+    return String(window.localStorage.getItem(OPS_TOKEN_KEY) || '').trim();
+  } catch (_) {
+    return '';
+  }
+}
+
+function writeOpsToken(value) {
+  try {
+    const token = String(value || '').trim();
+    if (!token) {
+      window.localStorage.removeItem(OPS_TOKEN_KEY);
+      return;
+    }
+    window.localStorage.setItem(OPS_TOKEN_KEY, token);
+  } catch (_) {
+    // ignore storage errors
+  }
+}
+
 export function QaAudioCachePanel() {
   const [items, setItems] = useState([]);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
   const [speed, setSpeed] = useState('');
+  const [opsToken, setOpsToken] = useState(() => readOpsToken());
 
   const query = useMemo(() => buildQuery({ limit: 100, speed }), [speed]);
+  const reqHeaders = useMemo(
+    () => (opsToken ? { 'X-Ops-Token': opsToken } : {}),
+    [opsToken]
+  );
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await fetchJson(`/api/ops/qa_audio_pairs?${query}`);
+      const data = await fetchJson(`/api/ops/qa_audio_pairs?${query}`, { headers: reqHeaders });
       const list = Array.isArray(data && data.items) ? data.items : [];
       setItems(list);
       setErr('');
     } catch (e) {
-      setErr(String((e && e.message) || e || 'load_failed'));
+      const msg = String((e && e.message) || e || 'load_failed');
+      if (msg.includes('HTTP 401')) {
+        setErr('HTTP 401：需要 Ops Token（X-Ops-Token）。请先填写下方 Ops Token 后重试。');
+      } else {
+        setErr(msg);
+      }
       setItems([]);
     } finally {
       setLoading(false);
     }
-  }, [query]);
+  }, [query, reqHeaders]);
 
   useEffect(() => {
     refresh();
@@ -56,10 +89,18 @@ export function QaAudioCachePanel() {
     const ok = window.confirm(`确认删除缓存条目 #${pairId} 吗？删除后不可恢复。`);
     if (!ok) return;
     try {
-      await fetchJson(`/api/ops/qa_audio_pairs/${encodeURIComponent(String(pairId))}`, { method: 'DELETE' });
+      await fetchJson(`/api/ops/qa_audio_pairs/${encodeURIComponent(String(pairId))}`, {
+        method: 'DELETE',
+        headers: reqHeaders,
+      });
       await refresh();
     } catch (e) {
-      setErr(String((e && e.message) || e || 'delete_failed'));
+      const msg = String((e && e.message) || e || 'delete_failed');
+      if (msg.includes('HTTP 401')) {
+        setErr('HTTP 401：需要管理员 Ops Token 才能删除。');
+      } else {
+        setErr(msg);
+      }
     }
   };
 
@@ -68,6 +109,18 @@ export function QaAudioCachePanel() {
       {err ? <div style={{ color: '#b00020', fontSize: 12, marginBottom: 8 }}>{err}</div> : null}
 
       <div className="settings-form" style={{ marginBottom: 10 }}>
+        <label className="settings-field">
+          <span>Ops Token</span>
+          <input
+            value={opsToken}
+            onChange={(e) => {
+              const v = String(e.target.value || '').trim();
+              setOpsToken(v);
+              writeOpsToken(v);
+            }}
+            placeholder="X-Ops-Token"
+          />
+        </label>
         <label className="settings-field">
           <span>speed</span>
           <input value={speed} onChange={(e) => setSpeed(e.target.value)} placeholder="1.0" />

@@ -116,6 +116,41 @@ export class TtsQueueManager {
     this._fetchControllers = new Set();
   }
 
+  _resolvePlaybackUrl(rawUrl) {
+    const raw = String(rawUrl || '').trim();
+    if (!raw) return '';
+    const fallbackOrigin = typeof window !== 'undefined' && window.location && window.location.origin ? window.location.origin : 'http://localhost';
+    let baseForResolve = String(this._baseUrl || '').trim();
+    if (!baseForResolve) baseForResolve = fallbackOrigin;
+
+    let base = null;
+    try {
+      base = new URL(baseForResolve, fallbackOrigin);
+    } catch (_) {
+      base = null;
+    }
+
+    const isAbsolute = /^https?:\/\//i.test(raw);
+    if (!isAbsolute) {
+      try {
+        if (base) return new URL(raw.startsWith('/') ? raw : `/${raw}`, base).toString();
+      } catch (_) {
+        // ignore
+      }
+      return raw;
+    }
+
+    try {
+      const parsed = new URL(raw);
+      if (base && parsed.hostname === base.hostname && parsed.origin !== base.origin) {
+        return new URL(`${parsed.pathname}${parsed.search}${parsed.hash}`, base).toString();
+      }
+      return parsed.toString();
+    } catch (_) {
+      return raw;
+    }
+  }
+
   _emit(name, fields, kind) {
     if (!this._emitClientEvent) return;
     const requestId = this._requestId;
@@ -433,7 +468,7 @@ export class TtsQueueManager {
   }
 
   enqueueAudioUrl(url, meta) {
-    const u = String(url || '').trim();
+    const u = this._resolvePlaybackUrl(url);
     if (!u) return null;
     const seq = this._seq++;
     const stopIndex = meta && Number.isFinite(meta.stopIndex) ? Number(meta.stopIndex) : null;

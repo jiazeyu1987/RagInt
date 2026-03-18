@@ -138,6 +138,17 @@ class QaAudioCacheStore:
             speed = 1.0
         return round(max(0.5, min(speed, 2.0)), 2)
 
+    @staticmethod
+    def _normalize_audio_ext(v: str | None) -> str:
+        ext = str(v or "").strip().lower()
+        if not ext:
+            return ".wav"
+        if not ext.startswith("."):
+            ext = f".{ext}"
+        if ext in (".wav", ".mp3", ".ogg", ".flac"):
+            return ext
+        return ".wav"
+
     def _now_ms(self) -> int:
         return int(time.time() * 1000)
 
@@ -337,16 +348,19 @@ class QaAudioCacheStore:
         query_embedding: np.ndarray,
         tts_provider: str,
         tts_voice: str,
-        tts_speed: float,
+        tts_speed: float | None,
         top_k: int = 20,
     ) -> list[QaAudioCandidate]:
         q = np.asarray(query_embedding, dtype=np.float32).reshape(-1)
         top_k = max(1, min(int(top_k or 20), 100))
-        speed = self._norm_tts_speed(tts_speed)
         provider = str(tts_provider or "").strip()
         voice = str(tts_voice or "").strip()
-        where = ["p.tts_speed = ?"]
-        params: list[object] = [float(speed)]
+        where = []
+        params: list[object] = []
+        if tts_speed is not None:
+            speed = self._norm_tts_speed(tts_speed)
+            where.append("p.tts_speed = ?")
+            params.append(float(speed))
         if provider:
             where.append("p.tts_provider = ?")
             params.append(provider)
@@ -372,8 +386,8 @@ class QaAudioCacheStore:
                         e.vector_blob
                     FROM qa_audio_pairs p
                     JOIN qa_audio_embeddings e ON e.pair_id = p.id
-                    WHERE """
-                        + " AND ".join(where)
+                    """
+                        + (("WHERE " + " AND ".join(where)) if where else "")
                     ),
                     tuple(params),
                 ).fetchall()
@@ -408,6 +422,7 @@ class QaAudioCacheStore:
         question_text: str,
         answer_text: str,
         audio_bytes: bytes,
+        audio_ext: str = ".wav",
         tts_provider: str,
         tts_voice: str,
         tts_speed: float,
@@ -426,6 +441,7 @@ class QaAudioCacheStore:
         provider = str(tts_provider or "").strip()
         voice = str(tts_voice or "").strip()
         speed = self._norm_tts_speed(tts_speed)
+        ext = self._normalize_audio_ext(audio_ext)
         now_ms = self._now_ms()
         dim, blob = self._to_blob(np.asarray(embedding, dtype=np.float32))
 
@@ -467,7 +483,7 @@ class QaAudioCacheStore:
                     )
                     pair_id = int(cur.lastrowid or 0)
 
-                audio_name = f"pair_{pair_id}_{now_ms}.wav"
+                audio_name = f"pair_{pair_id}_{now_ms}{ext}"
                 rel_path = f"audio/{audio_name}"
                 audio_path = self._safe_audio_path(rel_path)
                 audio_path.parent.mkdir(parents=True, exist_ok=True)

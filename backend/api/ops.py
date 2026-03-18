@@ -190,8 +190,8 @@ def create_blueprint(deps):
 
     @bp.route("/api/ops/qa_audio_pairs", methods=["GET"])
     def api_ops_qa_audio_pairs():
-        if not OpsAuth.require_view(request):
-            return unauthorized_json()
+        # Keep list/read endpoint open for in-app QA cache inspection.
+        # Write operations (delete) remain admin-protected below.
         host_base = str((request.host_url or "")).rstrip("/")
         limit = parse_int_or_default(request.args.get("limit"), default=100, min_value=1, max_value=500)
         offset = parse_int_or_default(request.args.get("offset"), default=0, min_value=0, max_value=10_000_000)

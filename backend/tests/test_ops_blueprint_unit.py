@@ -182,6 +182,8 @@ def test_ops_blueprint_token_guard():
     assert c.get("/api/ops/devices", headers={"X-Ops-Token": "v1"}).status_code == 200
     assert c.post("/api/ops/config", headers={"X-Ops-Token": "v1"}, json={"device_id": "d1", "config": {"a": 1}}).status_code == 401
     assert c.post("/api/ops/config", headers={"X-Ops-Token": "a1"}, json={"device_id": "d1", "config": {"a": 1}}).status_code == 200
+    assert c.get("/api/ops/qa_audio_pairs").status_code == 200
+    assert c.delete("/api/ops/qa_audio_pairs/1").status_code == 401
 
 
 def test_ops_blueprint_qa_audio_pairs_routes():

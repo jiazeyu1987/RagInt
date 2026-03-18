@@ -6,6 +6,10 @@ import { fetchJson } from '../api/backendClient';
 
 jest.mock('../api/backendClient', () => ({
   fetchJson: jest.fn(),
+  backendUrl: (path) => {
+    const p = String(path || '');
+    return p.startsWith('/') ? `http://backend.test${p}` : `http://backend.test/${p}`;
+  },
 }));
 
 function render(ui) {
