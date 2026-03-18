@@ -61,6 +61,25 @@ describe('TtsQueueManager', () => {
     expect(parsed.searchParams.get('segment_index')).toBe('0');
   });
 
+  test('builds same-origin TTS segment url when baseUrl is empty', () => {
+    const manager = new TtsQueueManager({
+      baseUrl: '',
+      getClientId: () => 'client-2',
+      currentAudioRef: { current: null },
+      audioContextRef: { current: null },
+    });
+    manager._requestId = 'req-2';
+
+    const url = manager._buildSegmentUrl('hello world', {});
+    const parsed = new URL(url);
+
+    expect(parsed.origin).toBe(window.location.origin);
+    expect(parsed.pathname).toBe('/api/text_to_speech_stream');
+    expect(parsed.searchParams.get('text')).toBe('hello world');
+    expect(parsed.searchParams.get('request_id')).toBe('req-2');
+    expect(parsed.searchParams.get('client_id')).toBe('client-2');
+  });
+
   test('setTtsSpeed updates current playback rate and profile', () => {
     const setPlaybackRate = jest.fn();
     const manager = new TtsQueueManager({

@@ -1,0 +1,48 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: ragint-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - ragint_net
+
+  backend:
+    image: ragint-backend:${IMAGE_TAG}
+    container_name: ragint-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      RAGINT_HOST: ${RAGINT_HOST:-0.0.0.0}
+      RAGINT_PORT: ${RAGINT_PORT:-8000}
+      RAGINT_DEBUG: ${RAGINT_DEBUG:-0}
+      RAGINT_STATE_BACKEND: ${RAGINT_STATE_BACKEND:-redis}
+      RAGINT_REDIS_URL: ${RAGINT_REDIS_URL:-redis://redis:6379/0}
+      RAGINT_CORS_ORIGINS: ${RAGINT_CORS_ORIGINS:-http://localhost:4981,http://127.0.0.1:4981}
+    volumes:
+      - ${BACKEND_DATA_DIR:-./data/backend}:/app/backend/data
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      - redis
+    networks:
+      - ragint_net
+
+  fronted:
+    image: ragint-fronted:${IMAGE_TAG}
+    container_name: ragint-fronted
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-4981}:80"
+    depends_on:
+      - backend
+    networks:
+      - ragint_net
+
+volumes:
+  redis_data:
+
+networks:
+  ragint_net:

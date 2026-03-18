@@ -9,3 +9,4 @@ webrtcvad>=2.0.10
 ragflow-sdk>=0.12.0
 redis>=5.0.0
 dashscope>=1.20.0
+edge-tts>=6.1.12

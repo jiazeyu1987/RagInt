@@ -60,6 +60,9 @@ def apply_env_overrides(cfg: dict) -> dict:
     # ASR/TTS provider keys.
     put("DASHSCOPE_API_KEY", ["asr", "dashscope", "api_key"])
     put("BAILIAN_API_KEY", ["tts", "bailian", "api_key"])
+    put("BAILIAN_TTS_VOICE", ["tts", "bailian", "voice"])
+    put("BAILIAN_TTS_MODEL", ["tts", "bailian", "model"])
+    put("BAILIAN_TTS_SPEECH_RATE", ["tts", "bailian", "speech_rate"], cast=float)
 
     # Navigation provider selection.
     put("NAV_PROVIDER", ["nav", "provider"])

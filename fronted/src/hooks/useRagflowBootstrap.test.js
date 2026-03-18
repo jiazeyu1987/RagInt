@@ -45,5 +45,42 @@ describe('useRagflowBootstrap', () => {
 
     hook.unmount();
   });
+
+  test('reports bootstrap errors via callback instead of silent fallback only', async () => {
+    fetchJson.mockImplementation((url) => {
+      if (url === '/api/ragflow/chats') return Promise.reject(new Error('HTTP 500 /api/ragflow/chats'));
+      if (url === '/api/ragflow/agents') return Promise.reject(new Error('HTTP 500 /api/ragflow/agents'));
+      return Promise.resolve({});
+    });
+
+    const setChatOptions = jest.fn();
+    const setSelectedChat = jest.fn();
+    const setAgentOptions = jest.fn();
+    const setSelectedAgentId = jest.fn();
+    const onBootstrapError = jest.fn();
+
+    const hook = renderHook(
+      (p) => {
+        useRagflowBootstrap(p);
+        return null;
+      },
+      {
+        setChatOptions,
+        setSelectedChat,
+        setAgentOptions,
+        setSelectedAgentId,
+        onBootstrapError,
+      }
+    );
+
+    await hook.flush();
+    await hook.flush();
+
+    expect(setChatOptions).toHaveBeenCalledWith([]);
+    expect(setAgentOptions).toHaveBeenCalledWith([]);
+    expect(onBootstrapError).toHaveBeenCalledWith(expect.objectContaining({ scope: 'chats' }));
+    expect(onBootstrapError).toHaveBeenCalledWith(expect.objectContaining({ scope: 'agents' }));
+    hook.unmount();
+  });
 });
 

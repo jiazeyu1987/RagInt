@@ -1,6 +1,9 @@
 services:
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
     ports:
       - "6379:6379"
 
@@ -14,7 +17,7 @@ services:
       RAGINT_DEBUG: "0"
       RAGINT_STATE_BACKEND: redis
       RAGINT_REDIS_URL: redis://redis:6379/0
-      RAGINT_CORS_ORIGINS: http://localhost:4981
+      RAGINT_CORS_ORIGINS: http://localhost:4981,http://127.0.0.1:4981
       RAGINT_CONFIG_PATH: /app/ragflow_demo/ragflow_config.json
       # Optional safety filter:
       # RAGINT_SENSITIVE_WORDS: 涉密词1,涉密词2
@@ -22,6 +25,9 @@ services:
       # RAGFLOW_API_KEY: ...
       # RAGFLOW_BASE_URL: ...
       # BAILIAN_API_KEY: ...
+    volumes:
+      - ./backend/data:/app/backend/data
+      - ./ragflow_demo/ragflow_config.json:/app/ragflow_demo/ragflow_config.json:ro
     ports:
       - "8000:8000"
     depends_on:
@@ -32,8 +38,12 @@ services:
       context: .
       dockerfile: fronted/Dockerfile
       args:
-        REACT_APP_BACKEND_URL: http://localhost:8000
+        REACT_APP_BACKEND_URL: ""
+    restart: unless-stopped
     ports:
       - "4981:80"
     depends_on:
       - backend
+
+volumes:
+  redis_data:

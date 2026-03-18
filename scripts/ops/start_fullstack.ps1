@@ -116,6 +116,116 @@ function Resolve-CommandPath {
   return $cmd.Source
 }
 
+function Ensure-RagflowConfigDbSeed {
+  param(
+    [string]$RepoRoot,
+    [string]$PythonCommand
+  )
+  $dbPath = Join-Path $RepoRoot "backend\\data\\ragflow_config.db"
+  $cfgPath = Join-Path $RepoRoot "ragflow_demo\\ragflow_config.json"
+  $defaultBaseUrl = "http://127.0.0.1:9380"
+  $seedScriptPath = Join-Path $env:TEMP "ragint_seed_ragflow_config.py"
+  $seedScript = @'
+import json
+import sqlite3
+import sys
+import time
+from pathlib import Path
+
+db_path = Path(sys.argv[1])
+cfg_path = Path(sys.argv[2])
+default_base_url = str(sys.argv[3] or "").strip()
+
+db_path.parent.mkdir(parents=True, exist_ok=True)
+conn = sqlite3.connect(str(db_path))
+conn.execute(
+    """
+    CREATE TABLE IF NOT EXISTS ragflow_config (
+        scope_id TEXT NOT NULL PRIMARY KEY,
+        config_json TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL
+    );
+    """
+)
+conn.commit()
+
+row = conn.execute("SELECT config_json FROM ragflow_config WHERE scope_id='global'").fetchone()
+cfg = {}
+if row and row[0]:
+    try:
+        cfg = json.loads(str(row[0] or "{}")) or {}
+    except Exception:
+        cfg = {}
+if not isinstance(cfg, dict):
+    cfg = {}
+
+file_cfg = {}
+if cfg_path.exists():
+    try:
+        file_cfg = json.loads(cfg_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        file_cfg = {}
+if not isinstance(file_cfg, dict):
+    file_cfg = {}
+
+api_db = str(cfg.get("api_key") or "").strip()
+base_db = str(cfg.get("base_url") or "").strip()
+api_file = str(file_cfg.get("api_key") or "").strip()
+base_file = str(file_cfg.get("base_url") or "").strip()
+
+changed = False
+if not api_db and api_file:
+    cfg["api_key"] = api_file
+    changed = True
+if not base_db:
+    if base_file:
+        cfg["base_url"] = base_file
+        changed = True
+    elif default_base_url:
+        cfg["base_url"] = default_base_url
+        changed = True
+
+now_ms = int(time.time() * 1000)
+payload = json.dumps(cfg, ensure_ascii=False, separators=(",", ":"))
+if row is None:
+    conn.execute(
+        "INSERT INTO ragflow_config(scope_id, config_json, created_at_ms, updated_at_ms) VALUES(?,?,?,?)",
+        ("global", payload, now_ms, now_ms),
+    )
+    conn.commit()
+    print("DB_SEED_CREATED", bool(str(cfg.get("api_key") or "").strip()), str(cfg.get("base_url") or ""))
+elif changed:
+    conn.execute(
+        "UPDATE ragflow_config SET config_json=?, updated_at_ms=? WHERE scope_id='global'",
+        (payload, now_ms),
+    )
+    conn.commit()
+    print("DB_SEED_UPDATED", bool(str(cfg.get("api_key") or "").strip()), str(cfg.get("base_url") or ""))
+else:
+    print("DB_SEED_UNCHANGED", bool(str(cfg.get("api_key") or "").strip()), str(cfg.get("base_url") or ""))
+
+conn.close()
+'@
+
+  try {
+    Set-Content -Path $seedScriptPath -Value $seedScript -Encoding UTF8
+    $cmd = "$PythonCommand `"$seedScriptPath`" `"$dbPath`" `"$cfgPath`" `"$defaultBaseUrl`""
+    $out = Invoke-Expression $cmd 2>&1
+    if ($out) {
+      foreach ($line in @($out)) {
+        Write-Step ("Ragflow DB seed: {0}" -f $line)
+      }
+    }
+  } catch {
+    Write-Step ("Ragflow DB seed failed: {0}" -f $_.Exception.Message)
+  } finally {
+    if (Test-Path $seedScriptPath) {
+      Remove-Item -Path $seedScriptPath -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
 $pythonCommand = Resolve-PythonCommand -PythonExe $PythonExe
 $npmCommand = Resolve-CommandPath -Name "npm"
 $backendHealthUrl = "http://localhost:$BackendPort/health"
@@ -129,6 +239,7 @@ if ($env:CONDA_DEFAULT_ENV) {
 }
 Write-Step "PythonCommand: $pythonCommand"
 Write-Step "NpmCommand: $npmCommand"
+Ensure-RagflowConfigDbSeed -RepoRoot $RepoRoot -PythonCommand $pythonCommand
 
 Stop-PortProcesses -Port $BackendPort -Name "backend"
 

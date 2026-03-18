@@ -3,6 +3,7 @@ import { fetchJson } from '../api/backendClient';
 
 export function useTourRecordingOptions({ enabled, limit = 50, currentPlaybackSpeed = 1.0 } = {}) {
   const [options, setOptions] = useState([]);
+  const [ready, setReady] = useState(false);
 
   const formatRecordingLabel = useCallback((createdAtMs) => {
     try {
@@ -25,37 +26,41 @@ export function useTourRecordingOptions({ enabled, limit = 50, currentPlaybackSp
   }, []);
 
   const refresh = useCallback(async () => {
-    const data = await fetchJson(`/api/recordings?limit=${Number(limit) || 50}`);
-    const items = Array.isArray(data && data.items) ? data.items : [];
-    setOptions(
-      items.map((r) => {
-        const rid = String((r && r.recording_id) || '');
-        const displayName = r && r.display_name ? String(r.display_name || '').trim() : '';
-        const meta = r && r.metadata && typeof r.metadata === 'object' ? r.metadata : {};
-        const provider = String(meta.tts_provider || '').trim();
-        const voice = String(meta.tts_voice || '').trim();
-        const storedAudioSpeed = Number.isFinite(Number(meta.stored_audio_speed)) ? Number(meta.stored_audio_speed) : null;
-        const recordPlaybackSpeed = Number.isFinite(Number(meta.record_playback_speed)) ? Number(meta.record_playback_speed) : null;
-        const currentSpeed = Number.isFinite(Number(currentPlaybackSpeed)) ? Number(currentPlaybackSpeed) : 1.0;
-        const details = [
-          provider ? `TTS:${provider}` : '',
-          voice ? `Voice:${voice}` : '',
-          storedAudioSpeed != null ? `原始:${storedAudioSpeed.toFixed(2)}x` : '',
-          recordPlaybackSpeed != null ? `录制播放:${recordPlaybackSpeed.toFixed(2)}x` : '',
-          `当前播放:${currentSpeed.toFixed(2)}x`,
-        ].filter(Boolean);
-        return {
-          recording_id: rid,
-          label: [displayName || formatRecordingLabel(r && r.created_at_ms), details.join(' | ')].filter(Boolean).join(' | '),
-          metadata: meta,
-          created_at_ms: Number(r && r.created_at_ms) || 0,
-          finished_at_ms: Number(r && r.finished_at_ms) || 0,
-          created_at_label: formatDateTime(r && r.created_at_ms),
-          finished_at_label: r && r.finished_at_ms ? formatDateTime(r && r.finished_at_ms) : '',
-          stop_count: Math.max(0, Number(r && r.stop_count) || 0),
-        };
-      })
-    );
+    try {
+      const data = await fetchJson(`/api/recordings?limit=${Number(limit) || 50}`);
+      const items = Array.isArray(data && data.items) ? data.items : [];
+      setOptions(
+        items.map((r) => {
+          const rid = String((r && r.recording_id) || '');
+          const displayName = r && r.display_name ? String(r.display_name || '').trim() : '';
+          const meta = r && r.metadata && typeof r.metadata === 'object' ? r.metadata : {};
+          const provider = String(meta.tts_provider || '').trim();
+          const voice = String(meta.tts_voice || '').trim();
+          const storedAudioSpeed = Number.isFinite(Number(meta.stored_audio_speed)) ? Number(meta.stored_audio_speed) : null;
+          const recordPlaybackSpeed = Number.isFinite(Number(meta.record_playback_speed)) ? Number(meta.record_playback_speed) : null;
+          const currentSpeed = Number.isFinite(Number(currentPlaybackSpeed)) ? Number(currentPlaybackSpeed) : 1.0;
+          const details = [
+            provider ? `TTS:${provider}` : '',
+            voice ? `Voice:${voice}` : '',
+            storedAudioSpeed != null ? `鍘熷:${storedAudioSpeed.toFixed(2)}x` : '',
+            recordPlaybackSpeed != null ? `褰曞埗鎾斁:${recordPlaybackSpeed.toFixed(2)}x` : '',
+            `褰撳墠鎾斁:${currentSpeed.toFixed(2)}x`,
+          ].filter(Boolean);
+          return {
+            recording_id: rid,
+            label: [displayName || formatRecordingLabel(r && r.created_at_ms), details.join(' | ')].filter(Boolean).join(' | '),
+            metadata: meta,
+            created_at_ms: Number(r && r.created_at_ms) || 0,
+            finished_at_ms: Number(r && r.finished_at_ms) || 0,
+            created_at_label: formatDateTime(r && r.created_at_ms),
+            finished_at_label: r && r.finished_at_ms ? formatDateTime(r && r.finished_at_ms) : '',
+            stop_count: Math.max(0, Number(r && r.stop_count) || 0),
+          };
+        })
+      );
+    } finally {
+      setReady(true);
+    }
   }, [currentPlaybackSpeed, formatDateTime, formatRecordingLabel, limit]);
 
   useEffect(() => {
@@ -70,5 +75,5 @@ export function useTourRecordingOptions({ enabled, limit = 50, currentPlaybackSp
     };
   }, [enabled, refresh]);
 
-  return { options, refresh };
+  return { options, refresh, ready };
 }

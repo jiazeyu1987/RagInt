@@ -199,3 +199,5 @@ resource/
 /tmp_pyroot/
 /tmp_pyroot2/
 /tmp_test_rw/
+/scripts/deploy/logs/
+/scripts/deploy/publish.profile.local.json

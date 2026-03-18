@@ -16,7 +16,8 @@ def test_resolve_tts_request_provider_precedence_data_over_header_over_config():
 
     provider2, cfg2 = resolve_tts_request(base, data={}, headers=_Headers({"X-TTS-Provider": "modelscope"}))
     assert provider2 == "modelscope"
-    assert cfg2 is base
+    assert cfg2 is not base
+    assert cfg2["tts"]["bailian"]["voice"] == "longxiaochun"
 
     provider3, cfg3 = resolve_tts_request(base, data={}, headers=_Headers({}))
     assert provider3 == "edge"
@@ -31,6 +32,15 @@ def test_resolve_tts_request_flash_preset_sets_model_and_voice():
     assert cfg["tts"]["bailian"]["model"] == "cosyvoice-v3-flash"
     assert cfg["tts"]["bailian"]["voice"] == "longanyang"
     assert base.get("tts", {}).get("bailian", {}).get("model") is None
+
+
+def test_resolve_tts_request_modelscope_defaults_voice_when_missing():
+    base = {"tts": {"bailian": {"api_key": "k"}}}
+    provider, cfg = resolve_tts_request(base, data={"tts_provider": "modelscope"}, headers=_Headers({}))
+    assert provider == "modelscope"
+    assert cfg is not base
+    assert cfg["tts"]["bailian"]["voice"] == "longxiaochun"
+    assert base["tts"]["bailian"].get("voice") is None
 
 
 def test_resolve_tts_request_bailian_voice_model_override_and_speed():
@@ -55,4 +65,3 @@ def test_resolve_tts_request_edge_speed_updates_rate_string_without_deepcopy():
     assert cfg is not base
     assert cfg["tts"]["edge"]["rate"] == "-40%"  # +10% + (-50%) => -40%
     assert cfg["tts"]["other"] is base["tts"]["other"]  # untouched subtree is reused
-

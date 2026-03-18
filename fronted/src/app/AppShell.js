@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import '../App.css';
 import {
   decodeAndConvertToWav16kMono as decodeAndConvertToWav16kMonoExt,
@@ -89,6 +89,7 @@ function AppShell() {
   const [qaCacheDebug, setQaCacheDebug] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [queueStatus, setQueueStatus] = useState('');
+  const [ragflowConnection, setRagflowConnection] = useState({ connected: null, message: '' });
   const [asrPostProcessStage, setAsrPostProcessStage] = useState('idle');
   const [asrPostProcessEvents, setAsrPostProcessEvents] = useState([]);
   const [tourButtonState, setTourButtonState] = useState({ started: false, mode: TOUR_BTN_MODE.START });
@@ -228,7 +229,11 @@ function AppShell() {
   const [agentOptions, setAgentOptions] = useState([]);
   const [selectedAgentId, setSelectedAgentId] = useState('');
   const [useAgentMode, setUseAgentMode] = useState(false);
-  const { options: tourRecordingOptions, refresh: refreshTourRecordingOptions } = useTourRecordingOptions({
+  const {
+    options: tourRecordingOptions,
+    refresh: refreshTourRecordingOptions,
+    ready: tourRecordingOptionsReady,
+  } = useTourRecordingOptions({
     enabled: true,
     limit: 50,
     currentPlaybackSpeed: ttsSpeed,
@@ -260,6 +265,27 @@ function AppShell() {
     }
   );
   const [currentIntent, setCurrentIntent] = useState(null);
+  const markRagflowAvailable = useCallback((info) => {
+    const payload = info && typeof info === 'object' ? info : {};
+    const source = String((payload && (payload.source || payload.scope)) || '').trim();
+    // Bootstrap阶段仅以 chats 成功作为“已连接”判断依据，避免 agents 成功掩盖 chats 失败。
+    if (source.startsWith('bootstrap_') && source !== 'bootstrap_chats') return;
+    setRagflowConnection((prev) => (prev && prev.connected === true ? prev : { connected: true, message: '' }));
+  }, []);
+  const markRagflowUnavailable = useCallback(
+    (info) => {
+      const payload = info && typeof info === 'object' ? info : { error: info };
+      const source = String((payload && (payload.source || payload.scope)) || '').trim();
+      const rawErr = payload && Object.prototype.hasOwnProperty.call(payload, 'error') ? payload.error : info;
+      const detail = String((rawErr && rawErr.message) || rawErr || '').trim();
+      const message = source.startsWith('bootstrap')
+        ? 'RAGFlow \u672a\u8fde\u63a5\uff0c\u521d\u59cb\u5316\u914d\u7f6e\u52a0\u8f7d\u5931\u8d25\u3002'
+        : 'RAGFlow \u672a\u8fde\u63a5\uff0c\u5df2\u505c\u6b62\u5f53\u524d\u64cd\u4f5c\u3002';
+      setRagflowConnection({ connected: false, message: detail ? `${message} ${detail}` : message });
+      setQueueStatus(message);
+    },
+    [setQueueStatus]
+  );
 
   useTourBootstrap({
     setTourMeta,
@@ -273,6 +299,19 @@ function AppShell() {
     setSelectedChat,
     setAgentOptions,
     setSelectedAgentId,
+    onBootstrapSuccess: (info) =>
+      markRagflowAvailable({
+        ...(info || {}),
+        source: `bootstrap_${String((info && info.scope) || 'unknown')}`,
+      }),
+    onBootstrapError: (info) => {
+      const scope = String((info && info.scope) || '').trim();
+      if (scope !== 'chats') return;
+      markRagflowUnavailable({
+        ...(info || {}),
+        source: `bootstrap_${scope || 'unknown'}`,
+      });
+    },
   });
 
   useBreakpointSync({
@@ -821,6 +860,7 @@ function AppShell() {
     setQaCacheDebug,
     setIsLoading,
     setQueueStatus,
+    onRagflowUnavailable: markRagflowUnavailable,
     setTourState,
     setCurrentIntent,
     receivedSegmentsRef,
@@ -902,6 +942,8 @@ function AppShell() {
       tourRecordingEnabledRef,
       playTourRecordingEnabledRef,
       selectedTourRecordingIdRef,
+      setPlayTourRecordingEnabled,
+      setSelectedTourRecordingId,
       activeTourRecordingIdRef,
       tourTemplateIdRef,
       tourStopsOverrideRef,
@@ -918,6 +960,7 @@ function AppShell() {
       askQuestion,
       getTourPipeline,
       interruptCurrentRun,
+      onRagflowUnavailable: markRagflowUnavailable,
       useAgentModeRef,
       selectedChatRef,
       setTourState,
@@ -1152,6 +1195,26 @@ function AppShell() {
     setTourRecordingEnabled(false);
   }, [playTourRecordingEnabled, setTourRecordingEnabled, tourRecordingEnabled]);
 
+  useEffect(() => {
+    if (!tourRecordingOptionsReady || !playTourRecordingEnabled) return;
+    const rid = String(selectedTourRecordingId || '').trim();
+    const exists =
+      !!rid &&
+      (Array.isArray(tourRecordingOptions)
+        ? tourRecordingOptions.some((item) => String((item && item.recording_id) || '').trim() === rid)
+        : false);
+    if (exists) return;
+    setPlayTourRecordingEnabled(false);
+    setSelectedTourRecordingId('');
+  }, [
+    playTourRecordingEnabled,
+    selectedTourRecordingId,
+    setPlayTourRecordingEnabled,
+    setSelectedTourRecordingId,
+    tourRecordingOptions,
+    tourRecordingOptionsReady,
+  ]);
+
   const wasTourActiveRef = useRef(false);
   useEffect(() => {
     const active =
@@ -1195,7 +1258,20 @@ function AppShell() {
     }
   }, [uiViewMode]);
 
-  const submitDisabled = isRecording || !String(inputText || '').trim() || (useAgentMode && !selectedAgentId);
+  const ragflowUnavailable = ragflowConnection && ragflowConnection.connected === false;
+  const ragflowStatusLabel =
+    ragflowConnection && ragflowConnection.connected === false
+      ? '\u672a\u8fde\u63a5'
+      : ragflowConnection && ragflowConnection.connected === true
+        ? '\u5df2\u8fde\u63a5'
+        : '\u68c0\u6d4b\u4e2d';
+  const ragflowStatusTone =
+    ragflowConnection && ragflowConnection.connected === false
+      ? 'status-error'
+      : ragflowConnection && ragflowConnection.connected === true
+        ? 'status-ok'
+        : '';
+  const submitDisabled = isRecording || !String(inputText || '').trim() || (useAgentMode && !selectedAgentId) || ragflowUnavailable;
   const interruptDisabled =
     !isLoading && !((ttsManagerRef.current ? ttsManagerRef.current.isBusy() : false) || currentAudioRef.current);
   const tourToggleLabel =
@@ -1205,7 +1281,7 @@ function AppShell() {
         ? '继续讲解'
         : '开始讲解';
   const tourToggleDanger = tourButtonState.mode === TOUR_BTN_MODE.INTERRUPT;
-  const tourToggleDisabled = tourButtonState.mode === TOUR_BTN_MODE.INTERRUPT ? interruptDisabled : false;
+  const tourToggleDisabled = tourButtonState.mode === TOUR_BTN_MODE.INTERRUPT ? interruptDisabled : ragflowUnavailable;
   const sendMode = playTourRecordingEnabled ? 'playback' : tourRecordingEnabled ? 'recording' : 'normal';
   const sendBtnClassName = `submit-btn submit-btn-${sendMode}`;
 
@@ -1217,11 +1293,23 @@ function AppShell() {
     }
     if (tourButtonState.mode === TOUR_BTN_MODE.CONTINUE) {
       setTourButtonState((s) => reduceTourButtonState(s, { type: 'CONTINUE_CLICK' }));
-      await continueTour();
+      try {
+        await continueTour();
+        markRagflowAvailable();
+      } catch (error) {
+        markRagflowUnavailable({ source: 'tour_continue', error });
+        setTourButtonState((s) => ({ ...(s || {}), mode: TOUR_BTN_MODE.CONTINUE }));
+      }
       return;
     }
     setTourButtonState((s) => reduceTourButtonState(s, { type: 'START_CLICK' }));
-    await startTour();
+    try {
+      await startTour();
+      markRagflowAvailable();
+    } catch (error) {
+      markRagflowUnavailable({ source: 'tour_start', error });
+      setTourButtonState({ started: false, mode: TOUR_BTN_MODE.START });
+    }
   };
 
   const onResetAll = async () => {
@@ -1268,7 +1356,13 @@ function AppShell() {
       return;
     }
     setTourButtonState((s) => reduceTourButtonState(s, { type: 'START_CLICK' }));
-    await startTour();
+    try {
+      await startTour();
+      markRagflowAvailable();
+    } catch (error) {
+      markRagflowUnavailable({ source: 'simple_tour_start', error });
+      setTourButtonState({ started: false, mode: TOUR_BTN_MODE.START });
+    }
   };
 
   const controlBarProps = useControlBarProps({
@@ -1619,6 +1713,8 @@ function AppShell() {
           audienceProfileValue={audienceProfileLabel}
           audienceProfileOptions={audienceProfileOptions}
           onChangeAudienceProfile={(value) => setAudienceProfile(String(value || '').trim())}
+          ragflowStatusLabel={ragflowStatusLabel}
+          ragflowStatusTone={ragflowStatusTone}
           wakeWordLabel={wakeWordLabel}
           currentStopLabel={currentStopLabel}
         />
@@ -1650,6 +1746,8 @@ function AppShell() {
               onClearExhibitChatSessions={clearExhibitChatSessions}
               activeTab={settingsActiveTab}
               onChangeActiveTab={setSettingsActiveTab}
+              ragflowStatusLabel={ragflowStatusLabel}
+              ragflowStatusDetail={String((ragflowConnection && ragflowConnection.message) || '').trim()}
             />
           </div>
 

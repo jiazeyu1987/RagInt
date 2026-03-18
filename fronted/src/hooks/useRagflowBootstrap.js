@@ -6,14 +6,16 @@ export function useRagflowBootstrap({
   setSelectedChat,
   setAgentOptions,
   setSelectedAgentId,
+  onBootstrapSuccess,
+  onBootstrapError,
 } = {}) {
-  const chatStartedRef = useRef(false);
-  const agentStartedRef = useRef(false);
   const settersRef = useRef({
     setChatOptions,
     setSelectedChat,
     setAgentOptions,
     setSelectedAgentId,
+    onBootstrapSuccess,
+    onBootstrapError,
   });
 
   useEffect(() => {
@@ -22,13 +24,12 @@ export function useRagflowBootstrap({
       setSelectedChat,
       setAgentOptions,
       setSelectedAgentId,
+      onBootstrapSuccess,
+      onBootstrapError,
     };
-  }, [setAgentOptions, setChatOptions, setSelectedAgentId, setSelectedChat]);
+  }, [onBootstrapError, onBootstrapSuccess, setAgentOptions, setChatOptions, setSelectedAgentId, setSelectedChat]);
 
   useEffect(() => {
-    if (chatStartedRef.current) return () => {};
-    chatStartedRef.current = true;
-
     let cancelled = false;
     (async () => {
       try {
@@ -46,9 +47,15 @@ export function useRagflowBootstrap({
         } else if (names.length) {
           if (typeof nextSetters.setSelectedChat === 'function') nextSetters.setSelectedChat(names[0]);
         }
-      } catch (_) {
+        if (typeof nextSetters.onBootstrapSuccess === 'function') {
+          nextSetters.onBootstrapSuccess({ scope: 'chats', data });
+        }
+      } catch (error) {
         const nextSetters = settersRef.current || {};
         if (!cancelled && typeof nextSetters.setChatOptions === 'function') nextSetters.setChatOptions([]);
+        if (!cancelled && typeof nextSetters.onBootstrapError === 'function') {
+          nextSetters.onBootstrapError({ scope: 'chats', error });
+        }
       }
     })();
     return () => {
@@ -57,9 +64,6 @@ export function useRagflowBootstrap({
   }, []);
 
   useEffect(() => {
-    if (agentStartedRef.current) return () => {};
-    agentStartedRef.current = true;
-
     let cancelled = false;
     (async () => {
       try {
@@ -74,9 +78,15 @@ export function useRagflowBootstrap({
         } else if (typeof nextSetters.setSelectedAgentId === 'function') {
           nextSetters.setSelectedAgentId('');
         }
-      } catch (_) {
+        if (typeof nextSetters.onBootstrapSuccess === 'function') {
+          nextSetters.onBootstrapSuccess({ scope: 'agents', data });
+        }
+      } catch (error) {
         const nextSetters = settersRef.current || {};
         if (!cancelled && typeof nextSetters.setAgentOptions === 'function') nextSetters.setAgentOptions([]);
+        if (!cancelled && typeof nextSetters.onBootstrapError === 'function') {
+          nextSetters.onBootstrapError({ scope: 'agents', error });
+        }
       }
     })();
     return () => {

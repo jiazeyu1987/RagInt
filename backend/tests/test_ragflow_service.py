@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+from backend.services.ragflow_config_store import RagflowConfigStore
 from backend.services.ragflow_service import RagflowService
 
 
@@ -101,3 +103,65 @@ def test_ask_chat_once_returns_text_and_deletes_temp_session():
     assert calls == [
         ("DELETE", "/api/v1/chats/chat_1/sessions", {"ids": ["chat_1_session_new"]}),
     ]
+
+
+def test_load_config_bootstraps_from_file_to_db_when_enabled(tmp_path, monkeypatch):
+    config_path = tmp_path / "ragflow_config.json"
+    config_path.write_text(
+        json.dumps({"api_key": "file_key", "base_url": "http://127.0.0.1:9380"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    store = RagflowConfigStore(tmp_path / "ragflow_config.db")
+    monkeypatch.setenv("RAGINT_ENABLE_LEGACY_FILE_BOOTSTRAP", "1")
+    svc = RagflowService(config_path, logger=_Logger(), config_store=store)
+
+    loaded = svc.load_config(force=True)
+    assert loaded["api_key"] == "file_key"
+    assert loaded["base_url"] == "http://127.0.0.1:9380"
+
+    rec = store.get()
+    assert rec is not None
+    assert rec.config["api_key"] == "file_key"
+    assert rec.config["base_url"] == "http://127.0.0.1:9380"
+
+
+def test_save_config_writes_db_when_store_enabled(tmp_path):
+    config_path = tmp_path / "ragflow_config.json"
+    config_path.write_text(json.dumps({"api_key": "legacy_key"}, ensure_ascii=False), encoding="utf-8")
+    store = RagflowConfigStore(tmp_path / "ragflow_config.db")
+    svc = RagflowService(config_path, logger=_Logger(), config_store=store)
+
+    saved = svc.save_config({"api_key": "db_key", "base_url": "http://127.0.0.1:9380", "__meta": {"x": 1}})
+    assert saved["api_key"] == "db_key"
+    assert saved["base_url"] == "http://127.0.0.1:9380"
+
+    rec = store.get()
+    assert rec is not None
+    assert rec.config["api_key"] == "db_key"
+    assert "__meta" not in rec.config
+
+
+def test_db_config_not_overridden_by_env_after_bootstrap(tmp_path, monkeypatch):
+    store = RagflowConfigStore(tmp_path / "ragflow_config.db")
+    store.upsert(config={"api_key": "db_key", "base_url": "http://db.example"})
+    monkeypatch.setenv("RAGFLOW_API_KEY", "env_key")
+
+    svc = RagflowService(tmp_path / "missing.json", logger=_Logger(), config_store=store)
+    loaded = svc.load_config(force=True)
+    assert loaded["api_key"] == "db_key"
+
+
+def test_env_bootstrap_used_only_when_db_empty(tmp_path, monkeypatch):
+    monkeypatch.setenv("RAGFLOW_API_KEY", "env_key")
+    monkeypatch.setenv("RAGFLOW_BASE_URL", "http://env.example")
+
+    store = RagflowConfigStore(tmp_path / "ragflow_config.db")
+    svc = RagflowService(tmp_path / "missing.json", logger=_Logger(), config_store=store)
+    loaded = svc.load_config(force=True)
+    assert loaded["api_key"] == "env_key"
+    assert loaded["base_url"] == "http://env.example"
+
+    # Once persisted, DB wins even if env changes.
+    monkeypatch.setenv("RAGFLOW_API_KEY", "env_key_changed")
+    loaded2 = svc.load_config(force=True)
+    assert loaded2["api_key"] == "env_key"

@@ -30,6 +30,20 @@ def _is_bailian_missing_config_error(exc: Exception) -> bool:
     return any(marker in text for marker in markers)
 
 
+def _is_bailian_recoverable_error(exc: Exception) -> bool:
+    text = str(exc or "").strip().lower()
+    if not text:
+        return False
+    if _is_bailian_missing_config_error(exc):
+        return True
+    markers = (
+        '"error_code":"invalidparameter"',
+        "invalid payload data",
+        "engine return error code: 418",
+    )
+    return any(marker in text for marker in markers)
+
+
 def _provider_enabled(config: dict, provider: str) -> bool:
     cfg = get_nested(config, ["tts", str(provider).strip().lower()], {}) or {}
     if not isinstance(cfg, dict):
@@ -104,15 +118,15 @@ def stream_tts(
                     reason="modelscope_rate_limited",
                 )
                 return
-            if _is_bailian_missing_config_error(exc):
-                logger.warning(f"[{request_id}] modelscope_not_configured err={exc}")
+            if _is_bailian_recoverable_error(exc):
+                logger.warning(f"[{request_id}] modelscope_unavailable_fallback err={exc}")
                 yield from _stream_with_edge_then_sapi(
                     text=text,
                     request_id=request_id,
                     config=config,
                     logger=logger,
                     cancel_event=cancel_event,
-                    reason="modelscope_not_configured",
+                    reason="modelscope_unavailable",
                 )
                 return
             raise

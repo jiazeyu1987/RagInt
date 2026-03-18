@@ -286,7 +286,7 @@ body {
 .home-status-bar {
   width: 100%;
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 10px;
   margin: 4px 0 12px;
   padding: 10px;
@@ -319,6 +319,14 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.home-status-v.status-ok {
+  color: #166534;
+}
+
+.home-status-v.status-error {
+  color: #b91c1c;
 }
 
 .home-status-select {
@@ -1514,6 +1522,32 @@ h1 {
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
+}
+
+.settings-status-text {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.settings-status-ok {
+  color: #166534;
+}
+
+.settings-status-error {
+  color: #b91c1c;
+}
+
+.settings-status-pending {
+  color: #1f2937;
+}
+
+.settings-status-detail {
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .settings-field input,

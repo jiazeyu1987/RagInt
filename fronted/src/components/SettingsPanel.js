@@ -172,12 +172,18 @@ function DebugTab({
   onChangeShowDebugPanel,
   controlBarProps,
   onClearExhibitChatSessions,
+  ragflowStatusLabel,
+  ragflowStatusDetail,
 }) {
   const c = controlBarProps || {};
   const stateText =
     c.tourState && c.tourState.mode
       ? `${c.tourState.mode}${Number.isFinite(c.tourState.stopIndex) ? ` / \u7b2c${Number(c.tourState.stopIndex) + 1}\u7ad9` : ''}`
       : 'unknown';
+  const ragLabel = String(ragflowStatusLabel || '\u68c0\u6d4b\u4e2d').trim() || '\u68c0\u6d4b\u4e2d';
+  const ragTone =
+    ragLabel === '\u5df2\u8fde\u63a5' ? 'settings-status-ok' : ragLabel === '\u672a\u8fde\u63a5' ? 'settings-status-error' : 'settings-status-pending';
+  const ragDetail = String(ragflowStatusDetail || '').trim();
 
   return (
     <>
@@ -199,6 +205,18 @@ function DebugTab({
             <span>{'\u5f53\u524d\u610f\u56fe'}</span>
             <div>{(c.currentIntent && c.currentIntent.intent) || 'none'}</div>
           </div>
+          <div className="settings-field">
+            <span>{'RAGFlow \u8fde\u63a5'}</span>
+            <div className={`settings-status-text ${ragTone}`}>{ragLabel}</div>
+          </div>
+          {ragDetail ? (
+            <div className="settings-field">
+              <span>{'RAGFlow \u8be6\u60c5'}</span>
+              <div className="settings-status-detail" title={ragDetail}>
+                {ragDetail}
+              </div>
+            </div>
+          ) : null}
         </div>
       </SettingsGroup>
       <SettingsGroup title="Session">
@@ -1085,6 +1103,8 @@ export function SettingsPanel({
   onClearExhibitChatSessions,
   activeTab,
   onChangeActiveTab,
+  ragflowStatusLabel,
+  ragflowStatusDetail,
 }) {
   void [groupMode, speakerName, onChangeSpeakerName, questionPriority, onChangeQuestionPriority];
   const resolvedActiveTab = normalizeSettingsTabKey(activeTab);
@@ -1115,6 +1135,8 @@ export function SettingsPanel({
           onChangeShowDebugPanel={onChangeShowDebugPanel}
           controlBarProps={controlBarProps}
           onClearExhibitChatSessions={onClearExhibitChatSessions}
+          ragflowStatusLabel={ragflowStatusLabel}
+          ragflowStatusDetail={ragflowStatusDetail}
         />
       );
     }
@@ -1154,6 +1176,8 @@ export function SettingsPanel({
     onPrevStop,
     onNextStop,
     onClearExhibitChatSessions,
+    ragflowStatusLabel,
+    ragflowStatusDetail,
     tourModePanelProps,
   ]);
 

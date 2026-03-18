@@ -400,7 +400,18 @@ export class TtsQueueManager {
   _buildSegmentUrl(text, meta) {
     const seg = String(text || '').trim();
     if (!seg) return null;
-    const url = new URL(this._useSavedTts ? '/api/text_to_speech_saved' : '/api/text_to_speech_stream', this._baseUrl);
+    const fallbackOrigin = typeof window !== 'undefined' && window.location && window.location.origin ? window.location.origin : 'http://localhost';
+    let baseForResolve = String(this._baseUrl || '').trim();
+    if (!baseForResolve) baseForResolve = fallbackOrigin;
+    try {
+      baseForResolve = new URL(baseForResolve, fallbackOrigin).toString();
+    } catch (_) {
+      baseForResolve = fallbackOrigin;
+    }
+    const url = new URL(
+      this._useSavedTts ? '/api/text_to_speech_saved' : '/api/text_to_speech_stream',
+      `${String(baseForResolve || '').replace(/\/+$/, '')}/`
+    );
     url.searchParams.set('text', seg);
     if (this._requestId) url.searchParams.set('request_id', this._requestId);
     const cid = this._getClientId();

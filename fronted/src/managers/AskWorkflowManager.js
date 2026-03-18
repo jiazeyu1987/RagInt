@@ -385,6 +385,7 @@ export class AskWorkflowManager {
       getTourStopName,
       startStatusMonitor,
       setQueueStatus,
+      onRagflowUnavailable,
       clientIdRef,
       activeAskRequestIdRef,
       baseUrl,
@@ -1086,6 +1087,23 @@ export class AskWorkflowManager {
       }
       // eslint-disable-next-line no-console
       console.error('Error asking question:', err);
+      const errMsg = String((err && err.message) || err || '').trim();
+      const ragflowUnavailable =
+        errMsg.includes('RAGFlow HTTP error') || errMsg.includes('Failed to fetch') || errMsg.includes('NetworkError');
+      if (allow() && typeof setQueueStatus === 'function') {
+        if (ragflowUnavailable) {
+          setQueueStatus('RAGFlow \u672a\u8fde\u63a5\uff0c\u5df2\u505c\u6b62\u672c\u6b21\u95ee\u7b54\u3002\u8bf7\u68c0\u67e5 RAGFlow \u914d\u7f6e\u4e0e\u670d\u52a1\u72b6\u6001\u3002');
+        } else if (errMsg) {
+          setQueueStatus(`\u95ee\u7b54\u5931\u8d25: ${errMsg}`);
+        }
+      }
+      if (ragflowUnavailable && typeof onRagflowUnavailable === 'function') {
+        try {
+          onRagflowUnavailable({ source: 'ask_stream', error: err });
+        } catch (_) {
+          // ignore
+        }
+      }
       if (allow() && typeof setIsLoading === 'function') setIsLoading(false);
     } finally {
       const isActiveRun = !!(activeAskRequestIdRef && activeAskRequestIdRef.current === requestId);

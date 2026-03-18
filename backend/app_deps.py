@@ -28,6 +28,7 @@ class AppDeps:
     ops_store: Any
     qa_audio_cache_store: Any
     qa_audio_matcher: Any
+    ragflow_config_store: Any
     app_settings_store: Any
 
     session: Any = None

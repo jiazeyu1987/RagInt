@@ -23,12 +23,12 @@ def _env_path(name: str, default: Path) -> Path:
     return Path(os.environ.get(name) or default).resolve()
 
 
-def _build_ragflow(*, config_path: Path, logger):
+def _build_ragflow(*, config_path: Path, ragflow_config_store, logger):
     from backend.services.ragflow_agent_service import RagflowAgentService
     from backend.services.ragflow_service import RagflowService
 
-    ragflow_service = RagflowService(config_path, logger=logger)
-    ragflow_agent_service = RagflowAgentService(config_path, logger=logger)
+    ragflow_service = RagflowService(config_path, logger=logger, config_store=ragflow_config_store)
+    ragflow_agent_service = RagflowAgentService(config_path, logger=logger, config_loader=ragflow_service.load_config)
     return ragflow_service, ragflow_agent_service
 
 
@@ -44,6 +44,7 @@ def _build_stores(*, data_dir: Path, logger):
     from backend.services.history_store import HistoryStore
     from backend.services.ops_store import OpsStore
     from backend.services.qa_audio_cache_store import QaAudioCacheStore
+    from backend.services.ragflow_config_store import RagflowConfigStore
     from backend.services.recording_store import RecordingStore
     from backend.services.selling_points_store import SellingPointsStore
     from backend.services.tour_control_store import TourControlStore
@@ -61,8 +62,21 @@ def _build_stores(*, data_dir: Path, logger):
         _env_path("RAGINT_SELLING_POINTS_DB_PATH", data_dir / "selling_points.db"), logger=logger
     )
     ops_store = OpsStore(_env_path("RAGINT_OPS_DB_PATH", data_dir / "ops.db"), logger=logger)
+    ragflow_config_store = RagflowConfigStore(
+        _env_path("RAGINT_RAGFLOW_CONFIG_DB_PATH", data_dir / "ragflow_config.db"), logger=logger
+    )
     app_settings_store = AppSettingsStore(_env_path("RAGINT_APP_SETTINGS_DB_PATH", data_dir / "app_settings.db"), logger=logger)
-    return history_store, qa_audio_cache_store, breakpoint_store, recording_store, tour_control_store, selling_points_store, ops_store, app_settings_store
+    return (
+        history_store,
+        qa_audio_cache_store,
+        breakpoint_store,
+        recording_store,
+        tour_control_store,
+        selling_points_store,
+        ops_store,
+        ragflow_config_store,
+        app_settings_store,
+    )
 
 
 def _build_services(*, logger):
@@ -96,7 +110,6 @@ def build_deps(*, base_dir: Path, config_path: Path, logger) -> AppDeps:
     data_dir = base_dir / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    ragflow_service, ragflow_agent_service = _build_ragflow(config_path=config_path, logger=logger)
     (
         history_store,
         qa_audio_cache_store,
@@ -105,9 +118,13 @@ def build_deps(*, base_dir: Path, config_path: Path, logger) -> AppDeps:
         tour_control_store,
         selling_points_store,
         ops_store,
+        ragflow_config_store,
         app_settings_store,
     ) = _build_stores(
         data_dir=data_dir, logger=logger
+    )
+    ragflow_service, ragflow_agent_service = _build_ragflow(
+        config_path=config_path, ragflow_config_store=ragflow_config_store, logger=logger
     )
     tts_service, intent_service, tour_planner, tour_command_service, request_registry, ask_timings = _build_services(
         logger=logger
@@ -142,6 +159,7 @@ def build_deps(*, base_dir: Path, config_path: Path, logger) -> AppDeps:
         ops_store=ops_store,
         qa_audio_cache_store=qa_audio_cache_store,
         qa_audio_matcher=qa_audio_matcher,
+        ragflow_config_store=ragflow_config_store,
         app_settings_store=app_settings_store,
     )
 

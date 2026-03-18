@@ -15,9 +15,10 @@ from backend.services.env_overrides import apply_env_overrides
 
 
 class RagflowAgentService:
-    def __init__(self, config_path: Path, logger: logging.Logger | None = None):
+    def __init__(self, config_path: Path, logger: logging.Logger | None = None, config_loader=None):
         self._logger = logger or logging.getLogger(__name__)
         self._config_path = config_path
+        self._config_loader = config_loader
         self._lock = threading.Lock()
         self._agent_sessions: dict[str, str] = {}
         self._cfg_lock = threading.Lock()
@@ -25,6 +26,13 @@ class RagflowAgentService:
         self._last_loaded_mtime_ns: int | None = None
 
     def load_config(self, *, force: bool = False) -> dict:
+        if callable(self._config_loader):
+            try:
+                cfg = self._config_loader(force=force)
+            except TypeError:
+                cfg = self._config_loader()
+            return cfg if isinstance(cfg, dict) else {}
+
         try:
             st = self._config_path.stat()
             mtime_ns = int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9)))

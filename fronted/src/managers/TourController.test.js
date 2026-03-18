@@ -16,19 +16,21 @@ function makeBaseDeps(overrides = {}) {
     askQuestion: jest.fn().mockResolvedValue(''),
     playTourRecordingEnabledRef: { current: false },
     selectedTourRecordingIdRef: { current: '' },
+    setPlayTourRecordingEnabled: jest.fn(),
+    setSelectedTourRecordingId: jest.fn(),
     tourRecordingEnabledRef: { current: false },
     activeTourRecordingIdRef: { current: 'rid_old' },
     startTourRecordingArchive: jest.fn().mockResolvedValue(''),
     loadTourRecordingMeta: jest.fn().mockResolvedValue(null),
     fetchJson: jest.fn().mockResolvedValue({
-      stops: ['鍏ュ彛', '灞曞尯A'],
+      stops: ['Stop A', 'Stop B'],
       stop_durations_s: [30, 60],
       stop_target_chars: [120, 240],
     }),
-    tourZoneRef: { current: '榛樿璺嚎' },
-    audienceProfileRef: { current: '澶т紬' },
+    tourZoneRef: { current: 'Default Zone' },
+    audienceProfileRef: { current: 'General' },
     guideDurationRef: { current: '60' },
-    tourMetaRef: { current: { default_zone: '榛樿璺嚎', default_profile: '澶т紬' } },
+    tourMetaRef: { current: { default_zone: 'Default Zone', default_profile: 'General' } },
     tourStopsOverrideRef: { current: [] },
     tourStopDurationsOverrideRef: { current: {} },
     setTourStops: jest.fn(),
@@ -36,7 +38,7 @@ function makeBaseDeps(overrides = {}) {
     setTourStopTargetChars: jest.fn(),
     tourStopDurationsRef: { current: [] },
     tourStopTargetCharsRef: { current: [] },
-    getTourStops: () => ['鍏ュ彛', '灞曞尯A'],
+    getTourStops: () => ['Stop A', 'Stop B'],
     getTourPipeline: () => ({ startContinuousTour: jest.fn().mockResolvedValue(undefined) }),
     ...overrides,
   };
@@ -85,12 +87,13 @@ describe('TourController', () => {
       '/api/tour/plan',
       expect.objectContaining({ method: 'POST', headers: { 'Content-Type': 'application/json' } })
     );
-    expect(deps.setTourStops).toHaveBeenCalledWith(['鍏ュ彛', '灞曞尯A']);
+    expect(deps.setTourStops).toHaveBeenCalledWith(['Stop A', 'Stop B']);
     expect(deps.setTourStopDurations).toHaveBeenCalledWith([30, 60]);
     expect(deps.setTourStopTargetChars).toHaveBeenCalledWith([120, 240]);
     expect(deps.tourStopDurationsRef.current).toEqual([30, 60]);
     expect(deps.tourStopTargetCharsRef.current).toEqual([120, 240]);
   });
+
   test('start sends stop duration overrides to /api/tour/plan', async () => {
     const deps = makeBaseDeps({
       tourStopDurationsOverrideRef: { current: { A: 12, B: '34', bad: 0 } },
@@ -101,5 +104,45 @@ describe('TourController', () => {
 
     const payload = JSON.parse(deps.fetchJson.mock.calls[0][1].body);
     expect(payload.stop_durations_s_override).toEqual({ A: 12, B: 34 });
+  });
+
+  test('start clears invalid playback recording and falls back to tour plan', async () => {
+    const deps = makeBaseDeps({
+      playTourRecordingEnabledRef: { current: true },
+      selectedTourRecordingIdRef: { current: 'rec-missing' },
+      loadTourRecordingMeta: jest.fn().mockResolvedValue({ stops: [] }),
+    });
+    const c = new TourController(deps);
+
+    await c.start();
+
+    expect(deps.setPlayTourRecordingEnabled).toHaveBeenCalledWith(false);
+    expect(deps.setSelectedTourRecordingId).toHaveBeenCalledWith('');
+    expect(deps.playTourRecordingEnabledRef.current).toBe(false);
+    expect(deps.selectedTourRecordingIdRef.current).toBe('');
+    expect(deps.fetchJson).toHaveBeenCalledWith(
+      '/api/tour/plan',
+      expect.objectContaining({ method: 'POST', headers: { 'Content-Type': 'application/json' } })
+    );
+    expect(deps.askQuestion).toHaveBeenCalledWith('start_prompt', { tourAction: 'start', tourStopIndex: 0 });
+  });
+
+  test('start fails fast when ragflow new_session bootstrap fails', async () => {
+    const onRagflowUnavailable = jest.fn();
+    const deps = makeBaseDeps({
+      useAgentModeRef: { current: false },
+      selectedChatRef: { current: 'Chat A' },
+      onRagflowUnavailable,
+      fetchJson: jest.fn().mockRejectedValue(new Error('HTTP 500 /api/ragflow/chats/new_session')),
+    });
+    const c = new TourController(deps);
+
+    await expect(c.start()).rejects.toThrow(/ragflow_unavailable/i);
+    expect(onRagflowUnavailable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'tour_start_new_session',
+      })
+    );
+    expect(deps.askQuestion).not.toHaveBeenCalled();
   });
 });

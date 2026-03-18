@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 from pathlib import Path
 
@@ -130,12 +131,14 @@ def find_chat_by_name(client, chat_name):
 
 
 class RagflowService:
-    def __init__(self, config_path: Path, logger: logging.Logger | None = None):
+    def __init__(self, config_path: Path, logger: logging.Logger | None = None, config_store=None):
         self._logger = logger or logging.getLogger(__name__)
         self._config_path = config_path
+        self._config_store = config_store
+        self._config_scope_id = "global"
         self._cfg_lock = threading.Lock()
         self._last_loaded_cfg: dict | None = None
-        self._last_loaded_mtime_ns: int | None = None
+        self._last_loaded_revision: tuple[str, int] | None = None
 
         self.client = None
         self.default_chat_name = None
@@ -143,6 +146,47 @@ class RagflowService:
 
         self._sessions = {}
         self._lock = threading.Lock()
+
+    @staticmethod
+    def _clean_cfg(cfg: dict | None) -> dict:
+        out = dict(cfg if isinstance(cfg, dict) else {})
+        out.pop("__meta", None)
+        return out
+
+    @staticmethod
+    def _legacy_file_bootstrap_enabled() -> bool:
+        raw = str(os.environ.get("RAGINT_ENABLE_LEGACY_FILE_BOOTSTRAP", "0") or "0").strip().lower()
+        return raw in ("1", "true", "yes", "on")
+
+    def _build_bootstrap_seed(self, *, file_raw: dict) -> dict:
+        """
+        Build a one-time seed config only when DB is empty.
+
+        Steady-state runtime config source is DB only.
+        - ENV can participate in initial bootstrap.
+        - Legacy file is opt-in via RAGINT_ENABLE_LEGACY_FILE_BOOTSTRAP=1.
+        """
+        base: dict = {}
+        if self._legacy_file_bootstrap_enabled():
+            base = self._clean_cfg(file_raw if isinstance(file_raw, dict) else {})
+        seeded = apply_env_overrides(base)
+        return self._clean_cfg(seeded if isinstance(seeded, dict) else {})
+
+    def _read_file_raw(self) -> tuple[dict, int]:
+        if not self._config_path.exists():
+            return {}, -1
+        try:
+            st = self._config_path.stat()
+            mtime_ns = int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9)))
+        except Exception:
+            mtime_ns = -1
+        try:
+            with open(self._config_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            return (raw if isinstance(raw, dict) else {}), int(mtime_ns)
+        except Exception as e:
+            self._logger.warning("ragflow_config_file_read_failed path=%s err=%s", str(self._config_path), e)
+            return {}, int(mtime_ns)
 
     def _api_request(self, *, method: str, path: str, json_body: dict | None = None, timeout: int = 15):
         cfg = self._last_loaded_cfg if self._last_loaded_cfg is not None else self.load_config()
@@ -177,37 +221,73 @@ class RagflowService:
 
     def load_config(self, *, force: bool = False) -> dict:
         """
-        Load JSON config from disk with a best-effort mtime cache.
+        Load runtime config with precedence:
+        1) DB store (if configured)
+        2) One-time bootstrap seed (env + optional legacy file) only when DB is empty
+        3) File fallback only when no DB store is configured
 
-        - Keeps hot-reload behavior for local edits.
-        - Avoids per-request file I/O in production steady-state.
+        After DB is populated, env/file are not applied at runtime.
+
+        Result is memoized by (source, revision).
         """
-        try:
-            st = self._config_path.stat()
-            mtime_ns = int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9)))
-        except Exception:
-            mtime_ns = None
-
         with self._cfg_lock:
-            if not force and self._last_loaded_cfg is not None and mtime_ns is not None and mtime_ns == self._last_loaded_mtime_ns:
-                return self._last_loaded_cfg
+            # Prefer DB-backed config when available.
+            if self._config_store is not None:
+                try:
+                    rec = self._config_store.get(scope_id=self._config_scope_id)
+                except Exception as e:
+                    self._logger.warning("ragflow_config_db_read_failed err=%s", e)
+                    rec = None
+                if rec is not None:
+                    revision = ("db", int(rec.updated_at_ms or 0))
+                    if not force and self._last_loaded_cfg is not None and revision == self._last_loaded_revision:
+                        return self._last_loaded_cfg
+                    raw = rec.config if isinstance(rec.config, dict) else {}
+                    self._last_loaded_cfg = self._clean_cfg(raw)
+                    self._last_loaded_revision = revision
+                    return self._last_loaded_cfg
 
-            if not self._config_path.exists():
+            # DB empty: bootstrap from env (and optional legacy file), then persist.
+            file_raw, file_mtime_ns = self._read_file_raw()
+            if self._config_store is not None:
+                seed_cfg = self._build_bootstrap_seed(file_raw=file_raw)
+                if seed_cfg:
+                    try:
+                        rec = self._config_store.upsert(scope_id=self._config_scope_id, config=seed_cfg)
+                    except Exception as e:
+                        self._logger.warning("ragflow_config_db_bootstrap_failed err=%s", e)
+                        rec = None
+                    if rec is not None:
+                        revision = ("db", int(rec.updated_at_ms or 0))
+                    if not force and self._last_loaded_cfg is not None and revision == self._last_loaded_revision:
+                        return self._last_loaded_cfg
+                    raw = rec.config if isinstance(rec.config, dict) else {}
+                    self._last_loaded_cfg = self._clean_cfg(raw)
+                    self._last_loaded_revision = revision
+                    self._logger.info("ragflow_config_bootstrapped_to_db scope=%s", self._config_scope_id)
+                    return self._last_loaded_cfg
+                revision = ("db", -1)
+                if not force and self._last_loaded_cfg is not None and revision == self._last_loaded_revision:
+                    return self._last_loaded_cfg
                 self._last_loaded_cfg = {}
-                self._last_loaded_mtime_ns = mtime_ns
+                self._last_loaded_revision = revision
                 return self._last_loaded_cfg
 
-            with open(self._config_path, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-                self._last_loaded_cfg = apply_env_overrides(raw) if isinstance(raw, dict) else {}
-                self._last_loaded_mtime_ns = mtime_ns
+            revision = ("file", int(file_mtime_ns))
+            if not force and self._last_loaded_cfg is not None and revision == self._last_loaded_revision:
                 return self._last_loaded_cfg
+            self._last_loaded_cfg = self._clean_cfg(file_raw if isinstance(file_raw, dict) else {})
+            self._last_loaded_revision = revision
+            return self._last_loaded_cfg
 
     def reload_config(self) -> dict:
         return self.load_config(force=True)
 
     def save_config(self, cfg: dict) -> dict:
-        data = cfg if isinstance(cfg, dict) else {}
+        data = self._clean_cfg(cfg if isinstance(cfg, dict) else {})
+        if self._config_store is not None:
+            self._config_store.upsert(scope_id=self._config_scope_id, config=data)
+            return self.load_config(force=True)
         self._config_path.parent.mkdir(parents=True, exist_ok=True)
         text = json.dumps(data, ensure_ascii=False, indent=2)
         self._config_path.write_text(text + "\n", encoding="utf-8")

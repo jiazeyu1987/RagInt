@@ -81,3 +81,37 @@ def test_modelscope_missing_config_falls_back_to_sapi_when_edge_unavailable(monk
     )
     assert out == [b"sapi-bytes"]
     assert called == {"bailian": 1, "edge": 1, "sapi": 1}
+
+
+def test_modelscope_invalid_parameter_falls_back_to_edge(monkeypatch):
+    called = {"bailian": 0, "edge": 0, "sapi": 0}
+
+    def _bailian(**kwargs):  # noqa: ANN003
+        called["bailian"] += 1
+        raise RuntimeError(
+            '{"header":{"error_code":"InvalidParameter","error_message":"[tts:]Engine return error code: 418"}}'
+        )
+
+    def _edge(**kwargs):  # noqa: ANN003
+        called["edge"] += 1
+        yield b"edge-bytes"
+
+    def _sapi(**kwargs):  # noqa: ANN003
+        called["sapi"] += 1
+        yield b"sapi-bytes"
+
+    monkeypatch.setattr(registry, "stream_bailian_tts", _bailian)
+    monkeypatch.setattr(registry, "stream_edge", _edge)
+    monkeypatch.setattr(registry, "stream_sapi_tts", _sapi)
+
+    out = list(
+        registry.stream_tts(
+            text="hello",
+            request_id="r3",
+            config={"tts": {"edge": {"enabled": True}, "sapi": {"enabled": True}}},
+            provider="modelscope",
+            logger=_Logger(),
+        )
+    )
+    assert out == [b"edge-bytes"]
+    assert called == {"bailian": 1, "edge": 1, "sapi": 0}

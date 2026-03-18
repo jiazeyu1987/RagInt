@@ -1,0 +1,11 @@
+{
+  "host": "172.30.30.58",
+  "user": "root",
+  "ssh_port": 22,
+  "ssh_key": "C:/Users/your-user/.ssh/id_ed25519",
+  "remote_dir": "/opt/ragint",
+  "frontend_port": 4981,
+  "backend_port": 8000,
+  "health_timeout_s": 180,
+  "skip_health_check": false
+}

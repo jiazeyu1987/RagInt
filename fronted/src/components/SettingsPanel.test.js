@@ -90,6 +90,8 @@ function buildProps(overrides = {}) {
     onClearExhibitChatSessions: jest.fn(),
     activeTab: 'ops',
     onChangeActiveTab: jest.fn(),
+    ragflowStatusLabel: '\u68c0\u6d4b\u4e2d',
+    ragflowStatusDetail: '',
     ...overrides,
   };
 }
@@ -114,6 +116,19 @@ describe('SettingsPanel', () => {
     const view = render(<SettingsPanel {...props} />);
     expect(view.container.querySelector('[data-testid="settings-drawer-mock"]')).toBeTruthy();
     expect(view.container.querySelector('[data-testid="tour-mode-panel-mock"]')).toBeTruthy();
+    view.unmount();
+  });
+
+  test('shows ragflow connection status in debug tab', () => {
+    const props = buildProps({
+      activeTab: 'debug',
+      ragflowStatusLabel: '\u672a\u8fde\u63a5',
+      ragflowStatusDetail: 'HTTP 500 /api/ragflow/chats',
+    });
+    const view = render(<SettingsPanel {...props} />);
+    expect(view.container.textContent).toContain('RAGFlow \u8fde\u63a5');
+    expect(view.container.textContent).toContain('\u672a\u8fde\u63a5');
+    expect(view.container.textContent).toContain('HTTP 500 /api/ragflow/chats');
     view.unmount();
   });
 });

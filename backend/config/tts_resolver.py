@@ -156,6 +156,13 @@ def resolve_tts_request(app_config: dict, *, data: dict | None, headers) -> tupl
     voice, model = _parse_tts_voice_model(provider=provider, data=data, headers=headers)
     speed = _parse_tts_speed(data=data, headers=headers)
 
+    # On clean deploys, runtime config may not have an explicit modelscope voice yet.
+    # Pick a safe default to avoid provider hard-fail and fallback loops.
+    if provider_norm in ("modelscope", "bailian", "dashscope") and not voice:
+        existing_voice = _s(get_nested(base, ["tts", "bailian", "voice"], ""), "")
+        if not existing_voice:
+            voice = "longxiaochun"
+
     # Clamp for safety.
     if speed is not None:
         speed = max(0.5, min(float(speed), 2.0))
@@ -193,4 +200,3 @@ def resolve_tts_request(app_config: dict, *, data: dict | None, headers) -> tupl
         return provider, resolved
 
     return provider, base
-

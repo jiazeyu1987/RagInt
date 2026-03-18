@@ -165,6 +165,8 @@ export class TourController {
       tourRecordingEnabledRef,
       playTourRecordingEnabledRef,
       selectedTourRecordingIdRef,
+      setPlayTourRecordingEnabled,
+      setSelectedTourRecordingId,
       startTourRecordingArchive,
       loadTourRecordingMeta,
       setTourStops,
@@ -199,28 +201,68 @@ export class TourController {
           body: JSON.stringify({ chat_name: chatName }),
         });
       }
-    } catch (_) {
-      // ignore session bootstrap failure and continue tour flow
+    } catch (error) {
+      try {
+        if (typeof this.deps.onRagflowUnavailable === 'function') {
+          this.deps.onRagflowUnavailable({ source: 'tour_start_new_session', error });
+        }
+      } catch (_) {
+        // ignore
+      }
+      const err = new Error(`ragflow_unavailable: ${String((error && error.message) || 'new_session_failed')}`);
+      err.code = 'ragflow_unavailable';
+      try {
+        err.cause = error;
+      } catch (_) {
+        // ignore
+      }
+      throw err;
     }
     if (!allow()) return;
 
+    const clearPlaybackMode = () => {
+      try {
+        if (typeof setPlayTourRecordingEnabled === 'function') setPlayTourRecordingEnabled(false);
+      } catch (_) {
+        // ignore
+      }
+      try {
+        if (typeof setSelectedTourRecordingId === 'function') setSelectedTourRecordingId('');
+      } catch (_) {
+        // ignore
+      }
+      if (playTourRecordingEnabledRef) playTourRecordingEnabledRef.current = false;
+      if (selectedTourRecordingIdRef) selectedTourRecordingIdRef.current = '';
+    };
+
     let plannedStops = null;
+    let attemptedPlaybackRid = '';
     try {
       const playRid =
         playTourRecordingEnabledRef && playTourRecordingEnabledRef.current && selectedTourRecordingIdRef
           ? String(selectedTourRecordingIdRef.current || '').trim()
           : '';
-      if (playRid && typeof loadTourRecordingMeta === 'function') {
-        const meta = await loadTourRecordingMeta(playRid);
-        const stops = meta && Array.isArray(meta.stops) ? meta.stops.map((s) => String(s || '').trim()).filter(Boolean) : [];
-        if (stops.length) {
-          plannedStops = stops;
-          if (typeof setTourStops === 'function') setTourStops(stops);
+      attemptedPlaybackRid = playRid;
+      if (playRid) {
+        if (typeof loadTourRecordingMeta === 'function') {
+          const meta = await loadTourRecordingMeta(playRid);
+          const stops = meta && Array.isArray(meta.stops) ? meta.stops.map((s) => String(s || '').trim()).filter(Boolean) : [];
+          if (stops.length) {
+            plannedStops = stops;
+            if (typeof setTourStops === 'function') setTourStops(stops);
+          } else {
+            clearPlaybackMode();
+            plannedStops = await this._fetchTourPlan();
+          }
+        } else {
+          clearPlaybackMode();
+          plannedStops = await this._fetchTourPlan();
         }
       } else {
         plannedStops = await this._fetchTourPlan();
       }
     } catch (_) {
+      if (attemptedPlaybackRid) clearPlaybackMode();
       plannedStops = await this._fetchTourPlan();
     }
     if (!allow()) return;

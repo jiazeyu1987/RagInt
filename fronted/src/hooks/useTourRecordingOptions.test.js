@@ -40,6 +40,7 @@ describe('useTourRecordingOptions', () => {
     await hook.flush();
     await hook.flush();
     expect(hook.result().options).toHaveLength(1);
+    expect(hook.result().ready).toBe(true);
     expect(hook.result().options[0].recording_id).toBe('rec-1');
     expect(hook.result().options[0].label).toContain('1.25x');
 

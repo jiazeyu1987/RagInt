@@ -355,7 +355,7 @@ jest.mock('../hooks/useUiActions', () => ({
 }));
 
 jest.mock('../hooks/useTourRecordingOptions', () => ({
-  useTourRecordingOptions: () => ({ options: [], refresh: jest.fn() }),
+  useTourRecordingOptions: () => ({ options: [], refresh: jest.fn(), ready: true }),
 }));
 
 jest.mock('../hooks/useTourRecordings', () => ({
