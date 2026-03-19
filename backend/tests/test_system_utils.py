@@ -38,6 +38,61 @@ def test_derive_status_metrics_filters_none_and_computes_ms():
     assert "submit_to_first_segment_ms" not in got
 
 
+def test_derive_status_metrics_full_chain_breakdown():
+    timing = {
+        "t_submit": 1.0,
+        "t_ragflow_request_start": 1.07,
+        "t_ragflow_first_chunk": 1.1,
+        "t_ragflow_first_text": 1.15,
+        "t_first_tts_segment": 1.3,
+        "t_tts_first_audio": 1.45,
+        "t_play_end": 2.0,
+        "t_server_receive_wall_ms": 1975,
+        "t_request_parse_done_wall_ms": 1978,
+        "t_conversation_resolved_wall_ms": 1982,
+        "t_orchestrator_ready_wall_ms": 1988,
+        "t_qa_match_start_ms": 1990,
+        "t_qa_match_end_ms": 1996,
+        "t_submit_wall_ms": 2000,
+        "t_ask_client_start_ms": 1900,
+        "t_ask_client_submit_ms": 1920,
+        "t_asr_pending_ms": 1200,
+        "t_asr_filter_start_ms": 1300,
+        "t_asr_filter_end_ms": 1600,
+        "t_asr_accepted_ms": 1750,
+        "t_play_end_client_ms": 3200,
+    }
+    got = derive_status_metrics(timing=timing, now_perf=2.5)
+    assert got["rag_first_chunk_to_first_text_ms"] == 50.0
+    assert got["rag_first_text_to_first_segment_ms"] == 150.0
+    assert got["first_segment_to_tts_first_audio_ms"] == 150.0
+    assert got["tts_first_audio_to_play_end_ms"] == 550.0
+    assert got["asr_pending_to_filter_start_ms"] == 100.0
+    assert got["asr_filter_ms"] == 300.0
+    assert got["asr_filter_to_accepted_ms"] == 150.0
+    assert got["asr_postprocess_total_ms"] == 550.0
+    assert got["asr_accepted_to_ask_client_start_ms"] == 150.0
+    assert got["ask_client_start_to_client_submit_ms"] == 20.0
+    assert got["client_submit_to_server_receive_ms"] == 55.0
+    assert got["ask_client_start_to_server_receive_ms"] == 75.0
+    assert got["ask_client_start_to_request_parse_done_ms"] == 78.0
+    assert got["ask_client_start_to_conversation_resolved_ms"] == 82.0
+    assert got["ask_client_start_to_orchestrator_ready_ms"] == 88.0
+    assert got["ask_client_start_to_qa_match_start_ms"] == 90.0
+    assert got["ask_client_start_to_qa_match_end_ms"] == 96.0
+    assert got["server_receive_to_request_parse_done_ms"] == 3.0
+    assert got["request_parse_to_conversation_resolved_ms"] == 4.0
+    assert got["conversation_resolved_to_orchestrator_ready_ms"] == 6.0
+    assert got["orchestrator_ready_to_qa_match_start_ms"] == 2.0
+    assert got["qa_match_ms"] == 6.0
+    assert got["server_receive_to_server_submit_ms"] == 25.0
+    assert got["server_receive_to_rag_request_ms"] == 70.0
+    assert got["ask_client_start_to_rag_request_ms"] == 145.0
+    assert got["ask_client_start_to_server_submit_ms"] == 100.0
+    assert got["rag_request_to_first_chunk_ms"] == 30.0
+    assert got["ask_client_start_to_play_end_client_ms"] == 1300.0
+
+
 class _Events:
     def list_events(self, *, request_id: str, limit: int):  # noqa: ARG002
         return [

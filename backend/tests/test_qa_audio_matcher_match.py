@@ -72,6 +72,8 @@ def test_find_match_hits_exact_question_without_classifier(tmp_path):
     assert int(hit["pair_id"]) == int(pair_id)
     assert float(hit["confidence"]) == 1.0
     assert str(hit.get("reason") or "") == "exact_normalized_question"
+    dbg = matcher.get_last_debug()
+    assert bool(dbg.get("classifier_called")) is False
 
 
 def test_find_match_hits_similar_question_with_heuristic_when_classifier_missing(tmp_path):
@@ -111,6 +113,8 @@ def test_find_match_hits_similar_question_with_heuristic_when_classifier_missing
     assert hit is not None
     assert int(hit["pair_id"]) == int(pair_id)
     assert "similarity" in str(hit.get("reason") or "")
+    dbg = matcher.get_last_debug()
+    assert bool(dbg.get("classifier_called")) is False
 
 
 def test_find_match_records_debug_reason_on_miss(tmp_path):
@@ -211,4 +215,5 @@ def test_find_match_falls_back_to_all_buckets_and_runs_classifier(tmp_path):
     assert bool(dbg.get("candidate_fallback_used")) is True
     assert int(dbg.get("candidate_count_in_tts_bucket") or 0) == 0
     assert int(dbg.get("candidate_count_any_bucket") or 0) >= 1
+    assert bool(dbg.get("classifier_called")) is True
     assert str(dbg.get("reason") or "").startswith("classifier_no_match")

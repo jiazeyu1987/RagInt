@@ -34,6 +34,121 @@ function StatusText({ label, value, tone } = {}) {
   );
 }
 
+function formatElapsed(deltaMs, { disabled = false } = {}) {
+  if (disabled) return 'disabled';
+  const n = Number(deltaMs);
+  if (!Number.isFinite(n)) return '-';
+  return `${Math.max(0, Math.round(n))} ms`;
+}
+
+function buildTimelineItems(debugInfo, serverStatus, { ttsEnabled = true } = {}) {
+  const info = debugInfo && typeof debugInfo === 'object' ? debugInfo : null;
+  const status = serverStatus && typeof serverStatus === 'object' ? serverStatus : null;
+  const derived = status && status.derived_ms && typeof status.derived_ms === 'object' ? status.derived_ms : {};
+  const submitAt = info && Number.isFinite(Number(info.submitAt)) ? Number(info.submitAt) : null;
+  const calc = (key) => {
+    if (submitAt == null) return null;
+    const value = Number(info && info[key]);
+    return Number.isFinite(value) ? value - submitAt : null;
+  };
+  const derivedMs = (key) => {
+    const value = Number(derived && derived[key]);
+    return Number.isFinite(value) ? value : null;
+  };
+  const clientSubmitMs = derivedMs('ask_client_start_to_client_submit_ms');
+  const serverReceiveMs = derivedMs('ask_client_start_to_server_receive_ms');
+  const requestParseMs = derivedMs('ask_client_start_to_request_parse_done_ms');
+  const conversationResolvedMs = derivedMs('ask_client_start_to_conversation_resolved_ms');
+  const orchestratorReadyMs = derivedMs('ask_client_start_to_orchestrator_ready_ms');
+  const qaMatchStartMs = derivedMs('ask_client_start_to_qa_match_start_ms');
+  const qaMatchEndMs = derivedMs('ask_client_start_to_qa_match_end_ms');
+  const serverSubmitMs = derivedMs('ask_client_start_to_server_submit_ms');
+  const ragRequestMs = derivedMs('ask_client_start_to_rag_request_ms');
+  const ragFirstChunkMs = serverSubmitMs != null && derivedMs('submit_to_rag_first_chunk_ms') != null
+    ? serverSubmitMs + derivedMs('submit_to_rag_first_chunk_ms')
+    : ragRequestMs != null && derivedMs('rag_request_to_first_chunk_ms') != null
+      ? ragRequestMs + derivedMs('rag_request_to_first_chunk_ms')
+    : calc('ragflowFirstChunkAt');
+  const ragFirstTextMs = serverSubmitMs != null && derivedMs('submit_to_rag_first_text_ms') != null
+    ? serverSubmitMs + derivedMs('submit_to_rag_first_text_ms')
+    : ragFirstChunkMs;
+  const firstSegmentMs = serverSubmitMs != null && derivedMs('submit_to_first_segment_ms') != null
+    ? serverSubmitMs + derivedMs('submit_to_first_segment_ms')
+    : calc('ragflowFirstSegmentAt');
+  const firstAudioMs = serverSubmitMs != null && derivedMs('submit_to_tts_first_audio_ms') != null
+    ? serverSubmitMs + derivedMs('submit_to_tts_first_audio_ms')
+    : calc('ttsFirstAudioAt');
+  return [
+    { key: 'submitAt', label: '开始', value: submitAt != null ? '0 ms' : '-', done: submitAt != null },
+    { key: 'clientSubmit', label: '发送', value: formatElapsed(clientSubmitMs), done: clientSubmitMs != null },
+    { key: 'serverReceive', label: '服务端接收', value: formatElapsed(serverReceiveMs), done: serverReceiveMs != null },
+    { key: 'requestParse', label: '请求解析', value: formatElapsed(requestParseMs), done: requestParseMs != null },
+    { key: 'conversationResolved', label: '会话解析', value: formatElapsed(conversationResolvedMs), done: conversationResolvedMs != null },
+    { key: 'orchestratorReady', label: '编排启动', value: formatElapsed(orchestratorReadyMs), done: orchestratorReadyMs != null },
+    { key: 'qaMatchStart', label: '问题比对开始', value: formatElapsed(qaMatchStartMs), done: qaMatchStartMs != null },
+    { key: 'qaMatchEnd', label: '问题比对完成', value: formatElapsed(qaMatchEndMs), done: qaMatchEndMs != null },
+    { key: 'serverSubmit', label: '服务端提交', value: formatElapsed(serverSubmitMs), done: serverSubmitMs != null },
+    { key: 'ragRequest', label: 'RAG请求', value: formatElapsed(ragRequestMs), done: ragRequestMs != null },
+    { key: 'ragflowFirstChunkAt', label: '首Chunk', value: formatElapsed(ragFirstChunkMs), done: ragFirstChunkMs != null },
+    {
+      key: 'ragflowFirstTextAt',
+      label: '首文本',
+      value: formatElapsed(ragFirstTextMs),
+      done: ragFirstTextMs != null,
+    },
+    {
+      key: 'ragflowFirstSegmentAt',
+      label: '首分段',
+      value: formatElapsed(firstSegmentMs),
+      done: firstSegmentMs != null,
+    },
+    {
+      key: 'ttsFirstAudioAt',
+      label: '首音频',
+      value: formatElapsed(firstAudioMs, { disabled: !ttsEnabled }),
+      done: ttsEnabled ? firstAudioMs != null : false,
+      disabled: !ttsEnabled,
+    },
+    { key: 'ragflowDoneAt', label: 'RAG完成', value: formatElapsed(calc('ragflowDoneAt')), done: calc('ragflowDoneAt') != null },
+    {
+      key: 'ttsAllDoneAt',
+      label: '结束',
+      value: formatElapsed(calc('ttsAllDoneAt'), { disabled: !ttsEnabled }),
+      done: ttsEnabled ? calc('ttsAllDoneAt') != null : false,
+      disabled: !ttsEnabled,
+    },
+  ];
+}
+
+function RequestTimelineBar({ debugInfo, serverStatus, ttsEnabled } = {}) {
+  const info = debugInfo && typeof debugInfo === 'object' ? debugInfo : null;
+  const items = buildTimelineItems(info, serverStatus, { ttsEnabled });
+  if (!info || !Number.isFinite(Number(info.submitAt))) {
+    return (
+      <div className="home-status-timeline is-empty" aria-label="链路时间线">
+        <div className="home-status-timeline-placeholder">等待触发</div>
+      </div>
+    );
+  }
+  return (
+    <div className="home-status-timeline" aria-label="链路时间线">
+      {items.map((item, index) => (
+        <React.Fragment key={item.key}>
+          {index > 0 ? <div className={`home-status-timeline-line ${item.done ? 'is-done' : ''}`.trim()} aria-hidden="true" /> : null}
+          <div
+            className={`home-status-timeline-node ${item.done ? 'is-done' : ''} ${item.disabled ? 'is-disabled' : ''}`.trim()}
+            title={`${item.label} ${item.value}`}
+          >
+            <div className="home-status-timeline-dot" aria-hidden="true" />
+            <div className="home-status-timeline-label">{item.label}</div>
+            <div className="home-status-timeline-value">{item.value}</div>
+          </div>
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
 export function HomeStatusBar({
   modeValue,
   modeOptions,
@@ -52,22 +167,23 @@ export function HomeStatusBar({
   ragflowStatusLabel,
   ragflowStatusTone,
   ragflowConversationLabel,
+  debugInfo,
+  serverStatus,
+  ttsEnabled = true,
 } = {}) {
   return (
-    <div className="home-status-bar" role="status" aria-label={'\u5f53\u524d\u8bb2\u89e3\u72b6\u6001'}>
-      <StatusSelect label={'\u5f53\u524d\u6a21\u5f0f'} value={modeValue} options={modeOptions} onChange={onChangeMode} />
-      <StatusSelect label={'\u8bed\u901f'} value={speedValue} options={speedOptions} onChange={onChangeSpeed} />
-      <StatusSelect label={'\u6a21\u677f\u540d\u79f0'} value={templateValue} options={templateOptions} onChange={onChangeTemplate} />
-      <StatusSelect
-        label={'\u4eba\u7fa4\u753b\u50cf'}
-        value={audienceProfileValue}
-        options={audienceProfileOptions}
-        onChange={onChangeAudienceProfile}
-      />
-      <StatusText label="RAGFlow" value={ragflowStatusLabel || '\u68c0\u6d4b\u4e2d'} tone={ragflowStatusTone} />
-      <StatusText label={'RAGFlow 对话'} value={ragflowConversationLabel || '\u65e0'} />
-      <StatusText label={'\u5524\u9192\u8bcd'} value={wakeWordLabel} />
-      <StatusText label={'\u5f53\u524d\u7ad9\u70b9'} value={currentStopLabel} />
+    <div className="home-status-shell" role="status" aria-label={'当前讲解状态'}>
+      <div className="home-status-bar">
+        <StatusSelect label={'当前模式'} value={modeValue} options={modeOptions} onChange={onChangeMode} />
+        <StatusSelect label={'语速'} value={speedValue} options={speedOptions} onChange={onChangeSpeed} />
+        <StatusSelect label={'模板名称'} value={templateValue} options={templateOptions} onChange={onChangeTemplate} />
+        <StatusSelect label={'人群画像'} value={audienceProfileValue} options={audienceProfileOptions} onChange={onChangeAudienceProfile} />
+        <StatusText label="RAGFlow" value={ragflowStatusLabel || '检测中'} tone={ragflowStatusTone} />
+        <StatusText label={'RAGFlow 对话'} value={ragflowConversationLabel || '无'} />
+        <StatusText label={'唤醒词'} value={wakeWordLabel} />
+        <StatusText label={'当前站点'} value={currentStopLabel} />
+      </div>
+      <RequestTimelineBar debugInfo={debugInfo} serverStatus={serverStatus} ttsEnabled={ttsEnabled} />
     </div>
   );
 }

@@ -6,6 +6,16 @@ from dataclasses import dataclass
 
 from backend.api.system_utils import derive_status_metrics, find_ask_context
 
+_CLIENT_EVENT_TIMING_MAP = {
+    "ask_client_start": "t_ask_client_start_ms",
+    "ask_client_submit": "t_ask_client_submit_ms",
+    "asr_pending_asr_matched": "t_asr_pending_ms",
+    "asr_filtering_started": "t_asr_filter_start_ms",
+    "asr_filtering_finished": "t_asr_filter_end_ms",
+    "asr_filtering_failed": "t_asr_filter_end_ms",
+    "asr_accepted": "t_asr_accepted_ms",
+}
+
 
 @dataclass(frozen=True)
 class ClientEventIngest:
@@ -35,6 +45,25 @@ def parse_client_event(*, req, data: dict | None) -> ClientEventIngest:
     )
 
 
+def _extract_client_wall_ms(fields: dict) -> int | None:
+    data = fields if isinstance(fields, dict) else {}
+    candidates = (
+        data.get("t_client_wall_ms"),
+        data.get("t_wall_ms"),
+        data.get("asr_event_ts_ms"),
+        data.get("client_wall_ms"),
+    )
+    for raw in candidates:
+        try:
+            v = int(raw)
+        except Exception:
+            continue
+        # Heuristic: epoch-ms after 2000-01-01.
+        if v >= 946684800000:
+            return v
+    return None
+
+
 def ingest_client_event(*, deps, event: ClientEventIngest) -> bool:
     if not event.request_id or not event.name:
         return False
@@ -51,8 +80,15 @@ def ingest_client_event(*, deps, event: ClientEventIngest) -> bool:
 
     with contextlib.suppress(Exception):
         now_perf = time.perf_counter()
+        client_wall_ms = _extract_client_wall_ms(event.fields)
         if event.name in ("play_end", "tts_play_end", "playback_end"):
-            deps.ask_timings.set(event.request_id, t_play_end=now_perf)
+            updates = {"t_play_end": now_perf}
+            if client_wall_ms is not None:
+                updates["t_play_end_client_ms"] = int(client_wall_ms)
+            deps.ask_timings.set(event.request_id, **updates)
+        timing_key = _CLIENT_EVENT_TIMING_MAP.get(str(event.name or "").strip())
+        if timing_key and client_wall_ms is not None:
+            deps.ask_timings.set(event.request_id, **{timing_key: int(client_wall_ms)})
 
     return True
 

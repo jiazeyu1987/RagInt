@@ -17,16 +17,17 @@ from backend.api.ragflow_tour_history_utils import (
 
 def create_blueprint(deps):
     bp = Blueprint("ragflow_tour_history_api", __name__)
+    rag_chat_manager = getattr(deps, "ragflow_chat_manager", None) or getattr(deps, "ragflow_service", None)
 
     @bp.route("/api/ragflow/chats", methods=["GET"])
     def ragflow_list_chats():
-        return jsonify(deps.ragflow_service.list_chats())
+        return jsonify(rag_chat_manager.list_chats())
 
     @bp.route("/api/ragflow/chats/clear_sessions", methods=["POST"])
     def ragflow_clear_chat_sessions():
         data = request.get_json(silent=True) or {}
         chat_name = str((data.get("chat_name") if isinstance(data, dict) else "") or "").strip()
-        result = deps.ragflow_service.clear_chat_sessions(chat_name)
+        result = rag_chat_manager.clear_chat_sessions(chat_name)
         status = 200 if result.get("ok") else 500
         return jsonify(result), status
 
@@ -34,13 +35,13 @@ def create_blueprint(deps):
     def ragflow_create_chat_session():
         data = request.get_json(silent=True) or {}
         chat_name = str((data.get("chat_name") if isinstance(data, dict) else "") or "").strip()
-        result = deps.ragflow_service.create_new_session(chat_name)
+        result = rag_chat_manager.create_new_session(chat_name)
         status = 200 if result.get("ok") else 500
         return jsonify(result), status
 
     @bp.route("/api/ragflow/agents", methods=["GET"])
     def ragflow_list_agents():
-        res = deps.ragflow_service.list_agents()
+        res = rag_chat_manager.list_agents()
         try:
             deps.logger.info(f"ragflow_agents_list count={len(res.get('agents') or [])}")
         except Exception:
@@ -73,7 +74,9 @@ def create_blueprint(deps):
         deps.ragflow_service.save_config(cfg)
         connected = bool(deps.ragflow_service.init())
         deps.ragflow_default_chat_name = str(deps.ragflow_service.default_chat_name or "").strip()
-        deps.session = deps.ragflow_service.get_session(deps.ragflow_default_chat_name) if connected else None
+        deps.session = rag_chat_manager.resolve_session(agent_id="", conversation_name=deps.ragflow_default_chat_name) if connected else None
+        if hasattr(rag_chat_manager, "set_default_session"):
+            rag_chat_manager.set_default_session(deps.session)
         return jsonify(
             {
                 "ok": True,

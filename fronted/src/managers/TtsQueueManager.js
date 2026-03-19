@@ -742,7 +742,7 @@ export class TtsQueueManager {
         if (this._token === token) this._currentItem = null;
         // SD-6: t_play_end (client-side playback end). Best-effort.
         if (this._token === token && this._ragDone && !this._generatorPromise && this._audioQueue.length === 0) {
-          this._emit('play_end', { t_client_ms: this._nowMs() }, 'client');
+          this._emit('play_end', { t_client_ms: this._nowMs(), t_client_wall_ms: Date.now() }, 'client');
         }
       });
   }

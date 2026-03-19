@@ -5,6 +5,8 @@
 // - Prefetch next stops via /api/ask (kind=ask_prefetch)
 // - Cache prefetched answers (for UI + seamless stop transition)
 
+import { ragflowChunkManager } from './RagflowChunkManager';
+
 export class TourPipelineManager {
   constructor(opts) {
     const options = opts && typeof opts === 'object' ? opts : {};
@@ -33,6 +35,7 @@ export class TourPipelineManager {
     this._getRecordingId = typeof options.getRecordingId === 'function' ? options.getRecordingId : () => '';
     this._getPlaybackRecordingId =
       typeof options.getPlaybackRecordingId === 'function' ? options.getPlaybackRecordingId : () => '';
+    this._ragflowChunkManager = options.ragflowChunkManager || ragflowChunkManager;
 
     this._maxPrefetchAhead = Math.max(0, Number(options.maxPrefetchAhead ?? 1) || 1);
 
@@ -409,15 +412,13 @@ export class TourPipelineManager {
     try {
       const conv = this._getConversationConfig() || {};
       const recordingId = String(this._getRecordingId() || '').trim();
-      const resp = await fetch(`${this._baseUrl}/api/ask`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Client-ID': this._getClientId(),
-          'X-Request-ID': prefetchAskId,
-          ...(recordingId ? { 'X-Recording-ID': recordingId } : {}),
-        },
-        body: JSON.stringify({
+      const resp = await this._ragflowChunkManager.fetchAskStream({
+        baseUrl: this._baseUrl,
+        requestId: prefetchAskId,
+        clientId: this._getClientId(),
+        recordingId,
+        signal: ctl.signal,
+        payload: {
           question: prompt,
           request_id: prefetchAskId,
           client_id: this._getClientId(),
@@ -436,39 +437,20 @@ export class TourPipelineManager {
             tour_action: 'next',
             action_type: '切站',
           },
-        }),
-        signal: ctl.signal,
+        },
       });
 
       if (!resp.ok || !resp.body) throw new Error(`prefetch /api/ask http=${resp.status}`);
 
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let sseBuffer = '';
       let answerText = '';
       let gotAnySegment = false;
       const segments = [];
 
-      while (true) {
-        if (ctl.signal.aborted) break;
-        if (!this._canAutoAdvance()) break;
-        if ((!force && !this._active) || !this._isInterruptEpochCurrent(epoch)) break;
-        const { done, value } = await reader.read();
-        if (done) break;
-        sseBuffer += decoder.decode(value, { stream: true });
-        const lines = sseBuffer.split('\n');
-        sseBuffer = lines.pop() || '';
-        for (const line of lines) {
-          if (ctl.signal.aborted) break;
-          if (!this._isInterruptEpochCurrent(epoch)) break;
-          const trimmed = String(line || '').trim();
-          if (!trimmed.startsWith('data: ')) continue;
-          let data = null;
-          try {
-            data = JSON.parse(trimmed.slice(6));
-          } catch (_) {
-            continue;
-          }
+      await this._ragflowChunkManager.readSseStream(resp, {
+        onEvent: async (data) => {
+          if (ctl.signal.aborted) return false;
+          if (!this._canAutoAdvance()) return false;
+          if ((!force && !this._active) || !this._isInterruptEpochCurrent(epoch)) return false;
           if (data && data.chunk && !data.done) {
             answerText += String(data.chunk || '');
           }
@@ -478,18 +460,18 @@ export class TourPipelineManager {
               gotAnySegment = true;
               segments.push(seg);
               try {
-                if (!this._isInterruptEpochCurrent(epoch)) break;
+                if (!this._isInterruptEpochCurrent(epoch)) return false;
                 if (enqueueSegment) enqueueSegment(seg, { stopIndex: idx, source: 'prefetch' });
-                if (!this._isInterruptEpochCurrent(epoch)) break;
+                if (!this._isInterruptEpochCurrent(epoch)) return false;
                 if (ensureTtsRunning) ensureTtsRunning();
               } catch (_) {
                 // ignore
               }
             }
           }
-          if (data && data.done) break;
-        }
-      }
+          return true;
+        },
+      });
 
       if (ctl.signal.aborted) return;
       if (!this._canAutoAdvance()) return;

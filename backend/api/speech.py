@@ -39,6 +39,7 @@ from backend.services.asr_text_filter import (
 
 def create_blueprint(deps):
     bp = Blueprint("speech_api", __name__)
+    rag_chat_manager = getattr(deps, "ragflow_chat_manager", None) or getattr(deps, "ragflow_service", None)
 
     @bp.route("/api/asr/sauc/health", methods=["GET"])
     def api_sauc_proxy_health():
@@ -145,7 +146,7 @@ def create_blueprint(deps):
         )
 
         try:
-            raw_output = deps.ragflow_service.ask_chat(
+            raw_output = rag_chat_manager.ask_chat(
                 chat_name=chat_name,
                 question=prompt,
             )
@@ -178,6 +179,7 @@ def create_blueprint(deps):
     @bp.route("/api/ask", methods=["POST"])
     def ask_question():
         t_submit = time.perf_counter()
+        t_server_receive_wall_ms = int(time.time() * 1000)
         deps.logger.info("received ask request")
         data = json_body_dict(request, silent=False)
         try:
@@ -191,6 +193,7 @@ def create_blueprint(deps):
         if err is not None:
             deps.logger.error("ask payload missing question")
             return err
+        t_request_parse_done_wall_ms = int(time.time() * 1000)
 
         emit_ask_received_event(deps=deps, parsed=parsed)
 
@@ -200,11 +203,20 @@ def create_blueprint(deps):
             return early
 
         conversation_name = resolve_conversation_name(deps=deps, parsed=parsed)
-        deps.ask_timings.set(parsed.request_id, t_submit=t_submit)
+        t_conversation_resolved_wall_ms = int(time.time() * 1000)
+        deps.ask_timings.set(
+            parsed.request_id,
+            t_submit=t_submit,
+            t_server_receive_wall_ms=t_server_receive_wall_ms,
+            t_request_parse_done_wall_ms=t_request_parse_done_wall_ms,
+            t_conversation_resolved_wall_ms=t_conversation_resolved_wall_ms,
+            t_submit_wall_ms=int(time.time() * 1000),
+        )
 
         orchestrator = build_orchestrator(deps=deps)
         ragflow_config = get_ragflow_config(deps=deps)
         inp = build_ask_input(parsed=parsed, conversation_name=conversation_name)
+        deps.ask_timings.set(parsed.request_id, t_orchestrator_ready_wall_ms=int(time.time() * 1000))
 
         def generate_response():
             yield from stream_sse_response(

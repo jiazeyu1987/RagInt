@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 from dataclasses import dataclass
 
 from backend.orchestrators.ask_policies import apply_qa_requirements, apply_selling_points_topn_hint
@@ -16,11 +17,12 @@ from backend.orchestrators.ragflow_config import RagflowRuntimeConfig
 from backend.orchestrators.ragflow_streaming import (
     AskStreamOutcome,
     RagflowStreamSettings,
-    _stream_ragflow_response,
     _stream_ragflow_unavailable_fallback,
 )
 from backend.orchestrators.stream_payloads import make_chunk, make_done, make_meta
 from backend.orchestrators.text_cleaning import _init_text_cleaning
+from backend.services.ragflow_chat_manager import RagflowChatManager
+from backend.services.ragflow_chunk_manager import RagflowChunkManager
 from backend.services.safety_filter import SensitiveWordsFilter
 
 
@@ -63,6 +65,8 @@ class ConversationOrchestrator:
         *,
         ragflow_service,
         ragflow_agent_service,
+        ragflow_chat_manager=None,
+        ragflow_chunk_manager=None,
         intent_service,
         history_store,
         selling_points_store=None,
@@ -82,6 +86,42 @@ class ConversationOrchestrator:
         self._timings_get = timings_get
         self._default_session = default_session
         self._qa_audio_matcher = qa_audio_matcher
+        self._ragflow_chat_manager = ragflow_chat_manager or RagflowChatManager(
+            ragflow_service=ragflow_service, default_session=default_session
+        )
+        self._ragflow_chunk_manager = ragflow_chunk_manager or RagflowChunkManager(
+            ragflow_agent_service=ragflow_agent_service
+        )
+        raw_trace = str(os.environ.get("RAGINT_ASK_TRACE_LOG", "0") or "0").strip().lower()
+        self._ask_trace_log_enabled = raw_trace in ("1", "true", "yes", "y", "on")
+
+    def _trace_meta(
+        self,
+        *,
+        request_id: str,
+        request_mode: str,
+        answer_source: str,
+        trace_reason: str,
+        ragflow_chat_stage: str = "",
+        ragflow_chat_active: str = "",
+        extra: dict | None = None,
+    ) -> dict:
+        meta: dict = {
+            "request_mode": str(request_mode or "").strip(),
+            "answer_source": str(answer_source or "").strip(),
+            "trace_reason": str(trace_reason or "").strip(),
+        }
+        stage = str(ragflow_chat_stage or "").strip()
+        if stage:
+            meta["ragflow_chat_stage"] = stage
+        active = str(ragflow_chat_active or "").strip()
+        if active:
+            meta["ragflow_chat_active"] = active
+        if isinstance(extra, dict) and extra:
+            meta.update(extra)
+        if self._ask_trace_log_enabled:
+            self._logger.info(f"[{request_id}] ask_trace {meta}")
+        return make_meta(meta)
 
     def _finalize(
         self,
@@ -144,9 +184,7 @@ class ConversationOrchestrator:
                     )
 
     def _resolve_rag_session(self, *, agent_id: str, conversation_name: str):
-        if agent_id:
-            return None
-        return self._ragflow_service.get_session(conversation_name) if conversation_name else self._default_session
+        return self._ragflow_chat_manager.resolve_session(agent_id=agent_id, conversation_name=conversation_name)
 
     def _finalize_for_request(
         self,
@@ -324,13 +362,12 @@ class ConversationOrchestrator:
             )
 
         return (
-            yield from _stream_ragflow_response(
+            yield from self._ragflow_chunk_manager.stream_response(
                 request_id=request_id,
                 client_id=client_id,
                 agent_id=agent_id,
                 question_for_rag=question_for_rag,
                 rag_session=rag_session,
-                ragflow_agent_service=self._ragflow_agent_service,
                 cancel_event=cancel_event,
                 t_submit=t_submit,
                 logger=self._logger,
@@ -394,8 +431,19 @@ class ConversationOrchestrator:
             f"recording_id={'yes' if str(inp.recording_id or '').strip() else 'no'} "
             f"lookup_enabled={qa_audio_lookup_enabled}"
         )
+        yield self._trace_meta(
+            request_id=request_id,
+            request_mode=request_mode,
+            answer_source="pending",
+            trace_reason="ask_received",
+            ragflow_chat_stage="none",
+            ragflow_chat_active=conversation_name if not agent_id else "",
+        )
 
         audio_cache_outcome = None
+        cache_debug_emitted = False
+        recording_mode = str(inp.recording_id or "").strip()
+        latest_cache_debug: dict = {}
         if not str(inp.recording_id or "").strip():
             audio_cache_outcome = yield from _maybe_stream_audio_cache_shortcut(
                 request_id=request_id,
@@ -410,9 +458,52 @@ class ConversationOrchestrator:
                 tts_speed=float(inp.tts_speed if inp.tts_speed is not None else 1.0),
                 safety_filter=safety_filter,
                 logger=self._logger,
+                timings_set=self._timings_set,
                 base_url="",
             )
+        if (
+            not recording_mode
+            and qa_audio_lookup_enabled
+            and self._qa_audio_matcher is not None
+            and hasattr(self._qa_audio_matcher, "get_last_debug")
+        ):
+            with contextlib.suppress(Exception):
+                cache_debug = self._qa_audio_matcher.get_last_debug() or {}
+                if isinstance(cache_debug, dict) and cache_debug:
+                    latest_cache_debug = dict(cache_debug)
+                    self._logger.info(f"[{request_id}] qa_audio_cache_debug {cache_debug}")
+                    cache_debug_emitted = True
+                    classifier_chat_name = str(
+                        cache_debug.get("classifier_chat_name")
+                        or runtime.qa_audio_classifier_chat_name
+                        or ""
+                    ).strip()
+                    qa_stage = "qa_match" if bool(cache_debug.get("classifier_called")) and classifier_chat_name else "none"
+                    yield self._trace_meta(
+                        request_id=request_id,
+                        request_mode=request_mode,
+                        answer_source="qa_audio_cache_lookup",
+                        trace_reason=str(cache_debug.get("reason") or "qa_audio_cache_lookup"),
+                        ragflow_chat_stage=qa_stage,
+                        ragflow_chat_active=classifier_chat_name if qa_stage == "qa_match" else "",
+                        extra={"qa_audio_cache_debug": cache_debug},
+                    )
         if audio_cache_outcome is not None:
+            cache_reason = str(latest_cache_debug.get("reason") or "qa_audio_cache_hit")
+            classifier_chat_name = str(
+                latest_cache_debug.get("classifier_chat_name")
+                or runtime.qa_audio_classifier_chat_name
+                or ""
+            ).strip()
+            qa_stage = "qa_match" if bool(latest_cache_debug.get("classifier_called")) and classifier_chat_name else "none"
+            yield self._trace_meta(
+                request_id=request_id,
+                request_mode=request_mode,
+                answer_source="qa_audio_cache",
+                trace_reason=cache_reason,
+                ragflow_chat_stage=qa_stage,
+                ragflow_chat_active=classifier_chat_name if qa_stage == "qa_match" else "",
+            )
             self._finalize_for_request(
                 inp=inp,
                 outcome=audio_cache_outcome,
@@ -428,19 +519,44 @@ class ConversationOrchestrator:
             return
 
         # Expose QA-audio-cache miss diagnostics to frontend/debug panel.
-        if (
-            not str(inp.recording_id or "").strip()
+        if not recording_mode and runtime.qa_audio_cache_enabled and not qa_audio_lookup_enabled:
+            miss_debug = {"hit": False, "reason": "lookup_disabled_by_client"}
+            latest_cache_debug = dict(miss_debug)
+            yield self._trace_meta(
+                request_id=request_id,
+                request_mode=request_mode,
+                answer_source="qa_audio_cache_lookup",
+                trace_reason="lookup_disabled_by_client",
+                ragflow_chat_stage="none",
+                extra={"qa_audio_cache_debug": miss_debug},
+            )
+        elif (
+            not recording_mode
             and qa_audio_lookup_enabled
+            and not cache_debug_emitted
             and self._qa_audio_matcher is not None
             and hasattr(self._qa_audio_matcher, "get_last_debug")
         ):
             with contextlib.suppress(Exception):
                 cache_debug = self._qa_audio_matcher.get_last_debug() or {}
                 if isinstance(cache_debug, dict) and cache_debug:
+                    latest_cache_debug = dict(cache_debug)
                     self._logger.info(f"[{request_id}] qa_audio_cache_debug {cache_debug}")
-                    yield make_meta({"qa_audio_cache_debug": cache_debug})
-        elif not str(inp.recording_id or "").strip() and runtime.qa_audio_cache_enabled and not qa_audio_lookup_enabled:
-            yield make_meta({"qa_audio_cache_debug": {"hit": False, "reason": "lookup_disabled_by_client"}})
+                    classifier_chat_name = str(
+                        cache_debug.get("classifier_chat_name")
+                        or runtime.qa_audio_classifier_chat_name
+                        or ""
+                    ).strip()
+                    qa_stage = "qa_match" if bool(cache_debug.get("classifier_called")) and classifier_chat_name else "none"
+                    yield self._trace_meta(
+                        request_id=request_id,
+                        request_mode=request_mode,
+                        answer_source="qa_audio_cache_lookup",
+                        trace_reason=str(cache_debug.get("reason") or "qa_audio_cache_lookup"),
+                        ragflow_chat_stage=qa_stage,
+                        ragflow_chat_active=classifier_chat_name if qa_stage == "qa_match" else "",
+                        extra={"qa_audio_cache_debug": cache_debug},
+                    )
 
         cache_outcome = yield from _maybe_stream_cache_shortcut(
             request_id=request_id,
@@ -452,6 +568,13 @@ class ConversationOrchestrator:
             logger=self._logger,
         )
         if cache_outcome is not None:
+            yield self._trace_meta(
+                request_id=request_id,
+                request_mode=request_mode,
+                answer_source="qa_text_cache",
+                trace_reason="qa_text_cache_hit",
+                ragflow_chat_stage="none",
+            )
             self._finalize_for_request(
                 inp=inp,
                 outcome=cache_outcome,
@@ -484,6 +607,13 @@ class ConversationOrchestrator:
             logger=self._logger,
         )
         if fast_outcome is not None:
+            yield self._trace_meta(
+                request_id=request_id,
+                request_mode=request_mode,
+                answer_source="fast_intent",
+                trace_reason=f"intent:{str(getattr(intent, 'intent', '') or '')}",
+                ragflow_chat_stage="none",
+            )
             self._finalize_for_request(
                 inp=inp,
                 outcome=fast_outcome,
@@ -499,6 +629,26 @@ class ConversationOrchestrator:
             return
 
         rag_session = self._resolve_rag_session(agent_id=agent_id, conversation_name=conversation_name)
+        using_fallback = (not agent_id) and (not rag_session)
+
+        if not agent_id and str(conversation_name or "").strip():
+            yield self._trace_meta(
+                request_id=request_id,
+                request_mode=request_mode,
+                answer_source="ragflow_unavailable_fallback" if using_fallback else "ragflow_stream",
+                trace_reason="rag_session_unavailable" if using_fallback else "main_ask_begin",
+                ragflow_chat_stage="main_ask",
+                ragflow_chat_active=str(conversation_name or "").strip(),
+            )
+        elif agent_id:
+            yield self._trace_meta(
+                request_id=request_id,
+                request_mode=request_mode,
+                answer_source="ragflow_stream",
+                trace_reason=f"agent:{agent_id}",
+                ragflow_chat_stage="main_ask",
+                ragflow_chat_active=f"agent:{agent_id}",
+            )
 
         settings = self._build_stream_settings(
             apply_qa_constraints=apply_qa_constraints,

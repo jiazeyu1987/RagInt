@@ -347,60 +347,49 @@ export function DebugPanel({
             <div className="debug-muted">Loading...</div>
           ) : (
             <>
+              {(() => {
+                const derived = serverStatus.derived_ms && typeof serverStatus.derived_ms === 'object' ? serverStatus.derived_ms : {};
+                const renderDerived = (label, key) => (
+                  <div className="debug-row" key={key}>
+                    <div className="debug-k">{label}</div>
+                    <div className="debug-v">{derived[key] != null ? `${derived[key]} ms` : '-'}</div>
+                  </div>
+                );
+                return (
+                  <>
+                    <div className="debug-row">
+                      <div className="debug-k">cancelled</div>
+                      <div className="debug-v">{serverStatus.cancelled ? 'yes' : 'no'}</div>
+                    </div>
+                    {renderDerived('submit->rag first chunk', 'submit_to_rag_first_chunk_ms')}
+                    {renderDerived('submit->rag first text', 'submit_to_rag_first_text_ms')}
+                    {renderDerived('submit->first segment', 'submit_to_first_segment_ms')}
+                    <div className="debug-row">
+                      <div className="debug-k">tts_seen</div>
+                      <div className="debug-v">{serverStatus.tts_state && serverStatus.tts_state.count != null ? `${serverStatus.tts_state.count}` : '-'}</div>
+                    </div>
+                    {renderDerived('submit->tts first audio', 'submit_to_tts_first_audio_ms')}
+                    {renderDerived('submit->play end', 'submit_to_play_end_ms')}
+
+                    <div className="debug-subtitle">Full Chain Breakdown</div>
+                    {renderDerived('asr pending->filter start', 'asr_pending_to_filter_start_ms')}
+                    {renderDerived('asr filter', 'asr_filter_ms')}
+                    {renderDerived('asr filter->accepted', 'asr_filter_to_accepted_ms')}
+                    {renderDerived('asr postprocess total', 'asr_postprocess_total_ms')}
+                    {renderDerived('asr accepted->ask start', 'asr_accepted_to_ask_client_start_ms')}
+                    {renderDerived('ask start->server submit', 'ask_client_start_to_server_submit_ms')}
+                    {renderDerived('rag first chunk->first text', 'rag_first_chunk_to_first_text_ms')}
+                    {renderDerived('rag first text->first segment', 'rag_first_text_to_first_segment_ms')}
+                    {renderDerived('first segment->tts first audio', 'first_segment_to_tts_first_audio_ms')}
+                    {renderDerived('tts first audio->play end', 'tts_first_audio_to_play_end_ms')}
+                    {renderDerived('ask start->play end(client)', 'ask_client_start_to_play_end_client_ms')}
+                  </>
+                );
+              })()}
               <div className="debug-row">
-                <div className="debug-k">cancelled</div>
-                <div className="debug-v">{serverStatus.cancelled ? 'yes' : 'no'}</div>
+                <div className="debug-k">last_error</div>
+                <div className="debug-v">{serverStatus.last_error ? `${serverStatus.last_error.kind || 'error'}:${serverStatus.last_error.name || 'error'}` : '-'}</div>
               </div>
-              <div className="debug-row">
-                <div className="debug-k">submit->rag first chunk</div>
-                <div className="debug-v">
-                  {serverStatus.derived_ms && serverStatus.derived_ms.submit_to_rag_first_chunk_ms != null
-                    ? `${serverStatus.derived_ms.submit_to_rag_first_chunk_ms} ms`
-                    : '-'}
-                </div>
-              </div>
-              <div className="debug-row">
-                <div className="debug-k">submit->rag first text</div>
-                <div className="debug-v">
-                  {serverStatus.derived_ms && serverStatus.derived_ms.submit_to_rag_first_text_ms != null
-                    ? `${serverStatus.derived_ms.submit_to_rag_first_text_ms} ms`
-                    : '-'}
-                </div>
-              </div>
-              <div className="debug-row">
-                <div className="debug-k">submit->first segment</div>
-                <div className="debug-v">
-                  {serverStatus.derived_ms && serverStatus.derived_ms.submit_to_first_segment_ms != null
-                    ? `${serverStatus.derived_ms.submit_to_first_segment_ms} ms`
-                    : '-'}
-                </div>
-              </div>
-              <div className="debug-row">
-                <div className="debug-k">tts_seen</div>
-                <div className="debug-v">{serverStatus.tts_state && serverStatus.tts_state.count != null ? `${serverStatus.tts_state.count}` : '-'}</div>
-              </div>
-              <div className="debug-row">
-                <div className="debug-k">submit->tts first audio</div>
-                <div className="debug-v">
-                  {serverStatus.derived_ms && serverStatus.derived_ms.submit_to_tts_first_audio_ms != null
-                    ? `${serverStatus.derived_ms.submit_to_tts_first_audio_ms} ms`
-                    : '-'}
-                </div>
-              </div>
-              <div className="debug-row">
-                <div className="debug-k">submit->play end</div>
-                <div className="debug-v">
-                  {serverStatus.derived_ms && serverStatus.derived_ms.submit_to_play_end_ms != null
-                    ? `${serverStatus.derived_ms.submit_to_play_end_ms} ms`
-                    : '-'}
-                </div>
-              </div>
-              {serverStatus.last_error ? (
-                <div className="debug-row">
-                  <div className="debug-k">last_error</div>
-                  <div className="debug-v">{`${serverStatus.last_error.kind || 'error'}:${serverStatus.last_error.name || 'error'}`}</div>
-                </div>
-              ) : null}
             </>
           )}
 

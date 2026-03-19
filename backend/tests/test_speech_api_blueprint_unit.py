@@ -32,6 +32,7 @@ class _Logger:
 class _Deps:
     def __init__(self, ragflow_service):
         self.ragflow_service = ragflow_service
+        self.ragflow_chat_manager = ragflow_service
         self.logger = _Logger()
 
 

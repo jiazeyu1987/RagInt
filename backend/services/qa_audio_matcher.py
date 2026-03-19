@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 
+from backend.services.ragflow_chat_manager import RagflowChatManager
 from backend.services.qa_audio_pipeline_managers import CacheRecallManager
 from backend.services.qa_audio_pipeline_managers import CacheWritebackManager
 from backend.services.qa_audio_pipeline_managers import HitResponseManager
@@ -36,9 +37,13 @@ class QaAudioMatcher:
 
     _CORE_ENTITY_TERMS: tuple[str, ...] = DEFAULT_CORE_ENTITY_TERMS
 
-    def __init__(self, *, store, ragflow_service, tts_service, logger: logging.Logger | None = None):
+    def __init__(self, *, store, ragflow_service, tts_service, ragflow_chat_manager=None, logger: logging.Logger | None = None):
         self._store = store
         self._ragflow_service = ragflow_service
+        self._ragflow_chat_manager = ragflow_chat_manager or RagflowChatManager(
+            ragflow_service=ragflow_service,
+            default_session=None,
+        )
         self._tts_service = tts_service
         self._logger = logger or logging.getLogger(__name__)
         self._debug_local = threading.local()
@@ -46,7 +51,10 @@ class QaAudioMatcher:
         self._intake_manager = QuestionIntakeManager()
         self._normalization_manager = QuestionNormalizationManager(core_terms=self._CORE_ENTITY_TERMS)
         self._recall_manager = CacheRecallManager(store=store)
-        self._classifier_manager = MatchClassifierManager(ragflow_service=ragflow_service, logger=self._logger)
+        self._classifier_manager = MatchClassifierManager(
+            ragflow_chat_manager=self._ragflow_chat_manager,
+            logger=self._logger,
+        )
         self._decision_manager = MatchDecisionManager()
         self._hit_manager = HitResponseManager()
         self._miss_manager = MissExecutionManager()
@@ -170,6 +178,7 @@ class QaAudioMatcher:
             "tts_voice": ctx.voice,
             "tts_speed": ctx.speed,
             "classifier_chat_name": ctx.classifier_chat_name,
+            "classifier_called": False,
         }
 
         if not ctx.question:
@@ -264,6 +273,7 @@ class QaAudioMatcher:
             for c in candidates
         ]
         prompt = self._build_classifier_prompt(user_question=ctx.question, candidates=raw_candidates)
+        debug["classifier_called"] = True
         raw_text = self._ask_classifier_model(prompt=prompt, classifier_chat_name=ctx.classifier_chat_name)
         raw_text_str = str(raw_text or "")
         debug["classifier_raw_len"] = len(raw_text_str)

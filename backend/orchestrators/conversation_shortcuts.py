@@ -40,6 +40,7 @@ def _maybe_stream_audio_cache_shortcut(
     tts_speed: float,
     safety_filter,
     logger,
+    timings_set=None,
     base_url: str = "",
 ):
     return (
@@ -56,6 +57,7 @@ def _maybe_stream_audio_cache_shortcut(
             tts_speed=tts_speed,
             safety_filter=safety_filter,
             logger=logger,
+            timings_set=timings_set,
             base_url=base_url,
         )
     )

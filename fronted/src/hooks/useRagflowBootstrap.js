@@ -1,7 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { fetchJson } from '../api/backendClient';
-
-const EXHIBIT_CHAT_NAME = '\u5c55\u5385\u804a\u5929';
+import { ragflowChatManager } from '../managers/RagflowChatManager';
 
 export function useRagflowBootstrap({
   setChatOptions,
@@ -35,19 +33,14 @@ export function useRagflowBootstrap({
     let cancelled = false;
     (async () => {
       try {
-        const data = await fetchJson('/api/ragflow/chats');
+        const data = await ragflowChatManager.listChats();
         if (cancelled) return;
-        const chats = Array.isArray(data && data.chats) ? data.chats : [];
-        const names = chats.map((c) => (c && c.name ? String(c.name) : '')).filter(Boolean);
+        const names = ragflowChatManager.getChatNames(data);
         const nextSetters = settersRef.current || {};
         if (typeof nextSetters.setChatOptions === 'function') nextSetters.setChatOptions(names);
-        const defName = (data && data.default ? String(data.default) : '').trim();
-        if (names.includes(EXHIBIT_CHAT_NAME)) {
-          if (typeof nextSetters.setSelectedChat === 'function') nextSetters.setSelectedChat(EXHIBIT_CHAT_NAME);
-        } else if (defName && names.includes(defName)) {
-          if (typeof nextSetters.setSelectedChat === 'function') nextSetters.setSelectedChat(defName);
-        } else if (names.length) {
-          if (typeof nextSetters.setSelectedChat === 'function') nextSetters.setSelectedChat(names[0]);
+        const preferredName = ragflowChatManager.resolvePreferredChatName(data);
+        if (preferredName && typeof nextSetters.setSelectedChat === 'function') {
+          nextSetters.setSelectedChat(preferredName);
         }
         if (typeof nextSetters.onBootstrapSuccess === 'function') {
           nextSetters.onBootstrapSuccess({ scope: 'chats', data });
@@ -69,13 +62,13 @@ export function useRagflowBootstrap({
     let cancelled = false;
     (async () => {
       try {
-        const data = await fetchJson('/api/ragflow/agents');
+        const data = await ragflowChatManager.listAgents();
         if (cancelled) return;
         const agents = Array.isArray(data && data.agents) ? data.agents : [];
         const nextSetters = settersRef.current || {};
         if (typeof nextSetters.setAgentOptions === 'function') nextSetters.setAgentOptions(agents);
-        const defId = (data && data.default ? String(data.default) : '').trim();
-        if (defId && agents.some((a) => String(a && a.id) === defId)) {
+        const defId = ragflowChatManager.resolveDefaultAgentId(data);
+        if (defId) {
           if (typeof nextSetters.setSelectedAgentId === 'function') nextSetters.setSelectedAgentId(defId);
         } else if (typeof nextSetters.setSelectedAgentId === 'function') {
           nextSetters.setSelectedAgentId('');

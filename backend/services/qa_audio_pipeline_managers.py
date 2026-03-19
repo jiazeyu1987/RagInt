@@ -174,8 +174,8 @@ class CacheRecallManager:
 
 
 class MatchClassifierManager:
-    def __init__(self, *, ragflow_service, logger: logging.Logger):
-        self._ragflow_service = ragflow_service
+    def __init__(self, *, ragflow_chat_manager=None, logger: logging.Logger):
+        self._ragflow_chat_manager = ragflow_chat_manager
         self._logger = logger
 
     @staticmethod
@@ -257,7 +257,9 @@ class MatchClassifierManager:
             return _to_text(chunk)
 
         try:
-            sess = self._ragflow_service.get_session(classifier_chat_name)
+            sess = None
+            if self._ragflow_chat_manager is not None and hasattr(self._ragflow_chat_manager, "resolve_session"):
+                sess = self._ragflow_chat_manager.resolve_session(agent_id="", conversation_name=classifier_chat_name)
             if not sess:
                 return ""
             resp = sess.ask(prompt, stream=False)

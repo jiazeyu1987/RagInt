@@ -40,6 +40,32 @@ class _RagflowService:
         return {"id": "s1"}
 
 
+class _RagflowChatManager:
+    def __init__(self, service: _RagflowService):
+        self._service = service
+        self.default_session = None
+
+    def list_chats(self):
+        return self._service.list_chats()
+
+    def list_agents(self):
+        return self._service.list_agents()
+
+    def clear_chat_sessions(self, chat_name: str):
+        return self._service.clear_chat_sessions(chat_name)
+
+    def create_new_session(self, chat_name: str):
+        return self._service.create_new_session(chat_name)
+
+    def resolve_session(self, *, agent_id: str, conversation_name: str):
+        if str(agent_id or "").strip():
+            return None
+        return self._service.get_session(conversation_name)
+
+    def set_default_session(self, session):
+        self.default_session = session
+
+
 class _Logger:
     def info(self, *args, **kwargs):  # noqa: ANN002, ANN003
         return None
@@ -73,6 +99,7 @@ class _TourPlanner:
 class _Deps:
     def __init__(self):
         self.ragflow_service = _RagflowService()
+        self.ragflow_chat_manager = _RagflowChatManager(self.ragflow_service)
         self.logger = _Logger()
         self.history_store = _HistoryStore()
         self.tour_planner = _TourPlanner()

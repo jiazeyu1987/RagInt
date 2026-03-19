@@ -22,6 +22,7 @@ function makeBaseDeps(overrides = {}) {
     activeTourRecordingIdRef: { current: 'rid_old' },
     startTourRecordingArchive: jest.fn().mockResolvedValue(''),
     loadTourRecordingMeta: jest.fn().mockResolvedValue(null),
+    ragflowChatManager: { createNewSession: jest.fn().mockResolvedValue({ ok: true }) },
     fetchJson: jest.fn().mockResolvedValue({
       stops: ['Stop A', 'Stop B'],
       stop_durations_s: [30, 60],
@@ -133,7 +134,9 @@ describe('TourController', () => {
       useAgentModeRef: { current: false },
       selectedChatRef: { current: 'Chat A' },
       onRagflowUnavailable,
-      fetchJson: jest.fn().mockRejectedValue(new Error('HTTP 500 /api/ragflow/chats/new_session')),
+      ragflowChatManager: {
+        createNewSession: jest.fn().mockRejectedValue(new Error('HTTP 500 /api/ragflow/chats/new_session')),
+      },
     });
     const c = new TourController(deps);
 

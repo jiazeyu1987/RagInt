@@ -1,6 +1,7 @@
 import { tourStateOnInterrupt, tourStateOnReady, tourStateOnTourAction, tourStateOnUserQuestion } from './TourStateMachine';
 import { RUN_REASON } from './RunReasons';
 import { classifyInterrupt } from './RunPolicies';
+import { ragflowChunkManager } from './RagflowChunkManager';
 
 const MAX_CONTEXT_TURNS = 200;
 const CONTEXT_MARKER_MEMORY = '[CONTEXT_MEMORY]';
@@ -16,6 +17,10 @@ function clampInt(value, fallback, min, max) {
 
 function safeTrim(value) {
   return String(value == null ? '' : value).trim();
+}
+
+function nowWallMs() {
+  return Date.now();
 }
 
 function shortenLine(value, maxLen = 120) {
@@ -402,6 +407,8 @@ export class AskWorkflowManager {
       selectedChatRef,
       selectedAgentIdRef,
       setCurrentIntent,
+      setActiveRagflowConversationName,
+      askTraceDebug,
       getTourPipeline,
       getHistorySort,
       fetchHistory,
@@ -442,6 +449,17 @@ export class AskWorkflowManager {
 
     const runId = requestSeqRef ? ++requestSeqRef.current : Date.now();
     const requestId = `ask_${runId}_${Date.now()}`;
+    const emitClientEventFn = typeof this.deps.emitClientEvent === 'function' ? this.deps.emitClientEvent : null;
+    const traceEnabled = !!askTraceDebug;
+    const traceLog = (event, fields = {}) => {
+      if (!traceEnabled) return;
+      try {
+        // eslint-disable-next-line no-console
+        console.log('[ASK_TRACE]', { request_id: requestId, event, ...(fields || {}) });
+      } catch (_) {
+        // ignore
+      }
+    };
     if (activeAskRequestIdRef) activeAskRequestIdRef.current = requestId;
     try {
       if (debugRef && debugRef.current) {
@@ -460,7 +478,31 @@ export class AskWorkflowManager {
     if (typeof setAnswer === 'function') setAnswer('');
     if (typeof setAnswerCacheMeta === 'function') setAnswerCacheMeta({ hit: false, type: '' });
     if (typeof setQaCacheDebug === 'function') setQaCacheDebug(null);
+    if (typeof setActiveRagflowConversationName === 'function') setActiveRagflowConversationName('');
     if (typeof setIsLoading === 'function') setIsLoading(true);
+    if (emitClientEventFn) {
+      try {
+        emitClientEventFn({
+          requestId,
+          clientId: clientIdRef ? clientIdRef.current : '',
+          kind: 'ask',
+          name: 'ask_client_start',
+          fields: {
+            t_client_wall_ms: nowWallMs(),
+            from_queue: !!options.fromQueue,
+            tour_action: String(options.tourAction || ''),
+          },
+        });
+      } catch (_) {
+        // ignore
+      }
+    }
+    traceLog('ask_start', {
+      question_preview: String(userQuestion || text || '').slice(0, 120),
+      tour_action: String(options.tourAction || ''),
+      selected_chat: String((selectedChatRef && selectedChatRef.current) || ''),
+      use_agent_mode: !!(useAgentModeRef && useAgentModeRef.current),
+    });
 
     // 清空所有队列/状态（用于“打断”或新问题覆盖旧问题）
     if (receivedSegmentsRef) receivedSegmentsRef.current = false;
@@ -586,7 +628,6 @@ export class AskWorkflowManager {
           return u;
         }
       };
-      const emitClientEvent = typeof this.deps.emitClientEvent === 'function' ? this.deps.emitClientEvent : null;
       const consumePendingAsrClientEvents =
         typeof this.deps.consumePendingAsrClientEvents === 'function' ? this.deps.consumePendingAsrClientEvents : null;
       const tourAction = options.tourAction ? String(options.tourAction || '').trim() : '';
@@ -624,38 +665,64 @@ export class AskWorkflowManager {
         // ignore
       }
 
-      // SD-6 navigation events (this repo currently has no real chassis adapter; mark as skipped).
-      if (emitClientEvent && tourAction && Number.isFinite(stopIndex)) {
+      if (emitClientEventFn) {
         try {
-          emitClientEvent({
+          emitClientEventFn({
             requestId,
-            kind: 'nav',
-            name: 'nav_start',
-            fields: { stop_index: stopIndex, stop_id: `stop_${stopIndex}`, tour_action: tourAction, mode: 'skipped' },
-          });
-          emitClientEvent({
-            requestId,
-            kind: 'nav',
-            name: 'nav_arrived',
-            fields: { stop_index: stopIndex, stop_id: `stop_${stopIndex}`, tour_action: tourAction, mode: 'skipped' },
+            clientId: clientIdRef ? clientIdRef.current : '',
+            kind: 'ask',
+            name: 'ask_client_submit',
+            fields: {
+              t_client_wall_ms: nowWallMs(),
+              tour_action: tourAction || '',
+              action_type: actionType,
+              playback_mode: isPlaybackTour ? 'recording_playback' : 'normal',
+            },
           });
         } catch (_) {
           // ignore
         }
       }
 
-      if (emitClientEvent && consumePendingAsrClientEvents) {
+      // SD-6 navigation events (this repo currently has no real chassis adapter; mark as skipped).
+      if (emitClientEventFn && tourAction && Number.isFinite(stopIndex)) {
+        try {
+          emitClientEventFn({
+            requestId,
+            kind: 'nav',
+            name: 'nav_start',
+            fields: { stop_index: stopIndex, stop_id: `stop_${stopIndex}`, tour_action: tourAction, mode: 'skipped', t_client_wall_ms: nowWallMs() },
+          });
+          emitClientEventFn({
+            requestId,
+            kind: 'nav',
+            name: 'nav_arrived',
+            fields: { stop_index: stopIndex, stop_id: `stop_${stopIndex}`, tour_action: tourAction, mode: 'skipped', t_client_wall_ms: nowWallMs() },
+          });
+        } catch (_) {
+          // ignore
+        }
+      }
+
+      if (emitClientEventFn && consumePendingAsrClientEvents) {
         try {
           const bufferedAsrEvents = consumePendingAsrClientEvents();
           for (const evt of bufferedAsrEvents || []) {
             const fields = evt && evt.fields && typeof evt.fields === 'object' ? evt.fields : {};
             const eventName = String((evt && evt.name) || '').trim();
             if (!eventName) continue;
-            emitClientEvent({
+            const eventWallMsRaw = Number(evt && evt.ts);
+            const eventWallMs = Number.isFinite(eventWallMsRaw) ? Math.round(eventWallMsRaw) : nowWallMs();
+            const timedFields = { ...fields };
+            if (!Number.isFinite(Number(timedFields.t_client_wall_ms))) timedFields.t_client_wall_ms = eventWallMs;
+            if (!Number.isFinite(Number(timedFields.asr_event_ts_ms))) timedFields.asr_event_ts_ms = eventWallMs;
+            timedFields.asr_event_name = eventName;
+            emitClientEventFn({
               requestId,
+              clientId: clientIdRef ? clientIdRef.current : '',
               kind: 'voice',
               name: `asr_${eventName}`,
-              fields,
+              fields: timedFields,
             });
           }
         } catch (_) {
@@ -782,14 +849,14 @@ export class AskWorkflowManager {
         return fullAnswer;
       }
 
-      const response = await fetch(`${base}/api/ask`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Client-ID': clientIdRef ? clientIdRef.current : '',
-          ...(recordingIdForThisAsk ? { 'X-Recording-ID': recordingIdForThisAsk } : {}),
-        },
-        body: JSON.stringify({
+      const chunkManager = this.deps.ragflowChunkManager || ragflowChunkManager;
+      const response = await chunkManager.fetchAskStream({
+        baseUrl: base,
+        requestId,
+        clientId: clientIdRef ? clientIdRef.current : '',
+        recordingId: recordingIdForThisAsk || '',
+        signal: abortController.signal,
+        payload: {
           question: questionForRequest || userQuestion || text,
           request_id: requestId,
           client_id: clientIdRef ? clientIdRef.current : '',
@@ -815,41 +882,36 @@ export class AskWorkflowManager {
             style: String((guideStyleRef && guideStyleRef.current) || 'friendly'),
             prompt_prefix: String((globalPromptPrefixRef && globalPromptPrefixRef.current) || ''),
           },
-        }),
-        signal: abortController.signal,
+        },
       });
 
       if (!response.ok || !response.body) {
         throw new Error(`RAGFlow HTTP error: ${response.status}`);
       }
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let sseBuffer = '';
       let sawDone = false;
       let hasAudioHit = false;
+      let traceFirstChunkLogged = false;
+      let traceFirstSegmentLogged = false;
+      let latestTraceMeta = {
+        ragflow_chat_stage: '',
+        ragflow_chat_active: '',
+        answer_source: '',
+        trace_reason: '',
+        request_mode: '',
+      };
 
-      while (true) {
-        if (!allow()) {
-          try {
-            abortController.abort();
-          } catch (_) {
-            // ignore
+      await chunkManager.readSseStream(response, {
+        onEvent: async (data) => {
+          if (!allow()) {
+            try {
+              abortController.abort();
+            } catch (_) {
+              // ignore
+            }
+            return false;
           }
-          break;
-        }
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        sseBuffer += decoder.decode(value, { stream: true });
-        const lines = sseBuffer.split('\n');
-        sseBuffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data: ')) continue;
           try {
-            const data = JSON.parse(trimmed.slice(6));
             if (data && data.cache && data.cache.hit && typeof setAnswerCacheMeta === 'function') {
               const cacheType = String((data.cache && data.cache.type) || '').trim();
               setAnswerCacheMeta({ hit: true, type: cacheType || 'qa_text' });
@@ -902,6 +964,30 @@ export class AskWorkflowManager {
                   }
                 }
               }
+              const ragflowChatStage = safeTrim(data.meta.ragflow_chat_stage);
+              const ragflowChatActive = safeTrim(data.meta.ragflow_chat_active);
+              const answerSource = safeTrim(data.meta.answer_source);
+              const traceReason = safeTrim(data.meta.trace_reason);
+              const requestMode = safeTrim(data.meta.request_mode);
+              if (ragflowChatStage) latestTraceMeta.ragflow_chat_stage = ragflowChatStage;
+              if (ragflowChatActive) latestTraceMeta.ragflow_chat_active = ragflowChatActive;
+              if (answerSource) latestTraceMeta.answer_source = answerSource;
+              if (traceReason) latestTraceMeta.trace_reason = traceReason;
+              if (requestMode) latestTraceMeta.request_mode = requestMode;
+              if (ragflowChatActive && typeof setActiveRagflowConversationName === 'function') {
+                setActiveRagflowConversationName(ragflowChatActive);
+              }
+              if (ragflowChatStage || ragflowChatActive || answerSource || traceReason || requestMode) {
+                traceLog('meta', {
+                  stream_request_id: String((data && data.request_id) || ''),
+                  t_ms: Number.isFinite(Number(data && data.t_ms)) ? Number(data.t_ms) : null,
+                  ragflow_chat_stage: ragflowChatStage || '',
+                  ragflow_chat_active: ragflowChatActive || '',
+                  answer_source: answerSource || '',
+                  trace_reason: traceReason || '',
+                  request_mode: requestMode || '',
+                });
+              }
               const intent = data.meta.intent ? String(data.meta.intent) : '';
               const conf = data.meta.intent_confidence != null ? Number(data.meta.intent_confidence) : null;
               if (intent && typeof setCurrentIntent === 'function') setCurrentIntent({ intent, confidence: conf });
@@ -910,6 +996,16 @@ export class AskWorkflowManager {
             if (data.chunk && !data.done) {
               if (debugRef && !debugRef.current && typeof beginDebugRun === 'function') beginDebugRun('unknown');
               if (typeof debugMark === 'function') debugMark('ragflowFirstChunkAt');
+              if (!traceFirstChunkLogged) {
+                traceFirstChunkLogged = true;
+                traceLog('first_chunk', {
+                  chunk_preview: String(data.chunk || '').replace(/\s+/g, ' ').slice(0, 120),
+                  ragflow_chat_stage: latestTraceMeta.ragflow_chat_stage || '',
+                  ragflow_chat_active: latestTraceMeta.ragflow_chat_active || '',
+                  answer_source: latestTraceMeta.answer_source || '',
+                  trace_reason: latestTraceMeta.trace_reason || '',
+                });
+              }
               fullAnswer += data.chunk;
               if (typeof setAnswer === 'function') setAnswer(fullAnswer);
             }
@@ -921,6 +1017,16 @@ export class AskWorkflowManager {
                   ttsMgr.enqueueText(seg, { stopIndex: ttsStopIndexForAsk, source: 'ask' });
                 }
                 if (typeof debugMark === 'function') debugMark('ragflowFirstSegmentAt');
+                if (!traceFirstSegmentLogged) {
+                  traceFirstSegmentLogged = true;
+                  traceLog('first_segment', {
+                    segment_preview: String(seg || '').replace(/\s+/g, ' ').slice(0, 120),
+                    ragflow_chat_stage: latestTraceMeta.ragflow_chat_stage || '',
+                    ragflow_chat_active: latestTraceMeta.ragflow_chat_active || '',
+                    answer_source: latestTraceMeta.answer_source || '',
+                    trace_reason: latestTraceMeta.trace_reason || '',
+                  });
+                }
                 if (receivedSegmentsRef) receivedSegmentsRef.current = true;
                 // eslint-disable-next-line no-console
                 console.log(`📝 收到文本段落: "${seg.substring(0, 30)}..."`);
@@ -966,6 +1072,14 @@ export class AskWorkflowManager {
             if (data.done) {
               sawDone = true;
               if (typeof debugMark === 'function') debugMark('ragflowDoneAt');
+              traceLog('done', {
+                full_answer_len: String(fullAnswer || '').length,
+                has_audio_hit: !!hasAudioHit,
+                ragflow_chat_stage: latestTraceMeta.ragflow_chat_stage || '',
+                ragflow_chat_active: latestTraceMeta.ragflow_chat_active || '',
+                answer_source: latestTraceMeta.answer_source || '',
+                trace_reason: latestTraceMeta.trace_reason || '',
+              });
               if (
                 ttsEnabledRef &&
                 ttsEnabledRef.current &&
@@ -1021,14 +1135,15 @@ export class AskWorkflowManager {
               } catch (_) {
                 // ignore
               }
-              return fullAnswer;
+              return false;
             }
           } catch (err) {
             // eslint-disable-next-line no-console
             console.error('Error parsing chunk:', err);
           }
-        }
-      }
+          return true;
+        },
+      });
 
       // Stream ended without explicit `done` event (e.g. client/server disconnect). Finalize to avoid UI getting stuck.
       if (allow() && !sawDone) {
@@ -1090,6 +1205,7 @@ export class AskWorkflowManager {
       const errMsg = String((err && err.message) || err || '').trim();
       const ragflowUnavailable =
         errMsg.includes('RAGFlow HTTP error') || errMsg.includes('Failed to fetch') || errMsg.includes('NetworkError');
+      traceLog('error', { message: errMsg, ragflow_unavailable: !!ragflowUnavailable });
       if (allow() && typeof setQueueStatus === 'function') {
         if (ragflowUnavailable) {
           setQueueStatus('RAGFlow \u672a\u8fde\u63a5\uff0c\u5df2\u505c\u6b62\u672c\u6b21\u95ee\u7b54\u3002\u8bf7\u68c0\u67e5 RAGFlow \u914d\u7f6e\u4e0e\u670d\u52a1\u72b6\u6001\u3002');
@@ -1108,6 +1224,7 @@ export class AskWorkflowManager {
     } finally {
       const isActiveRun = !!(activeAskRequestIdRef && activeAskRequestIdRef.current === requestId);
       const isAbortRun = !!(abortController && abortController.signal && abortController.signal.aborted);
+      traceLog('finally', { is_active_run: isActiveRun, is_abort_run: isAbortRun, answer_len: String(fullAnswer || '').length });
 
       if (askAbortRef && askAbortRef.current === abortController) {
         askAbortRef.current = null;

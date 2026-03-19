@@ -44,6 +44,8 @@ def build_orchestrator(*, deps) -> ConversationOrchestrator:
     return ConversationOrchestrator(
         ragflow_service=deps.ragflow_service,
         ragflow_agent_service=deps.ragflow_agent_service,
+        ragflow_chat_manager=getattr(deps, "ragflow_chat_manager", None),
+        ragflow_chunk_manager=getattr(deps, "ragflow_chunk_manager", None),
         intent_service=deps.intent_service,
         history_store=deps.history_store,
         selling_points_store=getattr(deps, "selling_points_store", None),

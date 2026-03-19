@@ -116,6 +116,7 @@ class _Parsed:
 class _Deps:
     def __init__(self, *, rate_allow: bool = True):
         self.ragflow_service = _RagflowService()
+        self.ragflow_chat_manager = self.ragflow_service
         self.logger = _Logger()
         self.request_registry = _RequestRegistry(rate_allow=rate_allow)
         self.event_store = _EventStore()
@@ -226,4 +227,13 @@ def test_ask_success_path_streams_sse(monkeypatch):
     assert resp.headers.get("X-Accel-Buffering") == "no"
     assert '"chunk":"ok"' in resp.data.decode("utf-8").replace(" ", "")
     assert deps.ask_timings.calls
-    assert deps.ask_timings.calls[-1][0] == "ask_fixed_1"
+    assert all(call[0] == "ask_fixed_1" for call in deps.ask_timings.calls)
+    merged_timing = {}
+    for _, fields in deps.ask_timings.calls:
+        merged_timing.update(fields)
+    assert "t_submit" in merged_timing
+    assert "t_server_receive_wall_ms" in merged_timing
+    assert "t_submit_wall_ms" in merged_timing
+    assert "t_request_parse_done_wall_ms" in merged_timing
+    assert "t_conversation_resolved_wall_ms" in merged_timing
+    assert "t_orchestrator_ready_wall_ms" in merged_timing

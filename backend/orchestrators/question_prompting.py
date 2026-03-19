@@ -53,16 +53,6 @@ def extract_base_question(raw_question: str) -> str:
     return text
 
 
-def _norm_answer_target_chars(value: int | float | str | None) -> int:
-    try:
-        n = int(value if value is not None else 0)
-    except Exception:
-        n = 0
-    if n <= 0:
-        return 0
-    return max(1, min(n, 5000))
-
-
 def _norm_audience_profile(value: str | None) -> str:
     text = re.sub(r"\s+", " ", str(value or "").strip())
     if not text:
@@ -81,9 +71,11 @@ def apply_explanation_script_requirements(
         return str(question_for_rag or "")
     base = str(question_for_rag or "")
     marker = "【口播讲解约束】"
+    legacy_marker = "【口播讲解稿约束】"
+    has_marker = marker in base or legacy_marker in base
 
-    target_chars = _norm_answer_target_chars(answer_target_chars)
-    target_line = f"回答长度控制：约{target_chars}个字。\n" if target_chars > 0 else ""
+    # Keep the parameter for API compatibility, but do not inject length constraints.
+    _ = answer_target_chars
     profile = _norm_audience_profile(audience_profile)
     style_line = (
         f"请用可直接播报的讲解稿风格回复，语言自然连贯，风格参考受众画像：{profile}。\n"
@@ -91,20 +83,15 @@ def apply_explanation_script_requirements(
         else "请用可直接播报的讲解稿风格回复，语言自然连贯。\n"
     )
 
-    if marker in base:
-        if not target_line and not profile:
-            return base
-        cleaned = base
-        if target_line:
-            cleaned = re.sub(r"回答长度控制：[^\n\r]*(?:\r?\n)?", "", cleaned)
+    if has_marker:
+        cleaned = base.replace(legacy_marker, marker)
+        # Remove historical length lines unconditionally.
+        cleaned = re.sub(r"回答长度控制：[^\n\r]*(?:\r?\n)?", "", cleaned)
+        if not profile:
+            return cleaned
         if profile:
             cleaned = re.sub(r"请用可直接播报的讲解稿风格回复[^\n\r]*(?:\r?\n)?", "", cleaned)
             cleaned = re.sub(rf"{re.escape(marker)}(?:\r?\n)?", f"{marker}\n{style_line}", cleaned, count=1)
-        if not target_line:
-            return cleaned
-        if not cleaned.endswith("\n"):
-            cleaned += "\n"
-        cleaned += target_line
         return cleaned
 
     req = (
@@ -113,6 +100,5 @@ def apply_explanation_script_requirements(
         "仅输出正文，不要标题、列表、分点、序号。\n"
         "不要使用特殊符号或格式标记（如【】[]{}<>#*`~^|）。\n"
         "必须使用基础标点（，。；：！？）自然断句，便于TTS分段。\n"
-        f"{target_line}"
     )
     return f"{base}{req}"

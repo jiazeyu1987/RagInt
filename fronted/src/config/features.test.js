@@ -5,6 +5,7 @@ describe('config/features', () => {
     jest.resetModules();
     process.env = { ...ORIGINAL_ENV };
     delete process.env.REACT_APP_VOICE_DEBUG;
+    delete process.env.REACT_APP_ASK_TRACE_DEBUG;
     delete process.env.REACT_APP_WAKE_HOLD_MS;
   });
 
@@ -21,6 +22,24 @@ describe('config/features', () => {
     process.env.REACT_APP_VOICE_DEBUG = '0';
     cfg = require('./features');
     expect(cfg.VOICE_DEBUG).toBe(false);
+  });
+
+  test('ASK_TRACE_DEBUG follows its own env or VOICE_DEBUG', () => {
+    process.env.REACT_APP_ASK_TRACE_DEBUG = '1';
+    let cfg = require('./features');
+    expect(cfg.ASK_TRACE_DEBUG).toBe(true);
+
+    jest.resetModules();
+    process.env.REACT_APP_ASK_TRACE_DEBUG = '0';
+    process.env.REACT_APP_VOICE_DEBUG = '1';
+    cfg = require('./features');
+    expect(cfg.ASK_TRACE_DEBUG).toBe(true);
+
+    jest.resetModules();
+    process.env.REACT_APP_ASK_TRACE_DEBUG = '0';
+    process.env.REACT_APP_VOICE_DEBUG = '0';
+    cfg = require('./features');
+    expect(cfg.ASK_TRACE_DEBUG).toBe(false);
   });
 
   test('WAKE_HOLD_MS clamps and rounds configured values', () => {

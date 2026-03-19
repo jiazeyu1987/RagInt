@@ -63,6 +63,50 @@ def test_audio_cache_shortcut_emits_audio_hit_payload():
     assert len(matcher.calls) == 1
 
 
+def test_audio_cache_shortcut_records_qa_match_timing_points():
+    matcher = _Matcher(
+        payload={
+            "pair_id": 7,
+            "answer_text": "cached answer",
+            "audio_url": "/api/qa_audio_cache/audio/7",
+        }
+    )
+    safety = SensitiveWordsFilter.from_config({})
+    timing_calls = []
+
+    def timings_set(request_id: str, **kwargs):  # noqa: ANN003
+        timing_calls.append((request_id, dict(kwargs)))
+
+    payloads, outcome = _collect(
+        _maybe_stream_audio_cache_hit(
+            request_id="ask_qa_match_1",
+            question="what is this zone about?",
+            qa_audio_matcher=matcher,
+            qa_audio_cache_enabled=True,
+            qa_audio_recall_top_k=10,
+            qa_audio_classifier_threshold=0.8,
+            qa_audio_classifier_chat_name="qa_cls",
+            tts_provider="edge",
+            tts_voice="zh-CN-XiaoxiaoNeural",
+            tts_speed=1.0,
+            safety_filter=safety,
+            logger=None,
+            timings_set=timings_set,
+            base_url="",
+        )
+    )
+
+    assert len(payloads) == 2
+    assert outcome is not None
+    merged = {}
+    for rid, fields in timing_calls:
+        assert rid == "ask_qa_match_1"
+        merged.update(fields)
+    assert "t_qa_match_start_ms" in merged
+    assert "t_qa_match_end_ms" in merged
+    assert int(merged["t_qa_match_end_ms"]) >= int(merged["t_qa_match_start_ms"])
+
+
 def test_audio_cache_shortcut_still_checks_match_when_provider_missing():
     matcher = _Matcher(
         payload={

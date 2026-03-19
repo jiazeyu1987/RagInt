@@ -12,7 +12,9 @@ class AppDeps:
     logger: logging.Logger
 
     ragflow_service: Any
+    ragflow_chat_manager: Any
     ragflow_agent_service: Any
+    ragflow_chunk_manager: Any
     history_store: Any
     tts_service: Any
     intent_service: Any

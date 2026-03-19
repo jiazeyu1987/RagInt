@@ -108,6 +108,12 @@ def _dt_ms(a, b):
     return round((float(a) - float(b)) * 1000.0, 1)
 
 
+def _dt_direct_ms(a, b):
+    if not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
+        return None
+    return round(float(a) - float(b), 1)
+
+
 def _event_ts_ms(event: dict) -> int | None:
     if not isinstance(event, dict):
         return None
@@ -208,12 +214,76 @@ def build_recent_asr_timeline_report(events: list[dict]) -> dict:
 
 def derive_status_metrics(*, timing: dict, now_perf: float) -> dict:
     t_submit = timing.get("t_submit")
+    t_rag_first_chunk = timing.get("t_ragflow_first_chunk")
+    t_rag_first_text = timing.get("t_ragflow_first_text")
+    t_rag_request_start = timing.get("t_ragflow_request_start")
+    t_first_segment = timing.get("t_first_tts_segment")
+    t_tts_first_audio = timing.get("t_tts_first_audio")
+    t_play_end = timing.get("t_play_end")
+    t_submit_wall_ms = timing.get("t_submit_wall_ms")
+    t_server_receive_wall_ms = timing.get("t_server_receive_wall_ms")
+    t_request_parse_done_wall_ms = timing.get("t_request_parse_done_wall_ms")
+    t_conversation_resolved_wall_ms = timing.get("t_conversation_resolved_wall_ms")
+    t_orchestrator_ready_wall_ms = timing.get("t_orchestrator_ready_wall_ms")
+    t_qa_match_start_ms = timing.get("t_qa_match_start_ms")
+    t_qa_match_end_ms = timing.get("t_qa_match_end_ms")
+    t_ask_client_start_ms = timing.get("t_ask_client_start_ms")
+    t_ask_client_submit_ms = timing.get("t_ask_client_submit_ms")
+    t_asr_pending_ms = timing.get("t_asr_pending_ms")
+    t_asr_filter_start_ms = timing.get("t_asr_filter_start_ms")
+    t_asr_filter_end_ms = timing.get("t_asr_filter_end_ms")
+    t_asr_accepted_ms = timing.get("t_asr_accepted_ms")
+    t_play_end_client_ms = timing.get("t_play_end_client_ms")
+    client_start_to_submit_ms = _dt_direct_ms(t_ask_client_submit_ms, t_ask_client_start_ms)
+    client_submit_to_server_receive_ms = _dt_direct_ms(t_server_receive_wall_ms, t_ask_client_submit_ms)
+    ask_client_start_to_server_receive_ms = _dt_direct_ms(t_server_receive_wall_ms, t_ask_client_start_ms)
+    server_receive_to_server_submit_ms = _dt_direct_ms(t_submit_wall_ms, t_server_receive_wall_ms)
+    server_receive_to_rag_request_ms = _dt_ms(t_rag_request_start, t_submit)
+    ask_client_start_to_rag_request_ms = (
+        round(ask_client_start_to_server_receive_ms + server_receive_to_rag_request_ms, 1)
+        if ask_client_start_to_server_receive_ms is not None and server_receive_to_rag_request_ms is not None
+        else None
+    )
     derived = {
-        "submit_to_rag_first_chunk_ms": _dt_ms(timing.get("t_ragflow_first_chunk"), t_submit),
-        "submit_to_rag_first_text_ms": _dt_ms(timing.get("t_ragflow_first_text"), t_submit),
-        "submit_to_first_segment_ms": _dt_ms(timing.get("t_first_tts_segment"), t_submit),
-        "submit_to_tts_first_audio_ms": _dt_ms(timing.get("t_tts_first_audio"), t_submit),
-        "submit_to_play_end_ms": _dt_ms(timing.get("t_play_end"), t_submit),
+        "ask_client_start_to_client_submit_ms": client_start_to_submit_ms,
+        "client_submit_to_server_receive_ms": client_submit_to_server_receive_ms,
+        "ask_client_start_to_server_receive_ms": ask_client_start_to_server_receive_ms,
+        "ask_client_start_to_request_parse_done_ms": _dt_direct_ms(t_request_parse_done_wall_ms, t_ask_client_start_ms),
+        "ask_client_start_to_conversation_resolved_ms": _dt_direct_ms(t_conversation_resolved_wall_ms, t_ask_client_start_ms),
+        "ask_client_start_to_orchestrator_ready_ms": _dt_direct_ms(t_orchestrator_ready_wall_ms, t_ask_client_start_ms),
+        "ask_client_start_to_qa_match_start_ms": _dt_direct_ms(t_qa_match_start_ms, t_ask_client_start_ms),
+        "ask_client_start_to_qa_match_end_ms": _dt_direct_ms(t_qa_match_end_ms, t_ask_client_start_ms),
+        "server_receive_to_request_parse_done_ms": _dt_direct_ms(t_request_parse_done_wall_ms, t_server_receive_wall_ms),
+        "request_parse_to_conversation_resolved_ms": _dt_direct_ms(
+            t_conversation_resolved_wall_ms, t_request_parse_done_wall_ms
+        ),
+        "conversation_resolved_to_orchestrator_ready_ms": _dt_direct_ms(
+            t_orchestrator_ready_wall_ms, t_conversation_resolved_wall_ms
+        ),
+        "orchestrator_ready_to_qa_match_start_ms": _dt_direct_ms(t_qa_match_start_ms, t_orchestrator_ready_wall_ms),
+        "qa_match_ms": _dt_direct_ms(t_qa_match_end_ms, t_qa_match_start_ms),
+        "server_receive_to_server_submit_ms": server_receive_to_server_submit_ms,
+        "server_receive_to_rag_request_ms": server_receive_to_rag_request_ms,
+        "ask_client_start_to_rag_request_ms": ask_client_start_to_rag_request_ms,
+        "submit_to_rag_first_chunk_ms": _dt_ms(t_rag_first_chunk, t_submit),
+        "submit_to_rag_first_text_ms": _dt_ms(t_rag_first_text, t_submit),
+        "submit_to_first_segment_ms": _dt_ms(t_first_segment, t_submit),
+        "submit_to_tts_first_audio_ms": _dt_ms(t_tts_first_audio, t_submit),
+        "submit_to_play_end_ms": _dt_ms(t_play_end, t_submit),
+        "rag_request_to_first_chunk_ms": _dt_ms(t_rag_first_chunk, t_rag_request_start),
+        "rag_first_chunk_to_first_text_ms": _dt_ms(t_rag_first_text, t_rag_first_chunk),
+        "rag_first_text_to_first_segment_ms": _dt_ms(t_first_segment, t_rag_first_text),
+        "first_segment_to_tts_first_audio_ms": _dt_ms(t_tts_first_audio, t_first_segment),
+        "tts_first_audio_to_play_end_ms": _dt_ms(t_play_end, t_tts_first_audio),
+        "asr_pending_to_filter_start_ms": _dt_direct_ms(t_asr_filter_start_ms, t_asr_pending_ms),
+        "asr_filter_ms": _dt_direct_ms(t_asr_filter_end_ms, t_asr_filter_start_ms),
+        "asr_filter_to_accepted_ms": _dt_direct_ms(t_asr_accepted_ms, t_asr_filter_end_ms),
+        "asr_postprocess_total_ms": _dt_direct_ms(t_asr_accepted_ms, t_asr_pending_ms),
+        "asr_accepted_to_ask_client_start_ms": _dt_direct_ms(t_ask_client_start_ms, t_asr_accepted_ms),
+        "ask_client_start_to_server_submit_ms": _dt_direct_ms(t_submit_wall_ms, t_ask_client_start_ms),
+        "asr_accepted_to_server_submit_ms": _dt_direct_ms(t_submit_wall_ms, t_asr_accepted_ms),
+        "ask_client_start_to_play_end_client_ms": _dt_direct_ms(t_play_end_client_ms, t_ask_client_start_ms),
+        "server_submit_to_play_end_client_ms": _dt_direct_ms(t_play_end_client_ms, t_submit_wall_ms),
         "now_since_submit_ms": _dt_ms(now_perf, t_submit),
     }
     return {k: v for k, v in derived.items() if v is not None}

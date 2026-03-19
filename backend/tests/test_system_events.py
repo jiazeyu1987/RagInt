@@ -69,6 +69,23 @@ def test_parse_client_event_and_ingest():
     assert deps.ask_timings.set_calls[-1][0] == "r1"
 
 
+def test_ingest_client_event_maps_wall_clock_timing_fields():
+    deps = _Deps()
+    event = parse_client_event(
+        req=_req(headers={"X-Request-ID": "r2"}),
+        data={"name": "asr_filtering_finished", "fields": {"t_client_wall_ms": 1760000000123}},
+    )
+    assert ingest_client_event(deps=deps, event=event) is True
+    assert ("r2", {"t_asr_filter_end_ms": 1760000000123}) in deps.ask_timings.set_calls
+
+    event2 = parse_client_event(
+        req=_req(headers={"X-Request-ID": "r2"}),
+        data={"name": "ask_client_start", "fields": {"t_client_wall_ms": 1760000000222}},
+    )
+    assert ingest_client_event(deps=deps, event=event2) is True
+    assert ("r2", {"t_ask_client_start_ms": 1760000000222}) in deps.ask_timings.set_calls
+
+
 def test_parse_status_request_id_from_header_or_query():
     assert parse_status_request_id(_req(args={"request_id": "r2"})) == "r2"
     assert parse_status_request_id(_req(headers={"X-Request-ID": "r3"})) == "r3"

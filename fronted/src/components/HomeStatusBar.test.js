@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { HomeStatusBar } from './HomeStatusBar';
@@ -20,7 +20,7 @@ function render(ui) {
 }
 
 describe('HomeStatusBar', () => {
-  test('shows status fields and handles select changes', () => {
+  test('shows status fields, empty timeline, and handles select changes', () => {
     const onChangeMode = jest.fn();
     const onChangeSpeed = jest.fn();
     const onChangeTemplate = jest.fn();
@@ -65,6 +65,7 @@ describe('HomeStatusBar', () => {
     expect(view.container.textContent).toContain('hello assistant');
     expect(view.container.textContent).toContain('Stop A');
     expect(view.container.textContent).toContain('展厅聊天');
+    expect(view.container.textContent).toContain('等待触发');
 
     view.unmount();
   });
@@ -74,5 +75,100 @@ describe('HomeStatusBar', () => {
     expect(view.container.textContent).toContain('无');
     view.unmount();
   });
-});
 
+  test('renders request timeline using debug timings', () => {
+    const view = render(
+      <HomeStatusBar
+        debugInfo={{
+          submitAt: 100,
+          ragflowFirstSegmentAt: 260,
+          ttsFirstAudioAt: 430,
+          ragflowDoneAt: 780,
+          ttsAllDoneAt: 1200,
+        }}
+        serverStatus={{
+          derived_ms: {
+            ask_client_start_to_client_submit_ms: 20,
+            ask_client_start_to_server_receive_ms: 45,
+            ask_client_start_to_request_parse_done_ms: 48,
+            ask_client_start_to_conversation_resolved_ms: 52,
+            ask_client_start_to_orchestrator_ready_ms: 58,
+            ask_client_start_to_qa_match_start_ms: 59,
+            ask_client_start_to_qa_match_end_ms: 61,
+            ask_client_start_to_server_submit_ms: 35,
+            ask_client_start_to_rag_request_ms: 60,
+            rag_request_to_first_chunk_ms: 20,
+            submit_to_rag_first_chunk_ms: 45,
+            submit_to_rag_first_text_ms: 70,
+            submit_to_first_segment_ms: 160,
+            submit_to_tts_first_audio_ms: 330,
+          },
+        }}
+      />
+    );
+
+    expect(view.container.textContent).toContain('开始');
+    expect(view.container.textContent).toContain('0 ms');
+    expect(view.container.textContent).toContain('发送');
+    expect(view.container.textContent).toContain('20 ms');
+    expect(view.container.textContent).toContain('服务端接收');
+    expect(view.container.textContent).toContain('45 ms');
+    expect(view.container.textContent).toContain('请求解析');
+    expect(view.container.textContent).toContain('48 ms');
+    expect(view.container.textContent).toContain('会话解析');
+    expect(view.container.textContent).toContain('52 ms');
+    expect(view.container.textContent).toContain('编排启动');
+    expect(view.container.textContent).toContain('58 ms');
+    expect(view.container.textContent).toContain('问题比对开始');
+    expect(view.container.textContent).toContain('59 ms');
+    expect(view.container.textContent).toContain('问题比对完成');
+    expect(view.container.textContent).toContain('61 ms');
+    expect(view.container.textContent).toContain('服务端提交');
+    expect(view.container.textContent).toContain('35 ms');
+    expect(view.container.textContent).toContain('RAG请求');
+    expect(view.container.textContent).toContain('60 ms');
+    expect(view.container.textContent).toContain('首Chunk');
+    expect(view.container.textContent).toContain('80 ms');
+    expect(view.container.textContent).toContain('首文本');
+    expect(view.container.textContent).toContain('105 ms');
+    expect(view.container.textContent).toContain('首分段');
+    expect(view.container.textContent).toContain('195 ms');
+    expect(view.container.textContent).toContain('首音频');
+    expect(view.container.textContent).toContain('365 ms');
+    expect(view.container.textContent).toContain('RAG完成');
+    expect(view.container.textContent).toContain('680 ms');
+    expect(view.container.textContent).toContain('结束');
+    expect(view.container.textContent).toContain('1100 ms');
+
+    view.unmount();
+  });
+
+  test('shows disabled audio timing when tts is off', () => {
+    const view = render(
+      <HomeStatusBar
+        ttsEnabled={false}
+        debugInfo={{
+          submitAt: 100,
+          ragflowDoneAt: 300,
+        }}
+        serverStatus={{
+          derived_ms: {
+            ask_client_start_to_client_submit_ms: 10,
+            ask_client_start_to_server_receive_ms: 15,
+            ask_client_start_to_request_parse_done_ms: 18,
+            ask_client_start_to_conversation_resolved_ms: 23,
+            ask_client_start_to_orchestrator_ready_ms: 26,
+            ask_client_start_to_qa_match_start_ms: 27,
+            ask_client_start_to_server_submit_ms: 20,
+            ask_client_start_to_rag_request_ms: 28,
+            rag_request_to_first_chunk_ms: 52,
+            submit_to_rag_first_chunk_ms: 60,
+          },
+        }}
+      />
+    );
+
+    expect(view.container.textContent).toContain('disabled');
+    view.unmount();
+  });
+});

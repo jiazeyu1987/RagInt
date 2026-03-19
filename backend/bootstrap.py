@@ -25,11 +25,15 @@ def _env_path(name: str, default: Path) -> Path:
 
 def _build_ragflow(*, config_path: Path, ragflow_config_store, logger):
     from backend.services.ragflow_agent_service import RagflowAgentService
+    from backend.services.ragflow_chat_manager import RagflowChatManager
+    from backend.services.ragflow_chunk_manager import RagflowChunkManager
     from backend.services.ragflow_service import RagflowService
 
     ragflow_service = RagflowService(config_path, logger=logger, config_store=ragflow_config_store)
     ragflow_agent_service = RagflowAgentService(config_path, logger=logger, config_loader=ragflow_service.load_config)
-    return ragflow_service, ragflow_agent_service
+    ragflow_chat_manager = RagflowChatManager(ragflow_service=ragflow_service, default_session=None)
+    ragflow_chunk_manager = RagflowChunkManager(ragflow_agent_service=ragflow_agent_service)
+    return ragflow_service, ragflow_chat_manager, ragflow_agent_service, ragflow_chunk_manager
 
 
 def _build_state_backend():
@@ -123,7 +127,7 @@ def build_deps(*, base_dir: Path, config_path: Path, logger) -> AppDeps:
     ) = _build_stores(
         data_dir=data_dir, logger=logger
     )
-    ragflow_service, ragflow_agent_service = _build_ragflow(
+    ragflow_service, ragflow_chat_manager, ragflow_agent_service, ragflow_chunk_manager = _build_ragflow(
         config_path=config_path, ragflow_config_store=ragflow_config_store, logger=logger
     )
     tts_service, intent_service, tour_planner, tour_command_service, request_registry, ask_timings = _build_services(
@@ -134,6 +138,7 @@ def build_deps(*, base_dir: Path, config_path: Path, logger) -> AppDeps:
     qa_audio_matcher = QaAudioMatcher(
         store=qa_audio_cache_store,
         ragflow_service=ragflow_service,
+        ragflow_chat_manager=ragflow_chat_manager,
         tts_service=tts_service,
         logger=logger,
     )
@@ -143,7 +148,9 @@ def build_deps(*, base_dir: Path, config_path: Path, logger) -> AppDeps:
         base_dir=base_dir,
         logger=logger,
         ragflow_service=ragflow_service,
+        ragflow_chat_manager=ragflow_chat_manager,
         ragflow_agent_service=ragflow_agent_service,
+        ragflow_chunk_manager=ragflow_chunk_manager,
         history_store=history_store,
         tts_service=tts_service,
         intent_service=intent_service,
@@ -168,7 +175,18 @@ def init_ragflow(*, deps: AppDeps, logger) -> bool:
     try:
         ok = deps.ragflow_service.init()
         deps.ragflow_default_chat_name = str(deps.ragflow_service.default_chat_name or "").strip()
-        deps.session = deps.ragflow_service.get_session(deps.ragflow_default_chat_name) if ok else None
+        chat_manager = getattr(deps, "ragflow_chat_manager", None)
+        if chat_manager is None:
+            from backend.services.ragflow_chat_manager import RagflowChatManager
+
+            chat_manager = RagflowChatManager(ragflow_service=deps.ragflow_service, default_session=deps.session)
+            try:
+                deps.ragflow_chat_manager = chat_manager
+            except Exception:
+                pass
+        chat_manager.set_default_session(deps.session)
+        deps.session = chat_manager.resolve_session(agent_id="", conversation_name=deps.ragflow_default_chat_name) if ok else None
+        chat_manager.set_default_session(deps.session)
         return bool(ok)
     except Exception as e:
         logger.error(f"RAGFlow初始化失败: {e}", exc_info=True)

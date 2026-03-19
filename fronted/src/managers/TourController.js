@@ -7,6 +7,7 @@
 
 import { tourStateOnReady, tourStateOnTourAction } from './TourStateMachine';
 import { RUN_REASON } from './RunReasons';
+import { ragflowChatManager } from './RagflowChatManager';
 
 export class TourController {
   constructor(deps) {
@@ -194,12 +195,9 @@ export class TourController {
     try {
       const useAgentMode = !!(useAgentModeRef && useAgentModeRef.current);
       const chatName = String((selectedChatRef && selectedChatRef.current) || '').trim();
-      if (!useAgentMode && chatName && typeof fetchJson === 'function') {
-        await fetchJson('/api/ragflow/chats/new_session', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_name: chatName }),
-        });
+      if (!useAgentMode && chatName) {
+        const manager = this.deps.ragflowChatManager || ragflowChatManager;
+        await manager.createNewSession(chatName);
       }
     } catch (error) {
       try {

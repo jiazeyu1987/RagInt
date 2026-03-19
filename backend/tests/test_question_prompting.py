@@ -92,16 +92,16 @@ def test_apply_explanation_script_requirements_appends_constraints_once():
     q = "请介绍展厅"
     out1 = apply_explanation_script_requirements(q, enabled=True, answer_target_chars=220)
     out2 = apply_explanation_script_requirements(out1, enabled=True)
-    assert "【口播讲解稿约束】" in out1
+    assert "【口播讲解约束】" in out1
     assert "不要使用特殊符号" in out1
     assert "基础标点" in out1
-    assert "220个文字左右" in out1
+    assert "回答长度控制" not in out1
     assert out1 == out2
 
 
-def test_apply_explanation_script_requirements_uses_chars_phrase():
+def test_apply_explanation_script_requirements_ignores_answer_target_chars():
     out = apply_explanation_script_requirements("请回答", enabled=True, answer_target_chars=10)
-    assert "10个文字左右" in out
+    assert "回答长度控制" not in out
 
 
 def test_apply_explanation_script_requirements_includes_audience_profile_style_hint():
@@ -111,7 +111,7 @@ def test_apply_explanation_script_requirements_includes_audience_profile_style_h
         answer_target_chars=10,
         audience_profile="儿童",
     )
-    assert "风格请参考人群画像：儿童" in out
+    assert "风格参考受众画像：儿童" in out
 
 
 def test_apply_explanation_script_requirements_rewrites_existing_old_length_line():
@@ -123,7 +123,7 @@ def test_apply_explanation_script_requirements_rewrites_existing_old_length_line
     )
     out = apply_explanation_script_requirements(src, enabled=True, answer_target_chars=1)
     assert "约20字" not in out
-    assert "1个文字左右" in out
+    assert "回答长度控制" not in out
 
 
 def test_apply_explanation_script_requirements_rewrites_existing_style_line():
@@ -133,7 +133,7 @@ def test_apply_explanation_script_requirements_rewrites_existing_style_line():
         "请用可直接播报的讲解稿风格回复，语言自然连贯。\n"
     )
     out = apply_explanation_script_requirements(src, enabled=True, answer_target_chars=1, audience_profile="专业")
-    assert "风格请参考人群画像：专业" in out
+    assert "风格参考受众画像：专业" in out
 
 
 def test_stream_ask_upserts_qa_audio_with_base_question_only():
@@ -268,4 +268,223 @@ def test_stream_ask_applies_audience_profile_to_script_prompt():
     cfg = {"kb_version": "kb1", "qa_cache": {"enabled": False}, "text_cleaning": {"enabled": False}}
 
     list(orch.stream_ask(inp=inp, ragflow_config=cfg, cancel_event=threading.Event(), t_submit=0.0))
-    assert "风格请参考人群画像：儿童" in ragflow.session.last_question
+    assert "风格参考受众画像：儿童" in ragflow.session.last_question
+    assert "回答长度控制" not in ragflow.session.last_question
+
+class _QaAudioMatcherDebugNoHit:
+    def __init__(self, debug_payload: dict):
+        self._debug_payload = dict(debug_payload or {})
+        self.find_calls = []
+
+    def find_match(self, **kwargs):  # noqa: ANN003
+        self.find_calls.append(dict(kwargs))
+        return None
+
+    def get_last_debug(self):
+        return dict(self._debug_payload)
+
+    def schedule_upsert_from_answer(self, **kwargs):  # noqa: ANN003
+        return None
+
+
+def _collect_stage_meta(items: list[dict]) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    for item in items:
+        meta = item.get("meta") if isinstance(item, dict) else None
+        if not isinstance(meta, dict):
+            continue
+        stage = str(meta.get("ragflow_chat_stage") or "").strip()
+        active = str(meta.get("ragflow_chat_active") or "").strip()
+        if stage:
+            out.append((stage, active))
+    return out
+
+
+def test_stream_ask_emits_runtime_ragflow_chat_meta_for_qa_match_and_main_ask():
+    matcher = _QaAudioMatcherDebugNoHit(
+        {
+            "hit": False,
+            "reason": "classifier_no_match:test",
+            "classifier_called": True,
+            "classifier_chat_name": "问题比对",
+        }
+    )
+    orch = ConversationOrchestrator(
+        ragflow_service=_RagflowService(),
+        ragflow_agent_service=_RagflowAgentService(),
+        intent_service=_IntentService(),
+        history_store=_HistoryStore(),
+        selling_points_store=None,
+        logger=logging.getLogger("test"),
+        timings_set=_timings_set,
+        timings_get=_timings_get,
+        default_session=_Session(),
+        qa_audio_matcher=matcher,
+    )
+
+    inp = AskInput(
+        question="test question",
+        request_id="ask_meta_1",
+        client_id="c1",
+        kind="ask",
+        conversation_name="展厅聊天",
+        save_history=False,
+    )
+    cfg = {
+        "kb_version": "kb1",
+        "qa_cache": {"enabled": False},
+        "qa_audio_cache": {"enabled": True, "recall_top_k": 10, "classifier_threshold": 0.8},
+        "text_cleaning": {"enabled": False},
+    }
+
+    items = list(orch.stream_ask(inp=inp, ragflow_config=cfg, cancel_event=threading.Event(), t_submit=0.0))
+    stages = _collect_stage_meta(items)
+
+    assert ("qa_match", "问题比对") in stages
+    assert ("main_ask", "展厅聊天") in stages
+    qa_idx = stages.index(("qa_match", "问题比对"))
+    main_idx = stages.index(("main_ask", "展厅聊天"))
+    assert qa_idx < main_idx
+
+
+def test_stream_ask_skips_qa_match_meta_when_classifier_not_called():
+    matcher = _QaAudioMatcherDebugNoHit(
+        {
+            "hit": False,
+            "reason": "heuristic_match_without_classifier",
+            "classifier_called": False,
+            "classifier_chat_name": "问题比对",
+        }
+    )
+    orch = ConversationOrchestrator(
+        ragflow_service=_RagflowService(),
+        ragflow_agent_service=_RagflowAgentService(),
+        intent_service=_IntentService(),
+        history_store=_HistoryStore(),
+        selling_points_store=None,
+        logger=logging.getLogger("test"),
+        timings_set=_timings_set,
+        timings_get=_timings_get,
+        default_session=_Session(),
+        qa_audio_matcher=matcher,
+    )
+
+    inp = AskInput(
+        question="test question",
+        request_id="ask_meta_2",
+        client_id="c1",
+        kind="ask",
+        conversation_name="展厅聊天",
+        save_history=False,
+    )
+    cfg = {
+        "kb_version": "kb1",
+        "qa_cache": {"enabled": False},
+        "qa_audio_cache": {"enabled": True, "recall_top_k": 10, "classifier_threshold": 0.8},
+        "text_cleaning": {"enabled": False},
+    }
+
+    items = list(orch.stream_ask(inp=inp, ragflow_config=cfg, cancel_event=threading.Event(), t_submit=0.0))
+    stages = _collect_stage_meta(items)
+
+    assert ("main_ask", "展厅聊天") in stages
+    assert all(stage != "qa_match" for stage, _active in stages)
+
+
+def _collect_trace_meta(items: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    for item in items:
+        meta = item.get("meta") if isinstance(item, dict) else None
+        if not isinstance(meta, dict):
+            continue
+        source = str(meta.get("answer_source") or "").strip()
+        reason = str(meta.get("trace_reason") or "").strip()
+        mode = str(meta.get("request_mode") or "").strip()
+        if source or reason or mode:
+            out.append({"answer_source": source, "trace_reason": reason, "request_mode": mode, "raw": dict(meta)})
+    return out
+
+
+def test_stream_ask_emits_trace_source_for_lookup_and_main_stream():
+    matcher = _QaAudioMatcherDebugNoHit(
+        {
+            "hit": False,
+            "reason": "classifier_no_match:test",
+            "classifier_called": True,
+            "classifier_chat_name": "\u95ee\u9898\u6bd4\u5bf9",
+        }
+    )
+    orch = ConversationOrchestrator(
+        ragflow_service=_RagflowService(),
+        ragflow_agent_service=_RagflowAgentService(),
+        intent_service=_IntentService(),
+        history_store=_HistoryStore(),
+        selling_points_store=None,
+        logger=logging.getLogger("test"),
+        timings_set=_timings_set,
+        timings_get=_timings_get,
+        default_session=_Session(),
+        qa_audio_matcher=matcher,
+    )
+
+    inp = AskInput(
+        question="test question",
+        request_id="ask_meta_trace_1",
+        client_id="c1",
+        kind="ask",
+        conversation_name="\u5c55\u5385\u804a\u5929",
+        save_history=False,
+    )
+    cfg = {
+        "kb_version": "kb1",
+        "qa_cache": {"enabled": False},
+        "qa_audio_cache": {"enabled": True, "recall_top_k": 10, "classifier_threshold": 0.8},
+        "text_cleaning": {"enabled": False},
+    }
+
+    items = list(orch.stream_ask(inp=inp, ragflow_config=cfg, cancel_event=threading.Event(), t_submit=0.0))
+    traces = _collect_trace_meta(items)
+
+    assert any(t.get("answer_source") == "qa_audio_cache_lookup" for t in traces)
+    assert any(t.get("answer_source") == "ragflow_stream" for t in traces)
+    assert any(t.get("request_mode") == "send" for t in traces)
+
+
+def test_stream_ask_emits_fast_intent_trace_source():
+    class _FastIntentService:
+        def classify(self, question: str):  # noqa: ARG002
+            return _Intent(intent="chitchat", confidence=0.99)
+
+    orch = ConversationOrchestrator(
+        ragflow_service=_RagflowService(),
+        ragflow_agent_service=_RagflowAgentService(),
+        intent_service=_FastIntentService(),
+        history_store=_HistoryStore(),
+        selling_points_store=None,
+        logger=logging.getLogger("test"),
+        timings_set=_timings_set,
+        timings_get=_timings_get,
+        default_session=_Session(),
+        qa_audio_matcher=None,
+    )
+
+    inp = AskInput(
+        question="\u4f60\u597d",
+        request_id="ask_meta_trace_2",
+        client_id="c1",
+        kind="ask",
+        conversation_name="\u5c55\u5385\u804a\u5929",
+        save_history=False,
+    )
+    cfg = {
+        "kb_version": "kb1",
+        "qa_cache": {"enabled": False},
+        "qa_audio_cache": {"enabled": False},
+        "text_cleaning": {"enabled": False},
+    }
+
+    items = list(orch.stream_ask(inp=inp, ragflow_config=cfg, cancel_event=threading.Event(), t_submit=0.0))
+    traces = _collect_trace_meta(items)
+
+    assert any(t.get("answer_source") == "fast_intent" for t in traces)
+    assert any((t.get("trace_reason") or "").startswith("intent:") for t in traces)

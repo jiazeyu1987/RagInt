@@ -73,9 +73,10 @@ def test_stream_ragflow_response_happy_path_returns_cache_put_allowed():
     cancel = _Cancel(False)
     resp = _Resp([_Chunk("H"), _Chunk("He"), _Chunk("Hello")])
     session = _Session(resp)
+    timing_calls = []
 
     def timings_set(_rid: str, **_kw) -> None:
-        return None
+        timing_calls.append(dict(_kw))
 
     gen = _stream_ragflow_response(
         request_id="r1",
@@ -111,6 +112,7 @@ def test_stream_ragflow_response_happy_path_returns_cache_put_allowed():
     assert outcome.cancelled is False
     assert outcome.save_allowed is True
     assert outcome.cache_put_allowed is True
+    assert any("t_ragflow_request_start" in item for item in timing_calls)
 
 
 def test_stream_ragflow_response_cancel_does_not_emit_done_and_disables_save():

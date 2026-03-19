@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import time
 
 from backend.orchestrators.ragflow_streaming_helpers import _trim_answer_for_constraints
 from backend.orchestrators.ragflow_streaming_models import AskStreamOutcome
@@ -53,6 +54,7 @@ def _maybe_stream_audio_cache_hit(
     tts_speed: float,
     safety_filter: SensitiveWordsFilter,
     logger,
+    timings_set=None,
     base_url: str = "",
 ):
     if not qa_audio_cache_enabled:
@@ -61,8 +63,13 @@ def _maybe_stream_audio_cache_hit(
         return None
 
     hit = None
+    qa_match_started = False
     with contextlib.suppress(Exception):
         from backend.services.qa_audio_matcher import TtsProfile
+
+        if callable(timings_set):
+            timings_set(request_id, t_qa_match_start_ms=int(time.time() * 1000))
+            qa_match_started = True
 
         hit = qa_audio_matcher.find_match(
             question=question,
@@ -72,6 +79,10 @@ def _maybe_stream_audio_cache_hit(
             classifier_chat_name=str(qa_audio_classifier_chat_name or "问题比对"),
             base_url=str(base_url or ""),
         )
+
+    if qa_match_started and callable(timings_set):
+        with contextlib.suppress(Exception):
+            timings_set(request_id, t_qa_match_end_ms=int(time.time() * 1000))
 
     if not hit:
         return None

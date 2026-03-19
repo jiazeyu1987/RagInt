@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import time
 
 from backend.orchestrators.ragflow_streaming_helpers import (
@@ -15,6 +16,14 @@ from backend.orchestrators.ragflow_streaming_helpers import (
 )
 from backend.orchestrators.ragflow_streaming_models import AskStreamOutcome, RagflowStreamSettings
 from backend.orchestrators.stream_payloads import make_chunk, make_done, make_segment
+
+_ASK_TRACE_LOG_ENABLED = str(os.environ.get("RAGINT_ASK_TRACE_LOG", "0") or "0").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "y",
+    "on",
+)
 
 
 def _safe_rag_nonstream_content(rag_session, question: str, logger, request_id: str) -> str:
@@ -51,6 +60,7 @@ def _stream_ragflow_response(
     settings: RagflowStreamSettings,
 ):
     t_ragflow_request = time.perf_counter()
+    timings_set(request_id, t_ragflow_request_start=t_ragflow_request)
     response = None
     last_complete_content = ""
     last_ragflow_content = ""
@@ -142,6 +152,9 @@ def _stream_ragflow_response(
                 logger.info(
                     f"[{request_id}] ragflow_first_text dt={first_ragflow_text_at - t_submit:.3f}s chars={len(content.strip())}"
                 )
+                if _ASK_TRACE_LOG_ENABLED:
+                    preview = str(content or "").strip().replace("\n", " ")[:160]
+                    logger.info(f"[{request_id}] ragflow_first_text_preview={preview!r}")
                 timings_set(request_id, t_ragflow_first_text=first_ragflow_text_at)
 
             new_part, last_ragflow_content = _diff_stream_content(content=content, last_content=last_ragflow_content)
@@ -241,6 +254,10 @@ def _stream_ragflow_response(
         logger.info(
             f"[{request_id}] 流式响应结束 total_dt={time.perf_counter() - t_submit:.3f}s total_chunks={chunk_count}"
         )
+
+        if _ASK_TRACE_LOG_ENABLED:
+            answer_preview = str(last_complete_content or "").strip().replace("\n", " ")[:200]
+            logger.info(f"[{request_id}] ragflow_stream_answer_preview={answer_preview!r}")
 
         if settings.text_cleaner and settings.tts_buffer:
             if carry_segment_text:
