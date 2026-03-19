@@ -55,31 +55,92 @@ function buildTimelineItems(debugInfo, serverStatus, { ttsEnabled = true } = {})
     const value = Number(derived && derived[key]);
     return Number.isFinite(value) ? value : null;
   };
-  const clientSubmitMs = derivedMs('ask_client_start_to_client_submit_ms');
-  const serverReceiveMs = derivedMs('ask_client_start_to_server_receive_ms');
-  const requestParseMs = derivedMs('ask_client_start_to_request_parse_done_ms');
-  const conversationResolvedMs = derivedMs('ask_client_start_to_conversation_resolved_ms');
-  const orchestratorReadyMs = derivedMs('ask_client_start_to_orchestrator_ready_ms');
-  const qaMatchStartMs = derivedMs('ask_client_start_to_qa_match_start_ms');
-  const qaMatchEndMs = derivedMs('ask_client_start_to_qa_match_end_ms');
-  const serverSubmitMs = derivedMs('ask_client_start_to_server_submit_ms');
-  const ragRequestMs = derivedMs('ask_client_start_to_rag_request_ms');
-  const ragFirstChunkMs = serverSubmitMs != null && derivedMs('submit_to_rag_first_chunk_ms') != null
-    ? serverSubmitMs + derivedMs('submit_to_rag_first_chunk_ms')
-    : ragRequestMs != null && derivedMs('rag_request_to_first_chunk_ms') != null
-      ? ragRequestMs + derivedMs('rag_request_to_first_chunk_ms')
-    : calc('ragflowFirstChunkAt');
-  const ragFirstTextMs = serverSubmitMs != null && derivedMs('submit_to_rag_first_text_ms') != null
-    ? serverSubmitMs + derivedMs('submit_to_rag_first_text_ms')
-    : ragFirstChunkMs;
-  const firstSegmentMs = serverSubmitMs != null && derivedMs('submit_to_first_segment_ms') != null
-    ? serverSubmitMs + derivedMs('submit_to_first_segment_ms')
-    : calc('ragflowFirstSegmentAt');
-  const firstAudioMs = serverSubmitMs != null && derivedMs('submit_to_tts_first_audio_ms') != null
-    ? serverSubmitMs + derivedMs('submit_to_tts_first_audio_ms')
-    : calc('ttsFirstAudioAt');
+  const sumMs = (a, b) => (a != null && b != null ? Math.round((a + b) * 10) / 10 : null);
+
+  // Prefer server-receive based timeline to avoid client/server clock skew.
+  const serverTimeline =
+    derivedMs('server_receive_to_request_parse_done_ms') != null || derivedMs('server_receive_to_server_submit_ms') != null;
+
+  const clientSubmitMs = serverTimeline
+    ? (() => {
+        const v = derivedMs('client_submit_to_server_receive_ms');
+        return v != null && v >= 0 ? v : null;
+      })()
+    : derivedMs('ask_client_start_to_client_submit_ms');
+  const serverReceiveMs = serverTimeline ? 0 : derivedMs('ask_client_start_to_server_receive_ms');
+  const requestParseMs = serverTimeline
+    ? derivedMs('server_receive_to_request_parse_done_ms')
+    : derivedMs('ask_client_start_to_request_parse_done_ms');
+  const conversationResolvedMs = serverTimeline
+    ? derivedMs('server_receive_to_conversation_resolved_ms')
+    : derivedMs('ask_client_start_to_conversation_resolved_ms');
+  const orchestratorReadyMs = serverTimeline
+    ? derivedMs('server_receive_to_orchestrator_ready_ms')
+    : derivedMs('ask_client_start_to_orchestrator_ready_ms');
+  const qaMatchStartMs = serverTimeline
+    ? derivedMs('server_receive_to_qa_match_start_ms')
+    : derivedMs('ask_client_start_to_qa_match_start_ms');
+  const qaMatchEndMs = serverTimeline
+    ? derivedMs('server_receive_to_qa_match_end_ms')
+    : derivedMs('ask_client_start_to_qa_match_end_ms');
+  const serverSubmitMs = serverTimeline
+    ? derivedMs('server_receive_to_server_submit_ms')
+    : derivedMs('ask_client_start_to_server_submit_ms');
+  const ragRequestMs = serverTimeline
+    ? (
+        derivedMs('server_receive_to_rag_request_total_ms')
+        ?? sumMs(serverSubmitMs, derivedMs('submit_to_rag_request_ms'))
+      )
+    : derivedMs('ask_client_start_to_rag_request_ms');
+  const ragFirstChunkMs = serverTimeline
+    ? (
+        derivedMs('server_receive_to_rag_first_chunk_ms')
+        ?? sumMs(serverSubmitMs, derivedMs('submit_to_rag_first_chunk_ms'))
+        ?? sumMs(ragRequestMs, derivedMs('rag_request_to_first_chunk_ms'))
+      )
+    : (
+        serverSubmitMs != null && derivedMs('submit_to_rag_first_chunk_ms') != null
+          ? serverSubmitMs + derivedMs('submit_to_rag_first_chunk_ms')
+          : ragRequestMs != null && derivedMs('rag_request_to_first_chunk_ms') != null
+            ? ragRequestMs + derivedMs('rag_request_to_first_chunk_ms')
+            : calc('ragflowFirstChunkAt')
+      );
+  const ragFirstTextMs = serverTimeline
+    ? (
+        derivedMs('server_receive_to_rag_first_text_ms')
+        ?? sumMs(serverSubmitMs, derivedMs('submit_to_rag_first_text_ms'))
+        ?? ragFirstChunkMs
+      )
+    : (
+        serverSubmitMs != null && derivedMs('submit_to_rag_first_text_ms') != null
+          ? serverSubmitMs + derivedMs('submit_to_rag_first_text_ms')
+          : ragFirstChunkMs
+      );
+  const firstSegmentMs = serverTimeline
+    ? (
+        derivedMs('server_receive_to_first_segment_ms')
+        ?? sumMs(serverSubmitMs, derivedMs('submit_to_first_segment_ms'))
+      )
+    : (
+        serverSubmitMs != null && derivedMs('submit_to_first_segment_ms') != null
+          ? serverSubmitMs + derivedMs('submit_to_first_segment_ms')
+          : calc('ragflowFirstSegmentAt')
+      );
+  const firstAudioMs = serverTimeline
+    ? (
+        derivedMs('server_receive_to_tts_first_audio_ms')
+        ?? sumMs(serverSubmitMs, derivedMs('submit_to_tts_first_audio_ms'))
+      )
+    : (
+        serverSubmitMs != null && derivedMs('submit_to_tts_first_audio_ms') != null
+          ? serverSubmitMs + derivedMs('submit_to_tts_first_audio_ms')
+          : calc('ttsFirstAudioAt')
+      );
+  const ragDoneMs = serverTimeline ? derivedMs('server_receive_to_rag_done_ms') : calc('ragflowDoneAt');
+  const endMs = serverTimeline ? (derivedMs('server_receive_to_play_end_ms') ?? calc('ttsAllDoneAt')) : calc('ttsAllDoneAt');
+  const startReady = serverTimeline || submitAt != null;
   return [
-    { key: 'submitAt', label: '开始', value: submitAt != null ? '0 ms' : '-', done: submitAt != null },
+    { key: 'submitAt', label: '开始', value: startReady ? '0 ms' : '-', done: startReady },
     { key: 'clientSubmit', label: '发送', value: formatElapsed(clientSubmitMs), done: clientSubmitMs != null },
     { key: 'serverReceive', label: '服务端接收', value: formatElapsed(serverReceiveMs), done: serverReceiveMs != null },
     { key: 'requestParse', label: '请求解析', value: formatElapsed(requestParseMs), done: requestParseMs != null },
@@ -109,12 +170,12 @@ function buildTimelineItems(debugInfo, serverStatus, { ttsEnabled = true } = {})
       done: ttsEnabled ? firstAudioMs != null : false,
       disabled: !ttsEnabled,
     },
-    { key: 'ragflowDoneAt', label: 'RAG完成', value: formatElapsed(calc('ragflowDoneAt')), done: calc('ragflowDoneAt') != null },
+    { key: 'ragflowDoneAt', label: 'RAG完成', value: formatElapsed(ragDoneMs), done: ragDoneMs != null },
     {
       key: 'ttsAllDoneAt',
       label: '结束',
-      value: formatElapsed(calc('ttsAllDoneAt'), { disabled: !ttsEnabled }),
-      done: ttsEnabled ? calc('ttsAllDoneAt') != null : false,
+      value: formatElapsed(endMs, { disabled: !ttsEnabled }),
+      done: ttsEnabled ? endMs != null : false,
       disabled: !ttsEnabled,
     },
   ];

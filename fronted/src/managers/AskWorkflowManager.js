@@ -4,16 +4,6 @@ import { classifyInterrupt } from './RunPolicies';
 import { ragflowChunkManager } from './RagflowChunkManager';
 
 const MAX_CONTEXT_TURNS = 200;
-const CONTEXT_MARKER_MEMORY = '[CONTEXT_MEMORY]';
-const CONTEXT_MARKER_SUMMARY = '[CONTEXT_SUMMARY]';
-const CONTEXT_MARKER_RECENT = '[RECENT_TURNS]';
-const CONTEXT_MARKER_CURRENT = '[CURRENT_QUESTION]';
-
-function clampInt(value, fallback, min, max) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.max(min, Math.min(max, Math.round(n)));
-}
 
 function safeTrim(value) {
   return String(value == null ? '' : value).trim();
@@ -23,23 +13,6 @@ function nowWallMs() {
   return Date.now();
 }
 
-function shortenLine(value, maxLen = 120) {
-  const text = safeTrim(value).replace(/\s+/g, ' ');
-  if (!text) return '';
-  if (text.length <= maxLen) return text;
-  return `${text.slice(0, Math.max(0, maxLen - 3))}...`;
-}
-
-function estimateTokensByChars(text) {
-  const chars = safeTrim(text).length;
-  if (!chars) return 0;
-  return Math.ceil(chars / 4);
-}
-
-function normalizeContextStrategy(value) {
-  const strategy = safeTrim(value).toLowerCase();
-  return strategy === 'full' ? 'full' : 'smart_recent_current';
-}
 
 function sanitizeTurns(turns) {
   const src = Array.isArray(turns) ? turns : [];
@@ -58,26 +31,6 @@ function sanitizeTurns(turns) {
   return out.slice(-MAX_CONTEXT_TURNS);
 }
 
-function formatFullTurns(turns) {
-  return turns
-    .map((item, idx) => `T${idx + 1} Q: ${item.question}\nT${idx + 1} A: ${item.answer}`)
-    .join('\n');
-}
-
-function formatSummary(turns) {
-  return turns
-    .map((item, idx) => `T${idx + 1}: Q=${shortenLine(item.question, 70)} | A=${shortenLine(item.answer, 90)}`)
-    .join('\n');
-}
-
-function formatRecent(turns, startIndex) {
-  return turns
-    .map((item, idx) => {
-      const turnNo = startIndex + idx + 1;
-      return `T${turnNo} Q: ${item.question}\nT${turnNo} A: ${item.answer}`;
-    })
-    .join('\n');
-}
 
 export class AskWorkflowManager {
   constructor(deps) {
@@ -112,12 +65,6 @@ export class AskWorkflowManager {
     return voiceConversationTurnsRef;
   }
 
-  _readConversationTurns() {
-    const ref = this._getConversationTurnsRef();
-    if (!ref) return [];
-    return sanitizeTurns(ref.current);
-  }
-
   _appendConversationTurn(question, answer) {
     const q = safeTrim(question);
     const a = safeTrim(answer);
@@ -128,90 +75,8 @@ export class AskWorkflowManager {
     ref.current = next.slice(-MAX_CONTEXT_TURNS);
   }
 
-  _buildQuestionWithContext(question, options = {}) {
-    const baseQuestion = safeTrim(question);
-    if (!baseQuestion) return baseQuestion;
-    const opts = options && typeof options === 'object' ? options : {};
-    if (opts.tourAction) return baseQuestion;
-
-    const strategyRef = this.deps && this.deps.voiceConversationContextStrategyRef;
-    const recentRef = this.deps && this.deps.voiceConversationContextRecentTurnsRef;
-    const maxTokensRef = this.deps && this.deps.voiceConversationContextMaxTokensRef;
-    const strategy = normalizeContextStrategy(strategyRef && strategyRef.current);
-    const recentTurns = clampInt(recentRef && recentRef.current, 10, 1, 20);
-    const maxTokens = clampInt(maxTokensRef && maxTokensRef.current, 16000, 2000, 64000);
-
-    const allTurns = this._readConversationTurns();
-    if (!allTurns.length) return baseQuestion;
-
-    if (strategy === 'full') {
-      const contextBlock = formatFullTurns(allTurns);
-      if (!safeTrim(contextBlock)) return baseQuestion;
-      return [
-        baseQuestion,
-        '',
-        CONTEXT_MARKER_MEMORY,
-        contextBlock,
-        '',
-        CONTEXT_MARKER_CURRENT,
-        baseQuestion,
-      ].join('\n');
-    }
-
-    let recent = allTurns.slice(-recentTurns);
-    const older = allTurns.slice(0, Math.max(0, allTurns.length - recent.length));
-    let summary = formatSummary(older);
-    let recentText = formatRecent(recent, Math.max(0, allTurns.length - recent.length));
-
-    let draft = [
-      baseQuestion,
-      '',
-      CONTEXT_MARKER_SUMMARY,
-      summary || 'none',
-      '',
-      CONTEXT_MARKER_RECENT,
-      recentText || 'none',
-      '',
-      CONTEXT_MARKER_CURRENT,
-      baseQuestion,
-    ].join('\n');
-
-    while (estimateTokensByChars(draft) > maxTokens && summary) {
-      const lines = summary.split('\n');
-      lines.shift();
-      summary = lines.join('\n');
-      draft = [
-        baseQuestion,
-        '',
-        CONTEXT_MARKER_SUMMARY,
-        summary || 'none',
-        '',
-        CONTEXT_MARKER_RECENT,
-        recentText || 'none',
-        '',
-        CONTEXT_MARKER_CURRENT,
-        baseQuestion,
-      ].join('\n');
-    }
-
-    while (estimateTokensByChars(draft) > maxTokens && recent.length > 1) {
-      recent = recent.slice(1);
-      recentText = formatRecent(recent, Math.max(0, allTurns.length - recent.length));
-      draft = [
-        baseQuestion,
-        '',
-        CONTEXT_MARKER_SUMMARY,
-        summary || 'none',
-        '',
-        CONTEXT_MARKER_RECENT,
-        recentText || 'none',
-        '',
-        CONTEXT_MARKER_CURRENT,
-        baseQuestion,
-      ].join('\n');
-    }
-
-    return draft;
+  _buildQuestionWithContext(question) {
+    return safeTrim(question);
   }
 
   interrupt(reason) {
@@ -425,7 +290,7 @@ export class AskWorkflowManager {
 
     const options = opts && typeof opts === 'object' ? opts : {};
     const userQuestion = safeTrim(text);
-    const questionForRequest = this._buildQuestionWithContext(userQuestion, options);
+    const questionForRequest = this._buildQuestionWithContext(userQuestion);
     const interruptMgr = interruptManagerRef && interruptManagerRef.current ? interruptManagerRef.current : null;
 
     // Interrupt any previous in-flight /api/ask stream.

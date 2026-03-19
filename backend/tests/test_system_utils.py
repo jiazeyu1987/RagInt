@@ -81,12 +81,23 @@ def test_derive_status_metrics_full_chain_breakdown():
     assert got["ask_client_start_to_qa_match_start_ms"] == 90.0
     assert got["ask_client_start_to_qa_match_end_ms"] == 96.0
     assert got["server_receive_to_request_parse_done_ms"] == 3.0
+    assert got["server_receive_to_conversation_resolved_ms"] == 7.0
+    assert got["server_receive_to_orchestrator_ready_ms"] == 13.0
+    assert got["server_receive_to_qa_match_start_ms"] == 15.0
+    assert got["server_receive_to_qa_match_end_ms"] == 21.0
     assert got["request_parse_to_conversation_resolved_ms"] == 4.0
     assert got["conversation_resolved_to_orchestrator_ready_ms"] == 6.0
     assert got["orchestrator_ready_to_qa_match_start_ms"] == 2.0
     assert got["qa_match_ms"] == 6.0
     assert got["server_receive_to_server_submit_ms"] == 25.0
     assert got["server_receive_to_rag_request_ms"] == 70.0
+    assert got["submit_to_rag_request_ms"] == 70.0
+    assert got["server_receive_to_rag_request_total_ms"] == 95.0
+    assert got["server_receive_to_rag_first_chunk_ms"] == 125.0
+    assert got["server_receive_to_rag_first_text_ms"] == 175.0
+    assert got["server_receive_to_first_segment_ms"] == 325.0
+    assert got["server_receive_to_tts_first_audio_ms"] == 475.0
+    assert got["server_receive_to_play_end_ms"] == 1025.0
     assert got["ask_client_start_to_rag_request_ms"] == 145.0
     assert got["ask_client_start_to_server_submit_ms"] == 100.0
     assert got["rag_request_to_first_chunk_ms"] == 30.0

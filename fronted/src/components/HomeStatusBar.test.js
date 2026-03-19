@@ -88,15 +88,29 @@ describe('HomeStatusBar', () => {
         }}
         serverStatus={{
           derived_ms: {
-            ask_client_start_to_client_submit_ms: 20,
-            ask_client_start_to_server_receive_ms: 45,
-            ask_client_start_to_request_parse_done_ms: 48,
-            ask_client_start_to_conversation_resolved_ms: 52,
-            ask_client_start_to_orchestrator_ready_ms: 58,
-            ask_client_start_to_qa_match_start_ms: 59,
-            ask_client_start_to_qa_match_end_ms: 61,
-            ask_client_start_to_server_submit_ms: 35,
-            ask_client_start_to_rag_request_ms: 60,
+            ask_client_start_to_client_submit_ms: 1,
+            ask_client_start_to_server_receive_ms: -194,
+            ask_client_start_to_request_parse_done_ms: -191,
+            ask_client_start_to_conversation_resolved_ms: -187,
+            ask_client_start_to_orchestrator_ready_ms: -181,
+            ask_client_start_to_qa_match_start_ms: -179,
+            ask_client_start_to_qa_match_end_ms: 21637,
+            ask_client_start_to_server_submit_ms: -180,
+            ask_client_start_to_rag_request_ms: -110,
+            client_submit_to_server_receive_ms: 2,
+            server_receive_to_request_parse_done_ms: 3,
+            server_receive_to_conversation_resolved_ms: 7,
+            server_receive_to_orchestrator_ready_ms: 13,
+            server_receive_to_qa_match_start_ms: 15,
+            server_receive_to_qa_match_end_ms: 21,
+            server_receive_to_server_submit_ms: 25,
+            server_receive_to_rag_request_total_ms: 95,
+            server_receive_to_rag_first_chunk_ms: 125,
+            server_receive_to_rag_first_text_ms: 175,
+            server_receive_to_first_segment_ms: 325,
+            server_receive_to_tts_first_audio_ms: 475,
+            server_receive_to_rag_done_ms: 620,
+            server_receive_to_play_end_ms: 1025,
             rag_request_to_first_chunk_ms: 20,
             submit_to_rag_first_chunk_ms: 45,
             submit_to_rag_first_text_ms: 70,
@@ -110,35 +124,35 @@ describe('HomeStatusBar', () => {
     expect(view.container.textContent).toContain('开始');
     expect(view.container.textContent).toContain('0 ms');
     expect(view.container.textContent).toContain('发送');
-    expect(view.container.textContent).toContain('20 ms');
+    expect(view.container.textContent).toContain('2 ms');
     expect(view.container.textContent).toContain('服务端接收');
-    expect(view.container.textContent).toContain('45 ms');
+    expect(view.container.textContent).toContain('0 ms');
     expect(view.container.textContent).toContain('请求解析');
-    expect(view.container.textContent).toContain('48 ms');
+    expect(view.container.textContent).toContain('3 ms');
     expect(view.container.textContent).toContain('会话解析');
-    expect(view.container.textContent).toContain('52 ms');
+    expect(view.container.textContent).toContain('7 ms');
     expect(view.container.textContent).toContain('编排启动');
-    expect(view.container.textContent).toContain('58 ms');
+    expect(view.container.textContent).toContain('13 ms');
     expect(view.container.textContent).toContain('问题比对开始');
-    expect(view.container.textContent).toContain('59 ms');
+    expect(view.container.textContent).toContain('15 ms');
     expect(view.container.textContent).toContain('问题比对完成');
-    expect(view.container.textContent).toContain('61 ms');
+    expect(view.container.textContent).toContain('21 ms');
     expect(view.container.textContent).toContain('服务端提交');
-    expect(view.container.textContent).toContain('35 ms');
+    expect(view.container.textContent).toContain('25 ms');
     expect(view.container.textContent).toContain('RAG请求');
-    expect(view.container.textContent).toContain('60 ms');
+    expect(view.container.textContent).toContain('95 ms');
     expect(view.container.textContent).toContain('首Chunk');
-    expect(view.container.textContent).toContain('80 ms');
+    expect(view.container.textContent).toContain('125 ms');
     expect(view.container.textContent).toContain('首文本');
-    expect(view.container.textContent).toContain('105 ms');
+    expect(view.container.textContent).toContain('175 ms');
     expect(view.container.textContent).toContain('首分段');
-    expect(view.container.textContent).toContain('195 ms');
+    expect(view.container.textContent).toContain('325 ms');
     expect(view.container.textContent).toContain('首音频');
-    expect(view.container.textContent).toContain('365 ms');
+    expect(view.container.textContent).toContain('475 ms');
     expect(view.container.textContent).toContain('RAG完成');
-    expect(view.container.textContent).toContain('680 ms');
+    expect(view.container.textContent).toContain('620 ms');
     expect(view.container.textContent).toContain('结束');
-    expect(view.container.textContent).toContain('1100 ms');
+    expect(view.container.textContent).toContain('1025 ms');
 
     view.unmount();
   });

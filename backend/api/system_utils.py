@@ -216,6 +216,7 @@ def derive_status_metrics(*, timing: dict, now_perf: float) -> dict:
     t_submit = timing.get("t_submit")
     t_rag_first_chunk = timing.get("t_ragflow_first_chunk")
     t_rag_first_text = timing.get("t_ragflow_first_text")
+    t_rag_done = timing.get("t_rag_done")
     t_rag_request_start = timing.get("t_ragflow_request_start")
     t_first_segment = timing.get("t_first_tts_segment")
     t_tts_first_audio = timing.get("t_tts_first_audio")
@@ -238,12 +239,30 @@ def derive_status_metrics(*, timing: dict, now_perf: float) -> dict:
     client_submit_to_server_receive_ms = _dt_direct_ms(t_server_receive_wall_ms, t_ask_client_submit_ms)
     ask_client_start_to_server_receive_ms = _dt_direct_ms(t_server_receive_wall_ms, t_ask_client_start_ms)
     server_receive_to_server_submit_ms = _dt_direct_ms(t_submit_wall_ms, t_server_receive_wall_ms)
-    server_receive_to_rag_request_ms = _dt_ms(t_rag_request_start, t_submit)
+    submit_to_rag_request_ms = _dt_ms(t_rag_request_start, t_submit)
+    server_receive_to_rag_request_ms = submit_to_rag_request_ms
+    server_receive_to_rag_request_total_ms = (
+        round(server_receive_to_server_submit_ms + submit_to_rag_request_ms, 1)
+        if server_receive_to_server_submit_ms is not None and submit_to_rag_request_ms is not None
+        else None
+    )
     ask_client_start_to_rag_request_ms = (
         round(ask_client_start_to_server_receive_ms + server_receive_to_rag_request_ms, 1)
         if ask_client_start_to_server_receive_ms is not None and server_receive_to_rag_request_ms is not None
         else None
     )
+    submit_to_rag_first_chunk_ms = _dt_ms(t_rag_first_chunk, t_submit)
+    submit_to_rag_first_text_ms = _dt_ms(t_rag_first_text, t_submit)
+    submit_to_first_segment_ms = _dt_ms(t_first_segment, t_submit)
+    submit_to_tts_first_audio_ms = _dt_ms(t_tts_first_audio, t_submit)
+    submit_to_rag_done_ms = _dt_ms(t_rag_done, t_submit)
+    submit_to_play_end_ms = _dt_ms(t_play_end, t_submit)
+
+    def _sum_ms(a, b):
+        if not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
+            return None
+        return round(float(a) + float(b), 1)
+
     derived = {
         "ask_client_start_to_client_submit_ms": client_start_to_submit_ms,
         "client_submit_to_server_receive_ms": client_submit_to_server_receive_ms,
@@ -254,6 +273,14 @@ def derive_status_metrics(*, timing: dict, now_perf: float) -> dict:
         "ask_client_start_to_qa_match_start_ms": _dt_direct_ms(t_qa_match_start_ms, t_ask_client_start_ms),
         "ask_client_start_to_qa_match_end_ms": _dt_direct_ms(t_qa_match_end_ms, t_ask_client_start_ms),
         "server_receive_to_request_parse_done_ms": _dt_direct_ms(t_request_parse_done_wall_ms, t_server_receive_wall_ms),
+        "server_receive_to_conversation_resolved_ms": _dt_direct_ms(
+            t_conversation_resolved_wall_ms, t_server_receive_wall_ms
+        ),
+        "server_receive_to_orchestrator_ready_ms": _dt_direct_ms(
+            t_orchestrator_ready_wall_ms, t_server_receive_wall_ms
+        ),
+        "server_receive_to_qa_match_start_ms": _dt_direct_ms(t_qa_match_start_ms, t_server_receive_wall_ms),
+        "server_receive_to_qa_match_end_ms": _dt_direct_ms(t_qa_match_end_ms, t_server_receive_wall_ms),
         "request_parse_to_conversation_resolved_ms": _dt_direct_ms(
             t_conversation_resolved_wall_ms, t_request_parse_done_wall_ms
         ),
@@ -264,12 +291,21 @@ def derive_status_metrics(*, timing: dict, now_perf: float) -> dict:
         "qa_match_ms": _dt_direct_ms(t_qa_match_end_ms, t_qa_match_start_ms),
         "server_receive_to_server_submit_ms": server_receive_to_server_submit_ms,
         "server_receive_to_rag_request_ms": server_receive_to_rag_request_ms,
+        "submit_to_rag_request_ms": submit_to_rag_request_ms,
+        "server_receive_to_rag_request_total_ms": server_receive_to_rag_request_total_ms,
         "ask_client_start_to_rag_request_ms": ask_client_start_to_rag_request_ms,
-        "submit_to_rag_first_chunk_ms": _dt_ms(t_rag_first_chunk, t_submit),
-        "submit_to_rag_first_text_ms": _dt_ms(t_rag_first_text, t_submit),
-        "submit_to_first_segment_ms": _dt_ms(t_first_segment, t_submit),
-        "submit_to_tts_first_audio_ms": _dt_ms(t_tts_first_audio, t_submit),
-        "submit_to_play_end_ms": _dt_ms(t_play_end, t_submit),
+        "submit_to_rag_first_chunk_ms": submit_to_rag_first_chunk_ms,
+        "submit_to_rag_first_text_ms": submit_to_rag_first_text_ms,
+        "submit_to_first_segment_ms": submit_to_first_segment_ms,
+        "submit_to_tts_first_audio_ms": submit_to_tts_first_audio_ms,
+        "submit_to_rag_done_ms": submit_to_rag_done_ms,
+        "submit_to_play_end_ms": submit_to_play_end_ms,
+        "server_receive_to_rag_first_chunk_ms": _sum_ms(server_receive_to_server_submit_ms, submit_to_rag_first_chunk_ms),
+        "server_receive_to_rag_first_text_ms": _sum_ms(server_receive_to_server_submit_ms, submit_to_rag_first_text_ms),
+        "server_receive_to_first_segment_ms": _sum_ms(server_receive_to_server_submit_ms, submit_to_first_segment_ms),
+        "server_receive_to_tts_first_audio_ms": _sum_ms(server_receive_to_server_submit_ms, submit_to_tts_first_audio_ms),
+        "server_receive_to_rag_done_ms": _sum_ms(server_receive_to_server_submit_ms, submit_to_rag_done_ms),
+        "server_receive_to_play_end_ms": _sum_ms(server_receive_to_server_submit_ms, submit_to_play_end_ms),
         "rag_request_to_first_chunk_ms": _dt_ms(t_rag_first_chunk, t_rag_request_start),
         "rag_first_chunk_to_first_text_ms": _dt_ms(t_rag_first_text, t_rag_first_chunk),
         "rag_first_text_to_first_segment_ms": _dt_ms(t_first_segment, t_rag_first_text),

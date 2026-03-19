@@ -88,33 +88,30 @@ def test_extract_base_question_strips_instruction_blocks():
     assert extract_base_question(raw) == "请介绍心脏介入展厅"
 
 
-def test_apply_explanation_script_requirements_appends_constraints_once():
+def test_apply_explanation_script_requirements_keeps_question_plain():
     q = "请介绍展厅"
     out1 = apply_explanation_script_requirements(q, enabled=True, answer_target_chars=220)
     out2 = apply_explanation_script_requirements(out1, enabled=True)
-    assert "【口播讲解约束】" in out1
-    assert "不要使用特殊符号" in out1
-    assert "基础标点" in out1
-    assert "回答长度控制" not in out1
+    assert out1 == q
     assert out1 == out2
 
 
 def test_apply_explanation_script_requirements_ignores_answer_target_chars():
     out = apply_explanation_script_requirements("请回答", enabled=True, answer_target_chars=10)
-    assert "回答长度控制" not in out
+    assert out == "请回答"
 
 
-def test_apply_explanation_script_requirements_includes_audience_profile_style_hint():
+def test_apply_explanation_script_requirements_ignores_audience_profile():
     out = apply_explanation_script_requirements(
         "请回答",
         enabled=True,
         answer_target_chars=10,
         audience_profile="儿童",
     )
-    assert "风格参考受众画像：儿童" in out
+    assert out == "请回答"
 
 
-def test_apply_explanation_script_requirements_rewrites_existing_old_length_line():
+def test_apply_explanation_script_requirements_strips_existing_constraint_block():
     src = (
         "请介绍展厅\n\n"
         "【口播讲解稿约束】\n"
@@ -122,18 +119,18 @@ def test_apply_explanation_script_requirements_rewrites_existing_old_length_line
         "回答长度控制：约20字。\n"
     )
     out = apply_explanation_script_requirements(src, enabled=True, answer_target_chars=1)
-    assert "约20字" not in out
-    assert "回答长度控制" not in out
+    assert out == "请介绍展厅"
 
 
-def test_apply_explanation_script_requirements_rewrites_existing_style_line():
+def test_apply_explanation_script_requirements_strips_existing_new_constraint_block():
     src = (
         "请介绍展厅\n\n"
-        "【口播讲解稿约束】\n"
+        "【口播讲解约束】\n"
         "请用可直接播报的讲解稿风格回复，语言自然连贯。\n"
+        "仅输出正文，不要标题、列表、分点、序号。\n"
     )
     out = apply_explanation_script_requirements(src, enabled=True, answer_target_chars=1, audience_profile="专业")
-    assert "风格参考受众画像：专业" in out
+    assert out == "请介绍展厅"
 
 
 def test_stream_ask_upserts_qa_audio_with_base_question_only():
@@ -223,7 +220,7 @@ def test_stream_ask_disables_audio_cache_lookup_but_still_upserts():
     assert matcher.upserts, "qa audio upsert should still be scheduled when lookup is disabled"
 
 
-def test_stream_ask_applies_audience_profile_to_script_prompt():
+def test_stream_ask_does_not_append_script_constraints():
     class _CaptureSession:
         def __init__(self):
             self.last_question = ""
@@ -268,7 +265,8 @@ def test_stream_ask_applies_audience_profile_to_script_prompt():
     cfg = {"kb_version": "kb1", "qa_cache": {"enabled": False}, "text_cleaning": {"enabled": False}}
 
     list(orch.stream_ask(inp=inp, ragflow_config=cfg, cancel_event=threading.Event(), t_submit=0.0))
-    assert "风格参考受众画像：儿童" in ragflow.session.last_question
+    assert "【口播讲解约束】" not in ragflow.session.last_question
+    assert "风格参考受众画像：儿童" not in ragflow.session.last_question
     assert "回答长度控制" not in ragflow.session.last_question
 
 class _QaAudioMatcherDebugNoHit:

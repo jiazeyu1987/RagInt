@@ -53,13 +53,6 @@ def extract_base_question(raw_question: str) -> str:
     return text
 
 
-def _norm_audience_profile(value: str | None) -> str:
-    text = re.sub(r"\s+", " ", str(value or "").strip())
-    if not text:
-        return ""
-    return text[:40]
-
-
 def apply_explanation_script_requirements(
     question_for_rag: str,
     *,
@@ -67,38 +60,15 @@ def apply_explanation_script_requirements(
     answer_target_chars: int | float | str | None = None,
     audience_profile: str | None = None,
 ) -> str:
-    if not enabled:
-        return str(question_for_rag or "")
     base = str(question_for_rag or "")
-    marker = "【口播讲解约束】"
-    legacy_marker = "【口播讲解稿约束】"
-    has_marker = marker in base or legacy_marker in base
+    if not enabled:
+        return base
 
-    # Keep the parameter for API compatibility, but do not inject length constraints.
+    # Keep parameters for API compatibility.
     _ = answer_target_chars
-    profile = _norm_audience_profile(audience_profile)
-    style_line = (
-        f"请用可直接播报的讲解稿风格回复，语言自然连贯，风格参考受众画像：{profile}。\n"
-        if profile
-        else "请用可直接播报的讲解稿风格回复，语言自然连贯。\n"
-    )
+    _ = audience_profile
 
-    if has_marker:
-        cleaned = base.replace(legacy_marker, marker)
-        # Remove historical length lines unconditionally.
-        cleaned = re.sub(r"回答长度控制：[^\n\r]*(?:\r?\n)?", "", cleaned)
-        if not profile:
-            return cleaned
-        if profile:
-            cleaned = re.sub(r"请用可直接播报的讲解稿风格回复[^\n\r]*(?:\r?\n)?", "", cleaned)
-            cleaned = re.sub(rf"{re.escape(marker)}(?:\r?\n)?", f"{marker}\n{style_line}", cleaned, count=1)
-        return cleaned
-
-    req = (
-        "\n\n【口播讲解约束】\n"
-        f"{style_line}"
-        "仅输出正文，不要标题、列表、分点、序号。\n"
-        "不要使用特殊符号或格式标记（如【】[]{}<>#*`~^|）。\n"
-        "必须使用基础标点（，。；：！？）自然断句，便于TTS分段。\n"
-    )
-    return f"{base}{req}"
+    # Stop injecting explanation-script constraints. Also strip historical
+    # constraint blocks if they are already present in the incoming question.
+    cleaned = re.sub(r"\n\n【口播讲解(?:稿)?约束】[\s\S]*$", "", base).strip()
+    return cleaned

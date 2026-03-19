@@ -254,6 +254,8 @@ def _stream_ragflow_response(
         logger.info(
             f"[{request_id}] 流式响应结束 total_dt={time.perf_counter() - t_submit:.3f}s total_chunks={chunk_count}"
         )
+        with contextlib.suppress(Exception):
+            timings_set(request_id, t_rag_done=time.perf_counter())
 
         if _ASK_TRACE_LOG_ENABLED:
             answer_preview = str(last_complete_content or "").strip().replace("\n", " ")[:200]
