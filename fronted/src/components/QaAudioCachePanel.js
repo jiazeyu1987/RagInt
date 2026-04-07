@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { backendUrl, fetchJson } from '../api/backendClient';
 
-function normalizeSpeedInput(v) {
-  const s = String(v || '').trim();
-  if (!s) return '';
-  const n = Number(s);
+function normalizeSpeedInput(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const n = Number(text);
   if (!Number.isFinite(n)) return '';
   return String(n);
 }
@@ -17,15 +17,16 @@ function buildQuery({ limit, speed }) {
 }
 
 function resolveAudioUrl(url) {
-  const s = String(url || '').trim();
-  if (!s) return '';
-  if (/^https?:\/\//i.test(s)) return s;
-  return backendUrl(s);
+  const text = String(url || '').trim();
+  if (!text) return '';
+  if (/^https?:\/\//i.test(text)) return text;
+  return backendUrl(text);
 }
 
 export function QaAudioCachePanel() {
   const [items, setItems] = useState([]);
   const [err, setErr] = useState('');
+  const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [speed, setSpeed] = useState('');
 
@@ -60,6 +61,7 @@ export function QaAudioCachePanel() {
       await fetchJson(`/api/ops/qa_audio_pairs/${encodeURIComponent(String(pairId))}`, {
         method: 'DELETE',
       });
+      setMessage('');
       await refresh();
     } catch (e) {
       const msg = String((e && e.message) || e || 'delete_failed');
@@ -67,9 +69,29 @@ export function QaAudioCachePanel() {
     }
   };
 
+  const onCleanupInvalidAudio = async () => {
+    const ok = window.confirm('确认清理“没有语音或语音时长为0”的问答缓存吗？');
+    if (!ok) return;
+    try {
+      const data = await fetchJson('/api/ops/qa_audio_pairs/cleanup_invalid_audio', {
+        method: 'POST',
+      });
+      const scanned = Number((data && data.scanned) || 0);
+      const invalid = Number((data && data.invalid) || 0);
+      const deleted = Number((data && data.deleted) || 0);
+      setErr('');
+      setMessage(`已清理 ${deleted} 条无效缓存（invalid=${invalid}, scanned=${scanned}）`);
+      await refresh();
+    } catch (e) {
+      const msg = String((e && e.message) || e || 'cleanup_failed');
+      setErr(msg);
+    }
+  };
+
   return (
     <div className="settings-block">
       {err ? <div style={{ color: '#b00020', fontSize: 12, marginBottom: 8 }}>{err}</div> : null}
+      {message ? <div style={{ color: '#166534', fontSize: 12, marginBottom: 8 }}>{message}</div> : null}
 
       <div className="settings-form" style={{ marginBottom: 10 }}>
         <label className="settings-field">
@@ -81,6 +103,9 @@ export function QaAudioCachePanel() {
       <div className="settings-actions" style={{ marginBottom: 10 }}>
         <button type="button" className="settings-action-btn" onClick={refresh} disabled={loading}>
           {loading ? '加载中...' : '刷新'}
+        </button>
+        <button type="button" className="settings-action-btn settings-action-btn-danger" onClick={onCleanupInvalidAudio} disabled={loading}>
+          清理无效语音
         </button>
       </div>
 

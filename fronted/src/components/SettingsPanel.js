@@ -36,6 +36,27 @@ const MODELSCOPE_VOICE_OPTIONS = [
   'loongsamuel',
 ];
 const FLASH_VOICE_OPTIONS = ['longanyang', 'longanhuan'];
+const LEGACY_FALLBACK_STOPS = new Set([
+  'company_overview',
+  'core_products',
+  'orthopedics',
+  'urology',
+  'other_products_and_scenarios',
+  'summary_and_qa',
+]);
+
+function normalizeStopNameList(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item || '').trim()).filter(Boolean);
+}
+
+function stripLegacyFallbackStops(stops) {
+  const list = normalizeStopNameList(stops);
+  if (!list.length) return [];
+  const hasBusinessStops = list.some((name) => !LEGACY_FALLBACK_STOPS.has(name));
+  if (!hasBusinessStops) return list;
+  return list.filter((name) => !LEGACY_FALLBACK_STOPS.has(name));
+}
 
 function normalizeSettingsTabKey(value) {
   const key = String(value || '').trim();
@@ -994,28 +1015,35 @@ function StopPromptTab({ controlBarProps }) {
     setDraftPromptMap(savedPromptMap);
   }, [savedPromptMap, savedPromptMapSignature]);
 
-  const mergedStops = [];
+  const mergedStopsRaw = [];
   const pushStop = (name) => {
     const s = String(name || '').trim();
     if (!s) return;
-    if (mergedStops.includes(s)) return;
-    mergedStops.push(s);
+    if (mergedStopsRaw.includes(s)) return;
+    mergedStopsRaw.push(s);
   };
 
   (Array.isArray(c.tourStopsOverride) ? c.tourStopsOverride : []).forEach(pushStop);
   (Array.isArray(c.tourStops) ? c.tourStops : []).forEach(pushStop);
   Object.keys(draftPromptMap || {}).forEach(pushStop);
+  const mergedStops = stripLegacyFallbackStops(mergedStopsRaw);
 
   const onSave = () => {
     const normalized = normalizeStopPromptMap(draftPromptMap);
+    const visibleStops = new Set(mergedStops);
+    const sanitized = {};
+    Object.keys(normalized).forEach((stopName) => {
+      if (!visibleStops.has(stopName)) return;
+      sanitized[stopName] = normalized[stopName];
+    });
     if (typeof c.onSaveTourStopPromptOverrides === 'function') {
-      c.onSaveTourStopPromptOverrides(normalized);
+      c.onSaveTourStopPromptOverrides(sanitized);
       return;
     }
     if (typeof c.onClearTourStopPromptOverrides === 'function') c.onClearTourStopPromptOverrides();
     if (typeof c.onChangeTourStopPromptOverride === 'function') {
-      Object.keys(normalized || {}).forEach((stopName) => {
-        c.onChangeTourStopPromptOverride(stopName, normalized[stopName]);
+      Object.keys(sanitized || {}).forEach((stopName) => {
+        c.onChangeTourStopPromptOverride(stopName, sanitized[stopName]);
       });
     }
   };

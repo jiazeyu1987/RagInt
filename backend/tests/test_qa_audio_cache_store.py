@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import sqlite3
+import wave
 
 import numpy as np
 
@@ -136,3 +138,69 @@ def test_find_exact_pair_legacy_normalized_fallback(tmp_path):
     )
     assert pair is not None
     assert int(pair.id) == int(pid)
+
+
+def test_cleanup_invalid_audio_pairs_removes_missing_and_zero_duration_wav(tmp_path):
+    root_dir = tmp_path / "qa_audio_root"
+    db_path = tmp_path / "qa_audio.db"
+    store = QaAudioCacheStore(root_dir=root_dir, db_path=db_path)
+
+    valid_id = store.upsert_pair_with_audio(
+        question_text="valid q",
+        answer_text="valid a",
+        audio_bytes=b"valid_pcm_bytes_1234",
+        tts_provider="edge",
+        tts_voice="v1",
+        tts_speed=1.0,
+        source_request_id="ask_valid",
+        embedding=_vec(1.0, 0.0, 0.0, 0.0),
+    )
+    missing_id = store.upsert_pair_with_audio(
+        question_text="missing q",
+        answer_text="missing a",
+        audio_bytes=b"missing_pcm_bytes_5678",
+        tts_provider="edge",
+        tts_voice="v1",
+        tts_speed=1.0,
+        source_request_id="ask_missing",
+        embedding=_vec(1.0, 0.0, 0.0, 0.0),
+    )
+    zero_id = store.upsert_pair_with_audio(
+        question_text="zero q",
+        answer_text="zero a",
+        audio_bytes=b"zero_pcm_bytes_9012",
+        tts_provider="edge",
+        tts_voice="v1",
+        tts_speed=1.0,
+        source_request_id="ask_zero",
+        embedding=_vec(1.0, 0.0, 0.0, 0.0),
+    )
+    assert isinstance(valid_id, int)
+    assert isinstance(missing_id, int)
+    assert isinstance(zero_id, int)
+
+    missing_path = store.get_audio_file_path(pair_id=int(missing_id))
+    assert missing_path is not None and missing_path.exists()
+    missing_path.unlink(missing_ok=True)
+
+    zero_path = store.get_audio_file_path(pair_id=int(zero_id))
+    assert zero_path is not None
+    wav_buf = io.BytesIO()
+    with wave.open(wav_buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(16000)
+        wf.writeframes(b"")
+    zero_path.write_bytes(wav_buf.getvalue())
+
+    result = store.cleanup_invalid_audio_pairs()
+    assert int(result["scanned"]) == 3
+    assert int(result["invalid"]) == 2
+    assert int(result["deleted"]) == 2
+    assert sorted(int(x) for x in result["deleted_ids"]) == sorted([int(missing_id), int(zero_id)])
+    assert int(result["reason_counts"].get("audio_file_missing") or 0) == 1
+    assert int(result["reason_counts"].get("wav_duration_zero") or 0) == 1
+
+    assert store.get_pair(pair_id=int(valid_id)) is not None
+    assert store.get_pair(pair_id=int(missing_id)) is None
+    assert store.get_pair(pair_id=int(zero_id)) is None

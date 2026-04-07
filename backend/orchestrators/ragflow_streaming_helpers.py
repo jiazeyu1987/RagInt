@@ -7,6 +7,8 @@ from backend.orchestrators.stream_payloads import make_segment
 from backend.services.safety_filter import SensitiveWordsFilter
 
 _INTRO_FLUSH_PUNCT = ("\n", "\u3002", "\uff01", "!", "\uff1f", "?", ".", "\uff0c", ",", "\uff1a", ":")
+_SENTENCE_END_PUNCT = {"\u3002", "\uff01", "!", "\uff1f", "?", "\uff1b", ";", "\n", "\u2026"}
+_SENTENCE_TAIL_PUNCT = {'"', "'", "\u201d", "\u2019", "\u300d", "\u300f", "\uff09", ")", "]", "\u3011", "\u300b"}
 _SELF_INTRO_PREFIX_RE = re.compile(
     r"^\s*(\u4f60\u597d[!\uff01,\uff0c\u3002\s]*)?(\u6211\u662f|\u6211\u53eb|\u8fd9\u91cc\u662f)[^,: \uff1a\uff0c\u3002\s]{0,20}(?:\u52a9\u624b|\u673a\u5668\u4eba|AI|\u667a\u80fd\u52a9\u624b)?[,: \uff1a\uff0c\u3002\s]*"
 )
@@ -155,6 +157,39 @@ def _diff_stream_content(*, content: str, last_content: str) -> tuple[str, str]:
     return content, content
 
 
+def _split_complete_sentences(text: str) -> tuple[list[str], str]:
+    """
+    Split text into complete sentence-like segments and remaining tail.
+    Sentence boundary is identified by common Chinese/English sentence-end punctuation.
+    """
+    src = str(text or "")
+    if not src:
+        return [], ""
+
+    out: list[str] = []
+    start = 0
+    i = 0
+    n = len(src)
+    while i < n:
+        ch = src[i]
+        if ch not in _SENTENCE_END_PUNCT:
+            i += 1
+            continue
+
+        end = i + 1
+        while end < n and src[end] in _SENTENCE_TAIL_PUNCT:
+            end += 1
+
+        seg = src[start:end].strip()
+        if seg:
+            out.append(seg)
+        start = end
+        i = end
+
+    remain = src[start:]
+    return out, remain
+
+
 def _emit_tts_segments_for_new_part(
     *,
     request_id: str,
@@ -211,18 +246,30 @@ def _emit_tts_segments_for_new_part(
         return carry_segment_text, segment_seq, last_segment_emit_at, first_segment_at, False
 
     carry_segment_text = (carry_segment_text or "") + (new_part or "")
-    if (now - last_segment_emit_at) >= segment_flush_interval_s and len(carry_segment_text.strip()) >= segment_min_chars:
-        seg = carry_segment_text.strip()
-        if seg and seg not in emitted_segments:
-            emitted_segments.add(seg)
-            segment_seq += 1
-            last_segment_emit_at = now
-            if first_segment_at is None:
-                first_segment_at = now
-                logger.info(f"[{request_id}] first_tts_segment dt={first_segment_at - t_submit:.3f}s chars={len(seg)}")
-                timings_set(request_id, t_first_tts_segment=first_segment_at)
-            yield make_segment(seg, segment_seq=segment_seq)
-        carry_segment_text = ""
+
+    # Coarse mode (no cleaner): prioritize full sentence emission to avoid mid-sentence cuts.
+    sentence_segs, remain = _split_complete_sentences(carry_segment_text)
+    for seg in sentence_segs:
+        if seg in emitted_segments:
+            continue
+        emitted_segments.add(seg)
+        segment_seq += 1
+        last_segment_emit_at = now
+        if first_segment_at is None:
+            first_segment_at = now
+            logger.info(f"[{request_id}] first_tts_segment dt={first_segment_at - t_submit:.3f}s chars={len(seg)}")
+            timings_set(request_id, t_first_tts_segment=first_segment_at)
+        yield make_segment(seg, segment_seq=segment_seq)
+    carry_segment_text = remain
+
+    # Keep the unfinished tail until it becomes a complete sentence (or stream finalize).
+    if (
+        not sentence_segs
+        and (now - last_segment_emit_at) >= segment_flush_interval_s
+        and len(carry_segment_text.strip()) >= segment_min_chars
+    ):
+        # Intentionally keep buffering to avoid splitting one sentence into two TTS requests.
+        return carry_segment_text, segment_seq, last_segment_emit_at, first_segment_at, False
     return carry_segment_text, segment_seq, last_segment_emit_at, first_segment_at, False
 
 

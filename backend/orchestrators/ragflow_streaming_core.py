@@ -12,6 +12,7 @@ from backend.orchestrators.ragflow_streaming_helpers import (
     _diff_stream_content,
     _emit_tts_segments_for_new_part,
     _extract_ragflow_chunk_content,
+    _split_complete_sentences,
     _update_safety_stream_tail_and_check,
 )
 from backend.orchestrators.ragflow_streaming_models import AskStreamOutcome, RagflowStreamSettings
@@ -288,6 +289,34 @@ def _stream_ragflow_response(
                     )
                     timings_set(request_id, t_first_tts_segment=first_segment_at)
                 yield make_segment(seg)
+        else:
+            tail_text = str(carry_segment_text or "").strip()
+            if tail_text:
+                sentence_segs, remain = _split_complete_sentences(tail_text)
+                for seg in sentence_segs:
+                    if not seg or seg in emitted_segments:
+                        continue
+                    emitted_segments.add(seg)
+                    segment_seq += 1
+                    if first_segment_at is None:
+                        first_segment_at = time.perf_counter()
+                        logger.info(
+                            f"[{request_id}] first_tts_segment_finalize dt={first_segment_at - t_submit:.3f}s chars={len(seg)}"
+                        )
+                        timings_set(request_id, t_first_tts_segment=first_segment_at)
+                    yield make_segment(seg, segment_seq=segment_seq)
+
+                remain = str(remain or "").strip()
+                if remain and remain not in emitted_segments:
+                    emitted_segments.add(remain)
+                    segment_seq += 1
+                    if first_segment_at is None:
+                        first_segment_at = time.perf_counter()
+                        logger.info(
+                            f"[{request_id}] first_tts_segment_finalize dt={first_segment_at - t_submit:.3f}s chars={len(remain)}"
+                        )
+                        timings_set(request_id, t_first_tts_segment=first_segment_at)
+                    yield make_segment(remain, segment_seq=segment_seq)
 
         done_sent = False
         if not cancel_event.is_set():

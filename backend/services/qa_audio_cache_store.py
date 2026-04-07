@@ -5,6 +5,7 @@ import os
 import sqlite3
 import threading
 import time
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -566,6 +567,131 @@ class QaAudioCacheStore:
                 return [dict(r) for r in rows]
             finally:
                 conn.close()
+
+    @staticmethod
+    def _wav_duration_seconds(path: Path) -> float | None:
+        try:
+            with wave.open(str(path), "rb") as wf:
+                frames = int(wf.getnframes() or 0)
+                sample_rate = int(wf.getframerate() or 0)
+                if sample_rate <= 0:
+                    return 0.0
+                return float(frames) / float(sample_rate)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _is_riff_wav_file(path: Path) -> bool:
+        try:
+            with open(path, "rb") as f:
+                head = bytes(f.read(12) or b"")
+        except Exception:
+            return False
+        return len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WAVE"
+
+    def cleanup_invalid_audio_pairs(self) -> dict:
+        """
+        Hard-delete cache pairs whose audio is invalid:
+        - missing audio path
+        - unsafe/invalid relative path
+        - missing file
+        - empty file
+        - WAV file with duration <= 0
+        """
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT id, audio_rel_path, tts_provider
+                    FROM qa_audio_pairs
+                    ORDER BY id ASC
+                    """
+                ).fetchall()
+            finally:
+                conn.close()
+
+        invalid_items: list[dict] = []
+        reason_counts: dict[str, int] = {}
+        for row in rows:
+            pair_id = int(row["id"] or 0)
+            rel_path = str(row["audio_rel_path"] or "")
+            tts_provider = str(row["tts_provider"] or "")
+            reason = ""
+            path: Path | None = None
+
+            if not rel_path.strip():
+                reason = "audio_rel_path_empty"
+            else:
+                try:
+                    path = self._safe_audio_path(rel_path)
+                except Exception:
+                    reason = "audio_rel_path_invalid"
+
+            if not reason and path is not None:
+                if not (path.exists() and path.is_file()):
+                    reason = "audio_file_missing"
+                else:
+                    self._repair_audio_file_if_needed(path, tts_provider=tts_provider)
+                    try:
+                        file_size = int(path.stat().st_size)
+                    except Exception:
+                        file_size = 0
+                    if file_size <= 0:
+                        reason = "audio_file_empty"
+                    elif self._is_riff_wav_file(path):
+                        duration_s = self._wav_duration_seconds(path)
+                        if duration_s is not None and duration_s <= 0:
+                            reason = "wav_duration_zero"
+
+            if reason:
+                invalid_items.append({"pair_id": int(pair_id), "audio_rel_path": rel_path, "reason": reason})
+                reason_counts[reason] = int(reason_counts.get(reason) or 0) + 1
+
+        deleted_ids: list[int] = []
+        deleted_paths: list[str] = []
+        if invalid_items:
+            ids_to_delete = [int(item["pair_id"]) for item in invalid_items if int(item.get("pair_id") or 0) > 0]
+            ids_set = set(ids_to_delete)
+            with self._lock:
+                conn = self._connect()
+                try:
+                    if ids_set:
+                        marks = ",".join(["?"] * len(ids_set))
+                        existing = conn.execute(
+                            f"SELECT id, audio_rel_path FROM qa_audio_pairs WHERE id IN ({marks})",
+                            tuple(sorted(ids_set)),
+                        ).fetchall()
+                        for row in existing:
+                            pid = int(row["id"] or 0)
+                            if pid <= 0:
+                                continue
+                            deleted_ids.append(pid)
+                            deleted_paths.append(str(row["audio_rel_path"] or ""))
+                        for pid in deleted_ids:
+                            conn.execute("DELETE FROM qa_audio_embeddings WHERE pair_id = ?", (pid,))
+                            conn.execute("DELETE FROM qa_audio_pairs WHERE id = ?", (pid,))
+                    conn.commit()
+                finally:
+                    conn.close()
+
+        for rel_path in deleted_paths:
+            if not rel_path:
+                continue
+            try:
+                p = self._safe_audio_path(rel_path)
+                if p.exists() and p.is_file():
+                    p.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        return {
+            "scanned": int(len(rows)),
+            "invalid": int(len(invalid_items)),
+            "deleted": int(len(deleted_ids)),
+            "deleted_ids": sorted(int(x) for x in deleted_ids),
+            "reason_counts": reason_counts,
+        }
 
     def delete_pair_hard(self, *, pair_id: int) -> bool:
         pid = int(pair_id)

@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { backendUrl, fetchJson } from '../api/backendClient';
 
+const FLASH_VOICE_OPTIONS = new Set(['longanyang', 'longanhuan']);
+
 function normalizeStops(stops) {
   return Array.isArray(stops) ? stops.map((s) => String(s || '').trim()).filter(Boolean) : [];
 }
@@ -15,6 +17,28 @@ function resolveAudioUrl(url) {
   if (!s) return '';
   if (/^https?:\/\//i.test(s)) return s;
   return backendUrl(s);
+}
+
+function resolveRegenerateTtsPayload({ provider, voice, speed }) {
+  const providerNorm = String(provider || '').trim().toLowerCase();
+  const voiceNorm = String(voice || '').trim();
+  const speedNum = Number(speed);
+
+  if (!providerNorm || providerNorm === 'modelscope' || providerNorm === 'flash') {
+    const flashVoice = FLASH_VOICE_OPTIONS.has(voiceNorm) ? voiceNorm : 'longanyang';
+    return {
+      tts_provider: 'flash',
+      tts_voice: flashVoice,
+      tts_model: 'cosyvoice-v3-flash',
+      tts_speed: Number.isFinite(speedNum) ? speedNum : 1.0,
+    };
+  }
+
+  return {
+    tts_provider: providerNorm,
+    tts_voice: voiceNorm,
+    tts_speed: Number.isFinite(speedNum) ? speedNum : 1.0,
+  };
 }
 
 export function RecordingArchivePreviewPanel({ recordingId, ttsProvider, ttsVoice, ttsSpeed } = {}) {
@@ -118,12 +142,9 @@ export function RecordingArchivePreviewPanel({ recordingId, ttsProvider, ttsVoic
       setRegenLoadingByKey((prev) => ({ ...(prev || {}), [key]: true }));
       setRegenErrByKey((prev) => ({ ...(prev || {}), [key]: '' }));
       try {
-        const speedNum = Number(ttsSpeed);
         const payload = {
           text,
-          tts_provider: String(ttsProvider || '').trim(),
-          tts_voice: String(ttsVoice || '').trim(),
-          tts_speed: Number.isFinite(speedNum) ? speedNum : 1.0,
+          ...resolveRegenerateTtsPayload({ provider: ttsProvider, voice: ttsVoice, speed: ttsSpeed }),
         };
         const data = await fetchJson(
           `/api/recordings/${encodeURIComponent(rid)}/segment/${encodeURIComponent(String(segId))}/regenerate`,

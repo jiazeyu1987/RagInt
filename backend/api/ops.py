@@ -239,4 +239,32 @@ def create_blueprint(deps):
             pass
         return ok_json(id=int(pair_id), deleted=True)
 
+    @bp.route("/api/ops/qa_audio_pairs/cleanup_invalid_audio", methods=["POST"])
+    def api_ops_qa_audio_pairs_cleanup_invalid_audio():
+        result = deps.qa_audio_cache_store.cleanup_invalid_audio_pairs()
+        client_id = get_client_id(request, data=None, default="-")
+        try:
+            deps.ops_store.audit(
+                actor_kind="ops",
+                actor_id=str(client_id or "-"),
+                action="qa_audio_pair_cleanup_invalid_audio",
+                target_kind="qa_audio_pair",
+                target_id="*",
+                payload={
+                    "scanned": int(result.get("scanned") or 0),
+                    "invalid": int(result.get("invalid") or 0),
+                    "deleted": int(result.get("deleted") or 0),
+                    "reason_counts": result.get("reason_counts") if isinstance(result.get("reason_counts"), dict) else {},
+                },
+            )
+        except Exception:
+            pass
+        return ok_json(
+            scanned=int(result.get("scanned") or 0),
+            invalid=int(result.get("invalid") or 0),
+            deleted=int(result.get("deleted") or 0),
+            deleted_ids=result.get("deleted_ids") if isinstance(result.get("deleted_ids"), list) else [],
+            reason_counts=result.get("reason_counts") if isinstance(result.get("reason_counts"), dict) else {},
+        )
+
     return bp

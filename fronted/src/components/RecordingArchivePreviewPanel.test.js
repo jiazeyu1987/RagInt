@@ -81,7 +81,60 @@ describe('RecordingArchivePreviewPanel', () => {
       '/api/recordings/rec-1/segment/11/regenerate',
       expect.objectContaining({ method: 'POST' })
     );
+    const regenCall = fetchJson.mock.calls.find(([url]) => url === '/api/recordings/rec-1/segment/11/regenerate');
+    expect(regenCall).toBeTruthy();
+    const regenPayload = JSON.parse(regenCall[1].body);
+    expect(regenPayload).toMatchObject({
+      text: 'old text',
+      tts_provider: 'flash',
+      tts_voice: 'longanyang',
+      tts_model: 'cosyvoice-v3-flash',
+      tts_speed: 1.25,
+    });
     expect(view.container.textContent).toContain('new text');
+    view.unmount();
+  });
+
+  test('keeps explicit flash voice when regenerating', async () => {
+    fetchJson.mockImplementation((url, opts) => {
+      if (url === '/api/recordings/rec-2') return Promise.resolve({ stops: ['Stop B'] });
+      if (url === '/api/recordings/rec-2/stop/0') {
+        return Promise.resolve({
+          stop_index: 0,
+          stop_name: 'Stop B',
+          answer_text: 'Answer B',
+          segments: [{ segment_id: 12, segment_index: 0, text: 'flash text', audio_url: '/old-flash.wav' }],
+        });
+      }
+      if (String(url).includes('/segment/12/regenerate') && opts && opts.method === 'POST') {
+        return Promise.resolve({ segment: { segment_id: 12, text: 'flash new text', audio_url: '/new-flash.wav' } });
+      }
+      return Promise.resolve({});
+    });
+
+    const view = render(
+      <RecordingArchivePreviewPanel recordingId="rec-2" ttsProvider="flash" ttsVoice="longanhuan" ttsSpeed={1.0} />
+    );
+    await flush();
+
+    const actionButtons = view.container.querySelectorAll('button.settings-action-btn');
+    const regenerateButton = actionButtons[actionButtons.length - 1];
+    await act(async () => {
+      regenerateButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    await flush();
+
+    const regenCall = fetchJson.mock.calls.find(([url]) => url === '/api/recordings/rec-2/segment/12/regenerate');
+    expect(regenCall).toBeTruthy();
+    const regenPayload = JSON.parse(regenCall[1].body);
+    expect(regenPayload).toMatchObject({
+      text: 'flash text',
+      tts_provider: 'flash',
+      tts_voice: 'longanhuan',
+      tts_model: 'cosyvoice-v3-flash',
+      tts_speed: 1.0,
+    });
     view.unmount();
   });
 });

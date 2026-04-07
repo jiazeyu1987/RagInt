@@ -120,6 +120,7 @@ class _QaAudioCacheStore:
                 "updated_at_ms": 1,
             }
         ]
+        self.cleanup_calls = 0
 
     def list_pairs(self, *, limit=100, offset=0, tts_provider="", tts_voice="", tts_speed=None):
         out = list(self.items)
@@ -139,6 +140,10 @@ class _QaAudioCacheStore:
         before = len(self.items)
         self.items = [x for x in self.items if int(x.get("id") or 0) != int(pair_id)]
         return len(self.items) != before
+
+    def cleanup_invalid_audio_pairs(self):
+        self.cleanup_calls += 1
+        return {"scanned": len(self.items), "invalid": 0, "deleted": 0, "deleted_ids": [], "reason_counts": {}}
 
 
 class _Deps:
@@ -209,3 +214,19 @@ def test_ops_blueprint_qa_audio_pairs_routes():
 
     r3 = c.delete("/api/ops/qa_audio_pairs/1")
     assert r3.status_code == 404
+
+
+def test_ops_blueprint_qa_audio_pairs_cleanup_invalid_audio_route():
+    os.environ.pop("RAGINT_OPS_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_ADMIN_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_VIEW_TOKEN", None)
+    os.environ["RAGINT_OPS_OPEN_ACCESS"] = "1"
+
+    c = _app().test_client()
+    r = c.post("/api/ops/qa_audio_pairs/cleanup_invalid_audio")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["ok"] is True
+    assert int(body["scanned"]) >= 0
+    assert int(body["invalid"]) >= 0
+    assert int(body["deleted"]) >= 0

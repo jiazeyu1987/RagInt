@@ -179,7 +179,7 @@ def test_emit_tts_segments_start_tts_on_first_chunk_bypasses_buffer_once():
     assert first_at == 1.0
 
 
-def test_emit_tts_segments_coarse_flushes_on_interval_and_min_chars():
+def test_emit_tts_segments_coarse_mode_keeps_half_sentence_buffered():
     logger = _Logger()
     cancelled = _Ev(False)
 
@@ -239,10 +239,48 @@ def test_emit_tts_segments_coarse_flushes_on_interval_and_min_chars():
         carry_segment_text="ab",
     )
     yielded2, rv2 = _drain(gen2)
-    assert [it["segment"] for it in yielded2] == ["abc"]
-    assert yielded2[0]["segment_seq"] == 1
+    assert yielded2 == []
     carry_text2, seq2, _last_emit2, first_at2, was_cancelled2 = rv2
-    assert carry_text2 == ""
-    assert seq2 == 1
+    assert carry_text2 == "abc"
+    assert seq2 == 0
     assert was_cancelled2 is False
-    assert first_at2 == 1.0
+    assert first_at2 is None
+
+
+def test_emit_tts_segments_coarse_mode_emits_complete_sentence():
+    logger = _Logger()
+    cancelled = _Ev(False)
+
+    def timings_set(_rid: str, **_kw) -> None:
+        return None
+
+    gen = _emit_tts_segments_for_new_part(
+        request_id="r1",
+        client_id="c1",
+        t_submit=0.0,
+        cancel_event=cancelled,
+        logger=logger,
+        timings_set=timings_set,
+        new_part="abc。",
+        now=1.0,
+        enable_cleaning=False,
+        text_cleaner=None,
+        tts_buffer=None,
+        start_tts_on_first_chunk=True,
+        first_segment_min_chars=1,
+        segment_flush_interval_s=0.8,
+        segment_min_chars=3,
+        emitted_segments=set(),
+        segment_seq=0,
+        last_segment_emit_at=0.0,
+        first_segment_at=None,
+        carry_segment_text="",
+    )
+    yielded, rv = _drain(gen)
+    assert [it["segment"] for it in yielded] == ["abc。"]
+    assert yielded[0]["segment_seq"] == 1
+    carry_text, seq, _last_emit, first_at, was_cancelled = rv
+    assert carry_text == ""
+    assert seq == 1
+    assert was_cancelled is False
+    assert first_at == 1.0

@@ -131,5 +131,36 @@ describe('SettingsPanel', () => {
     expect(view.container.textContent).toContain('HTTP 500 /api/ragflow/chats');
     view.unmount();
   });
+
+  test('filters legacy fallback stops in stop prompt tab and saves sanitized map', () => {
+    const onSaveTourStopPromptOverrides = jest.fn();
+    const props = buildProps({
+      activeTab: 'stop_prompt',
+      controlBarProps: {
+        tourStopsOverride: [],
+        tourStops: ['company_overview', 'biz_stop'],
+        tourStopPromptOverrides: {
+          company_overview: 'legacy',
+          biz_stop: 'focus on key facts',
+        },
+        onSaveTourStopPromptOverrides,
+      },
+    });
+    const view = render(<SettingsPanel {...props} />);
+
+    expect(view.container.textContent).toContain('biz_stop');
+    expect(view.container.textContent).not.toContain('company_overview');
+
+    const saveButton = view.container.querySelector('.settings-action-btn-primary');
+    expect(saveButton).toBeTruthy();
+    act(() => {
+      saveButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onSaveTourStopPromptOverrides).toHaveBeenCalledWith({
+      biz_stop: 'focus on key facts',
+    });
+    view.unmount();
+  });
 });
 

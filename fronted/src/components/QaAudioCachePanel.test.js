@@ -69,4 +69,39 @@ describe('QaAudioCachePanel', () => {
     confirmSpy.mockRestore();
     view.unmount();
   });
+
+  test('calls cleanup invalid audio endpoint and refreshes list', async () => {
+    fetchJson.mockImplementation((url, opts) => {
+      if (String(url).includes('/api/ops/qa_audio_pairs?')) {
+        return Promise.resolve({
+          items: [{ id: 1, question_text: 'q1', answer_text: 'a1', audio_url: '/a.wav', tts_speed: 1.0 }],
+        });
+      }
+      if (String(url) === '/api/ops/qa_audio_pairs/cleanup_invalid_audio' && opts && opts.method === 'POST') {
+        return Promise.resolve({ ok: true, scanned: 10, invalid: 3, deleted: 3 });
+      }
+      return Promise.resolve({ ok: true });
+    });
+    const confirmSpy = jest.spyOn(window, 'confirm').mockReturnValue(true);
+
+    const view = render(<QaAudioCachePanel />);
+    await flush();
+
+    const buttons = view.container.querySelectorAll('button.settings-action-btn');
+    const cleanupBtn = Array.from(buttons).find((btn) => String(btn.textContent || '').includes('清理无效语音'));
+    expect(cleanupBtn).toBeTruthy();
+
+    await act(async () => {
+      cleanupBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(fetchJson).toHaveBeenCalledWith(
+      '/api/ops/qa_audio_pairs/cleanup_invalid_audio',
+      expect.objectContaining({ method: 'POST' })
+    );
+    confirmSpy.mockRestore();
+    view.unmount();
+  });
 });
