@@ -572,7 +572,7 @@ def test_station_endpoints_roundtrip_and_manifest_payload(work_dir: Path):
     assert station_body[0]["station_id"] == "station_a"
     assert station_body[0]["background"]["width"] == 1
     assert station_body[0]["wireframe"]["width"] == 1
-    assert station_body[0]["hotspots"][0]["hotspot_id"] == hotspot["hotspot_id"]
+    assert any(item["hotspot_id"] == hotspot["hotspot_id"] for item in station_body[0]["hotspots"])
 
     update_station = client.put(
         "/api/pad/halls/current/stations/display_slot_1",
@@ -695,6 +695,38 @@ def test_station_wireframe_requires_background_and_product_scope(work_dir: Path)
     )
     assert bad_hotspot.status_code == 400
     assert bad_hotspot.get_json()["error"] == "product_not_found"
+
+
+def test_station_control_hotspot_update_response_keeps_control_metadata(work_dir: Path):
+    app, deps = _build_app(work_dir)
+    _seed_products_and_bindings(deps)
+    _seed_station_assets(deps)
+    client = app.test_client()
+
+    stations = client.get("/api/pad/halls/current/stations", headers={"X-Client-ID": "pad-a"})
+    assert stations.status_code == 200
+    exit_hotspot = next(
+        item
+        for item in stations.get_json()["items"][0]["hotspots"]
+        if item.get("control_action") == "exit_app"
+    )
+
+    update_hotspot = client.put(
+        f"/api/pad/halls/current/stations/display_slot_1/hotspots/{exit_hotspot['hotspot_id']}",
+        headers={"X-Client-ID": "pad-a"},
+        json={
+            "product_id": "__control_exit_app__",
+            "sort_order": exit_hotspot["sort_order"],
+            "x_pct": 0.08,
+            "y_pct": 0.76,
+            "width_pct": exit_hotspot["width_pct"],
+            "height_pct": exit_hotspot["height_pct"],
+        },
+    )
+    assert update_hotspot.status_code == 200
+    hotspot_body = update_hotspot.get_json()["hotspot"]
+    assert hotspot_body["control_action"] == "exit_app"
+    assert hotspot_body["control_label"] == "退出"
 
 
 def test_batch_default_tts_generation_is_visible_via_products_and_manifest_endpoints(work_dir: Path):

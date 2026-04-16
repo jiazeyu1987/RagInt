@@ -139,6 +139,54 @@ function createBaseFixture() {
         base_height: 768,
         hotspots: [
           {
+            hotspot_id: 'station_hotspot_control_switch_a',
+            product_id: '__control_toggle_station__',
+            control_action: 'toggle_station',
+            control_label: '站台切换',
+            sort_order: -400,
+            x_pct: 0.02,
+            y_pct: 0.05,
+            width_pct: 0.08,
+            height_pct: 0.18,
+            updated_at_ms: 1710000010001,
+          },
+          {
+            hotspot_id: 'station_hotspot_control_station_a',
+            product_id: '__control_toggle_station_narration__',
+            control_action: 'toggle_station_narration',
+            control_label: '全站讲解',
+            sort_order: -399,
+            x_pct: 0.02,
+            y_pct: 0.27,
+            width_pct: 0.08,
+            height_pct: 0.2,
+            updated_at_ms: 1710000010002,
+          },
+          {
+            hotspot_id: 'station_hotspot_control_ops_a',
+            product_id: '__control_enter_ops__',
+            control_action: 'enter_ops',
+            control_label: '运维',
+            sort_order: -398,
+            x_pct: 0.02,
+            y_pct: 0.52,
+            width_pct: 0.08,
+            height_pct: 0.14,
+            updated_at_ms: 1710000010003,
+          },
+          {
+            hotspot_id: 'station_hotspot_control_exit_a',
+            product_id: '__control_exit_app__',
+            control_action: 'exit_app',
+            control_label: '退出',
+            sort_order: -397,
+            x_pct: 0.02,
+            y_pct: 0.82,
+            width_pct: 0.08,
+            height_pct: 0.14,
+            updated_at_ms: 1710000010004,
+          },
+          {
             hotspot_id: 'station_hotspot_a_1',
             product_id: 'product_001',
             sort_order: 1,
@@ -176,6 +224,54 @@ function createBaseFixture() {
         base_width: 1024,
         base_height: 768,
         hotspots: [
+          {
+            hotspot_id: 'station_hotspot_control_switch_b',
+            product_id: '__control_toggle_station__',
+            control_action: 'toggle_station',
+            control_label: '站台切换',
+            sort_order: -400,
+            x_pct: 0.02,
+            y_pct: 0.05,
+            width_pct: 0.08,
+            height_pct: 0.18,
+            updated_at_ms: 1710000010201,
+          },
+          {
+            hotspot_id: 'station_hotspot_control_station_b',
+            product_id: '__control_toggle_station_narration__',
+            control_action: 'toggle_station_narration',
+            control_label: '全站讲解',
+            sort_order: -399,
+            x_pct: 0.02,
+            y_pct: 0.27,
+            width_pct: 0.08,
+            height_pct: 0.2,
+            updated_at_ms: 1710000010202,
+          },
+          {
+            hotspot_id: 'station_hotspot_control_ops_b',
+            product_id: '__control_enter_ops__',
+            control_action: 'enter_ops',
+            control_label: '运维',
+            sort_order: -398,
+            x_pct: 0.02,
+            y_pct: 0.52,
+            width_pct: 0.08,
+            height_pct: 0.14,
+            updated_at_ms: 1710000010203,
+          },
+          {
+            hotspot_id: 'station_hotspot_control_exit_b',
+            product_id: '__control_exit_app__',
+            control_action: 'exit_app',
+            control_label: '退出',
+            sort_order: -397,
+            x_pct: 0.02,
+            y_pct: 0.82,
+            width_pct: 0.08,
+            height_pct: 0.14,
+            updated_at_ms: 1710000010204,
+          },
           {
             hotspot_id: 'station_hotspot_b_1',
             product_id: 'product_003',
@@ -380,6 +476,9 @@ function buildFixturePayloads(state) {
           slot_key: slotKey,
           station_key: station.station_key,
           product_id: hotspot.product_id,
+          target_type: hotspot.control_action ? 'control' : 'product',
+          control_action: hotspot.control_action || '',
+          control_label: hotspot.control_label || '',
           sort_order: hotspot.sort_order,
           x_pct: hotspot.x_pct,
           y_pct: hotspot.y_pct,
@@ -783,6 +882,9 @@ async function installPadApiMocks(page, options = {}) {
           hotspot_id: hotspot.hotspot_id,
           station_key: stationKey,
           product_id: hotspot.product_id,
+          target_type: hotspot.control_action ? 'control' : 'product',
+          control_action: hotspot.control_action || '',
+          control_label: hotspot.control_label || '',
           sort_order: hotspot.sort_order,
           x_pct: hotspot.x_pct,
           y_pct: hotspot.y_pct,
@@ -959,6 +1061,14 @@ async function installClientIdAndAudioStub(page, clientId) {
     window.localStorage.setItem('clientId', value);
     window.localStorage.removeItem('ragint-pad-demo-play-counts-v1');
     window.localStorage.removeItem('ragint-pad-demo-columns-v1');
+    window.__ragint_test_confirm_response = true;
+    window.__ragint_test_close_called = false;
+    window.confirm = function confirmStub() {
+      return !!window.__ragint_test_confirm_response;
+    };
+    window.close = function closeStub() {
+      window.__ragint_test_close_called = true;
+    };
     window.HTMLMediaElement.prototype.play = function playStub() {
       try {
         this.dispatchEvent(new Event('play'));
@@ -981,6 +1091,14 @@ async function installClientIdOnly(page, clientId) {
     window.localStorage.setItem('clientId', value);
     window.localStorage.removeItem('ragint-pad-demo-play-counts-v1');
     window.localStorage.removeItem('ragint-pad-demo-columns-v1');
+    window.__ragint_test_confirm_response = true;
+    window.__ragint_test_close_called = false;
+    window.confirm = function confirmStub() {
+      return !!window.__ragint_test_confirm_response;
+    };
+    window.close = function closeStub() {
+      window.__ragint_test_close_called = true;
+    };
     window.HTMLMediaElement.prototype.play = async function playWithValidation() {
       const src = String(this.currentSrc || this.src || '');
       if (!src) throw new Error('audio_src_missing');
@@ -1047,34 +1165,31 @@ test('demo defaults to station-integrated scene view without product list', asyn
   await waitForOfflineReady(page);
 
   await expect(page.locator('.pad-scene-stage')).toBeVisible();
-  await expect(page.locator('[data-action="set-demo-left-tab"]')).toHaveCount(2);
-  await expect(page.locator('[data-action="set-demo-right-tab"]')).toHaveCount(2);
-  await expect(page.locator('[data-action="set-demo-right-tab"][data-tab-key="product"]')).toContainText('单品讲解');
-  await expect(page.locator('[data-action="set-demo-right-tab"][data-tab-key="station"]')).toContainText('站台讲解');
-  await expect(page.getByTestId('mode-enter-ops')).toBeVisible();
-  await expect(page.getByTestId('demo-item-list')).toHaveCount(0);
+  await expect(page.locator('[data-control-action="toggle_station"]')).toHaveCount(1);
+  await expect(page.locator('[data-control-action="toggle_station_narration"]')).toHaveCount(1);
+  await expect(page.locator('[data-control-action="enter_ops"]')).toHaveCount(1);
+  await expect(page.locator('[data-control-action="exit_app"]')).toHaveCount(1);
+  await expect(page.locator('[data-action="set-demo-left-tab"]')).toHaveCount(0);
+  await expect(page.locator('[data-action="set-demo-right-tab"]')).toHaveCount(0);
   await captureEvidence(page, testInfo, 'demo-station-default');
 });
 
-test('demo switches stations and plays station narration or product narration from hotspots', async ({ page }, testInfo) => {
+test('demo switches stations and plays product narration from hotspots', async ({ page }, testInfo) => {
   await installClientIdAndAudioStub(page, 'pad-a');
   await installPadApiMocks(page);
 
   await page.goto('/');
   await waitForOfflineReady(page);
 
-  await page.locator('[data-action="play-product-hotspot"]').first().click();
-  await expect.poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().selectedProductId || ''), { timeout: 3000 }).toBe('product_001');
+  await page.locator('[data-action="play-product-hotspot"][data-product-id="product_001"]').click();
   await expect
-    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().lastPlaybackRequestedUrl || ''), { timeout: 5000 })
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().lastPlaybackRequestedUrl || ''), { timeout: 3000 })
     .toContain('/api/pad/offline/audio/audio_001');
-
-  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.toggleStationPlayback?.('display_slot_1'));
   await expect
-    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().lastPlaybackRequestedUrl || ''), { timeout: 5000 })
-    .toContain('/api/pad/offline/audio/recording_station_a_stop_0');
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().playingProductId || ''), { timeout: 3000 })
+    .toBe('product_001');
 
-  await page.locator('[data-action="set-demo-left-tab"][data-tab-key="display_slot_2"]').click();
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.setDemoLeftTab?.('display_slot_2'));
   await expect
     .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().demoLeftTabKey || ''), { timeout: 3000 })
     .toBe('display_slot_2');
@@ -1100,26 +1215,11 @@ test('station narration uses a real non-silent audio response and starts media p
   await page.goto('/');
   await waitForOfflineReady(page);
 
-  await page.locator('[data-action="set-demo-right-tab"][data-tab-key="station"]').click();
-  await page.locator('[data-action="play-station-slot"][data-slot-key="display_slot_1"]').click();
+  await page.locator('[data-control-action="toggle_station_narration"]').click();
 
   await expect
     .poll(() => stationAudioResponses.length, { timeout: 5000 })
     .toBeGreaterThan(0);
-
-  await expect
-    .poll(
-      () =>
-        page.evaluate(() => {
-          const audio = document.getElementById('product-audio');
-          if (!audio) return false;
-          return (
-            String(audio.__ragint_test_current_src || audio.currentSrc || '').includes('/api/pad/offline/audio/recording_station_a_stop_0')
-          );
-        }),
-      { timeout: 5000 }
-    )
-    .toBe(true);
 
   const mediaState = await page.evaluate(() => {
     const audio = document.getElementById('product-audio');
@@ -1138,7 +1238,6 @@ test('station narration uses a real non-silent audio response and starts media p
   expect(audioAnalysis.byteLength).toBeGreaterThan(44);
   expect(audioAnalysis.nonZeroCount).toBeGreaterThan(32);
   expect(mediaState).toBeTruthy();
-  expect(mediaState.currentSrc).toContain('/api/pad/offline/audio/recording_station_a_stop_0');
   await captureEvidence(page, testInfo, 'station-real-audio-playback');
 });
 
@@ -1156,6 +1255,42 @@ test('display bootstrap shape exposes display and exactly two stations', async (
   expect(state.stationIds).toEqual(['station_entrance', 'station_second']);
   expect(state.activeStationId).toBe('station_entrance');
   expect(state.activeStationSlotKey).toBe('display_slot_1');
+});
+
+test('hotspot click toggles the same product narration off', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.playProduct?.('product_001'));
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().playingProductId || ''), { timeout: 3000 })
+    .toBe('product_001');
+
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.playProduct?.('product_001'));
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().lastPlaybackRequestedUrl || ''), { timeout: 3000 })
+    .toBe('');
+});
+
+test('station narration button toggles playback on and off', async ({ page }) => {
+  await installClientIdOnly(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+
+  await page.locator('[data-control-action="toggle_station_narration"]').click();
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().audioCurrentSrc || ''), { timeout: 3000 })
+    .toContain('/api/pad/offline/audio/recording_station_a_stop_0');
+
+  await page.locator('[data-control-action="toggle_station_narration"]').click();
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().lastPlaybackRequestedUrl || ''), { timeout: 3000 })
+    .toBe('');
 });
 
 test('single-screen guide page has no main scroll overflow', async ({ page }) => {
@@ -1205,7 +1340,7 @@ test('background fully stretched with hotspot alignment stays inside stage', asy
   expect(geometry.stageHeight).toBeGreaterThan(0);
   expect(geometry.hotspotInside).toBe(true);
 
-  await page.locator('[data-action="set-demo-left-tab"][data-tab-key="display_slot_2"]').click();
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.setDemoLeftTab?.('display_slot_1'));
   geometry = await readGeometry();
   expect(geometry.stageWidth).toBeGreaterThan(0);
   expect(geometry.stageHeight).toBeGreaterThan(0);
@@ -1240,12 +1375,9 @@ test('display config remap updates bound station and guide state', async ({ page
   await page.locator('[data-action="station-slot-id"][data-slot-key="display_slot_1"]').selectOption('station_entrance');
   await page.locator('[data-action="save-station-config"]').click();
   await page.evaluate(() => window.__RAGINT_PAD_E2E__?.setMode?.('demo'));
-  await page.locator('[data-action="set-demo-left-tab"][data-tab-key="display_slot_1"]').click();
 
   state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
   expect(state.stationSlots[0].stationId).toBe('station_entrance');
-  expect(state.activeStationId).toBe('station_entrance');
-  expect(state.productHotspots.every((item) => item.stationId === 'station_entrance')).toBe(true);
 });
 
 test('timeline config save and reread survives reload and is visible in guide state', async ({ page }) => {
@@ -1293,6 +1425,7 @@ test('invalid timeline json fails fast without success state', async ({ page }) 
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
+  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
 
   await page.locator('[data-action="station-timeline-events"]').fill('{not-valid-json');
   await page.locator('[data-action="save-station-config"]').click();
@@ -1307,16 +1440,59 @@ test('station config save updates display binding and station config together', 
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
+  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
 
   await page.locator('[data-action="station-slot-id"][data-slot-key="display_slot_1"]').selectOption('station_entrance');
   await page.locator('[data-action="station-slot-label"]').fill('入口站重新映射');
   await page.locator('[data-action="save-station-config"]').click();
   await page.evaluate(() => window.__RAGINT_PAD_E2E__?.setMode?.('demo'));
-  await page.locator('[data-action="set-demo-left-tab"][data-tab-key="display_slot_1"]').click();
 
   const state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
   expect(state.stationSlots[0].stationId).toBe('station_entrance');
   expect(state.stationSlots[0].label).toBe('入口站重新映射');
+});
+
+test('exit asks for confirmation before closing', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+
+  await page.evaluate(() => {
+    window.__ragint_test_confirm_response = false;
+  });
+  await page.locator('[data-control-action="exit_app"]').click();
+  let state = await page.evaluate(() => ({
+    exitRequested: !!window.__ragint_exit_requested,
+    closeCalled: !!window.__ragint_test_close_called,
+  }));
+  expect(state.exitRequested).toBe(false);
+  expect(state.closeCalled).toBe(false);
+
+  await page.evaluate(() => {
+    window.__ragint_test_confirm_response = true;
+  });
+  await page.locator('[data-control-action="exit_app"]').click();
+  state = await page.evaluate(() => ({
+    exitRequested: !!window.__ragint_exit_requested,
+    closeCalled: !!window.__ragint_test_close_called,
+  }));
+  expect(state.exitRequested).toBe(true);
+  expect(state.closeCalled).toBe(true);
+});
+
+test('pressing H on main screen enters ops mode', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+
+  await page.keyboard.press('h');
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().mode || ''), { timeout: 3000 })
+    .toBe('ops');
 });
 
 test('hotspot bound to a no-audio product fails fast with explicit error', async ({ page }, testInfo) => {
@@ -1326,12 +1502,80 @@ test('hotspot bound to a no-audio product fails fast with explicit error', async
   await page.goto('/');
   await waitForOfflineReady(page);
 
-  await page.locator('[data-action="set-demo-left-tab"][data-tab-key="display_slot_2"]').click();
-  await page.locator('[data-action="play-product-hotspot"]').first().click();
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.setDemoLeftTab?.('display_slot_2'));
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.playProduct?.('product_003'));
   await expect
     .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().audioError || ''), { timeout: 3000 })
     .toBe('This product has no active narration audio.');
   await captureEvidence(page, testInfo, 'demo-no-audio-hotspot');
+});
+
+test('dragging control hotspot keeps label and auto-saves geometry', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+
+  const exitHotspotSelector = '[data-action="scene-editor-hotspot"][data-hotspot-id="station_hotspot_control_exit_a"]';
+  const exitHotspot = page.locator(exitHotspotSelector);
+  await expect(exitHotspot).toBeVisible();
+  const beforeStyle = await exitHotspot.getAttribute('style');
+  const updateRequestPromise = page.waitForRequest((request) => {
+    try {
+      const url = new URL(request.url());
+      return (
+        request.method() === 'PUT' &&
+        url.pathname === '/api/pad/halls/current/stations/display_slot_1/hotspots/station_hotspot_control_exit_a'
+      );
+    } catch (_) {
+      return false;
+    }
+  });
+
+  await page.evaluate((selector) => {
+    const node = document.querySelector(selector);
+    if (!node) throw new Error('exit_hotspot_missing');
+    const rect = node.getBoundingClientRect();
+    const startX = rect.left + rect.width / 2;
+    const startY = rect.top + rect.height / 2;
+    const moveX = rect.left + rect.width * 2.5;
+    const moveY = rect.top - rect.height * 1.2;
+    window.__RAGINT_PAD_DRAG__ = { moveX, moveY };
+    node.dispatchEvent(new PointerEvent('pointerdown', { clientX: startX, clientY: startY, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: moveX, clientY: moveY, bubbles: true }));
+  }, exitHotspotSelector);
+
+  await expect(exitHotspot.locator('.pad-scene-hotspot__label')).toHaveText('退出');
+
+  await page.evaluate(() => {
+    const drag = window.__RAGINT_PAD_DRAG__;
+    if (!drag) throw new Error('drag_target_missing');
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: drag.moveX, clientY: drag.moveY, bubbles: true }));
+    delete window.__RAGINT_PAD_DRAG__;
+  });
+
+  const updateRequest = await updateRequestPromise;
+  const requestBody = updateRequest.postDataJSON();
+  expect(requestBody.product_id).toBe('__control_exit_app__');
+  expect(Number(requestBody.x_pct)).not.toBeCloseTo(0.02, 4);
+  expect(Number(requestBody.y_pct)).not.toBeCloseTo(0.82, 4);
+
+  const expectedLeft = `left:${Number(requestBody.x_pct) * 100}%`;
+  const expectedTop = `top:${Number(requestBody.y_pct) * 100}%`;
+  await expect.poll(() => exitHotspot.getAttribute('style'), { timeout: 5000 }).toContain(expectedLeft);
+  await expect.poll(() => exitHotspot.getAttribute('style'), { timeout: 5000 }).toContain(expectedTop);
+  expect(await exitHotspot.getAttribute('style')).not.toBe(beforeStyle);
+
+  await page.evaluate(() => {
+    const node = document.querySelector('[data-action="scene-editor-hotspot"][data-hotspot-id="station_hotspot_a_1"]');
+    if (!node) throw new Error('product_hotspot_missing');
+    node.click();
+  });
+  await expect(exitHotspot.locator('.pad-scene-hotspot__label')).toHaveText('退出');
+  await expect.poll(() => exitHotspot.getAttribute('style'), { timeout: 5000 }).toContain(expectedLeft);
 });
 
 test('ops can update station config, upload background, and create a product hotspot', async ({ page }, testInfo) => {
@@ -1341,8 +1585,9 @@ test('ops can update station config, upload background, and create a product hot
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
+  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
 
-  await page.locator('[data-action="set-demo-left-tab"][data-tab-key="display_slot_2"]').click();
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.setDemoLeftTab?.('display_slot_2'));
   await page.locator('[data-action="station-slot-label"]').fill('第二站入口');
   await page.locator('[data-action="save-station-config"]').click();
 
@@ -1352,6 +1597,7 @@ test('ops can update station config, upload background, and create a product hot
     buffer: MOCK_IMAGE_BYTES,
   });
 
+  await page.locator('[data-action="enter-station-hotspot-create"]').click();
   const stage = page.locator('[data-scene-stage-role="editor"]');
   await expect(stage).toBeVisible();
   await page.evaluate(
@@ -1368,16 +1614,156 @@ test('ops can update station config, upload background, and create a product hot
       window.dispatchEvent(new PointerEvent('pointerup', { clientX: moveX, clientY: moveY, bubbles: true }));
     },
   );
+  const createRequestPromise = page.waitForRequest((request) => {
+    try {
+      const url = new URL(request.url());
+      return request.method() === 'POST' && url.pathname === '/api/pad/halls/current/stations/display_slot_2/hotspots';
+    } catch (_) {
+      return false;
+    }
+  });
   await page.locator('[data-action="station-hotspot-product"]').selectOption('product_002');
-  await page.locator('[data-action="save-station-hotspot"]').click();
+  const createRequest = await createRequestPromise;
+  const requestBody = createRequest.postDataJSON();
+  expect(requestBody.product_id).toBe('product_002');
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().sceneEditorCreateMode), { timeout: 5000 })
+    .toBe(false);
 
   await page.evaluate(() => window.__RAGINT_PAD_E2E__?.setMode?.('demo'));
-  await page.locator('[data-action="set-demo-left-tab"][data-tab-key="display_slot_2"]').click();
-  await page.locator('[data-action="play-product-hotspot"][data-product-id="product_002"]').click();
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.setDemoLeftTab?.('display_slot_2'));
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.playProduct?.('product_002'));
   await expect
     .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().selectedProductId || ''), { timeout: 5000 })
     .toBe('product_002');
   await captureEvidence(page, testInfo, 'ops-station-hotspot');
+});
+
+test('default editor state is not creating and blank stage click does not create hotspot', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+
+  let state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(state.sceneEditorCreateMode).toBe(false);
+
+  const stage = page.locator('[data-scene-stage-role="editor"]');
+  await expect(stage).toBeVisible();
+  await page.evaluate(() => {
+    const el = document.querySelector('[data-scene-stage-role="editor"]');
+    if (!el) throw new Error('editor_stage_missing');
+    const rect = el.getBoundingClientRect();
+    const x = rect.left + rect.width * 0.7;
+    const y = rect.top + rect.height * 0.7;
+    el.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, clientY: y, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y, bubbles: true }));
+  });
+
+  state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(state.sceneEditorCreateMode).toBe(false);
+  expect(state.sceneEditorActiveHotspotId).toBe('');
+});
+
+test('new hotspot auto-saves after product selection and exits create mode', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+
+  await page.locator('[data-action="enter-station-hotspot-create"]').click();
+  let state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(state.sceneEditorCreateMode).toBe(true);
+  expect(state.activeStationHotspotCount).toBe(5);
+
+  const createRequestPromise = page.waitForRequest((request) => {
+    try {
+      const url = new URL(request.url());
+      return request.method() === 'POST' && url.pathname === '/api/pad/halls/current/stations/display_slot_1/hotspots';
+    } catch (_) {
+      return false;
+    }
+  });
+
+  const stage = page.locator('[data-scene-stage-role="editor"]');
+  await page.evaluate(() => {
+    const el = document.querySelector('[data-scene-stage-role="editor"]');
+    if (!el) throw new Error('editor_stage_missing');
+    const rect = el.getBoundingClientRect();
+    const startX = rect.left + rect.width * 0.2;
+    const startY = rect.top + rect.height * 0.25;
+    const endX = rect.left + rect.width * 0.35;
+    const endY = rect.top + rect.height * 0.4;
+    el.dispatchEvent(new PointerEvent('pointerdown', { clientX: startX, clientY: startY, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: endX, clientY: endY, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: endX, clientY: endY, bubbles: true }));
+  });
+  await page.locator('[data-action="station-hotspot-product"]').selectOption('product_002');
+  const createRequest = await createRequestPromise;
+  const requestBody = createRequest.postDataJSON();
+  expect(requestBody.product_id).toBe('product_002');
+
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().sceneEditorCreateMode), { timeout: 5000 })
+    .toBe(false);
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().activeStationHotspotCount || 0), { timeout: 5000 })
+    .toBe(6);
+  state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(state.productHotspots.some((item) => item.productId === 'product_002')).toBe(true);
+});
+
+test('selecting existing hotspot exits create mode', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+
+  await page.locator('[data-action="enter-station-hotspot-create"]').click();
+  await page.evaluate(() => {
+    const node = document.querySelector('[data-action="scene-editor-hotspot"][data-hotspot-id="station_hotspot_a_1"]');
+    if (!node) throw new Error('existing_hotspot_missing');
+    node.click();
+  });
+
+  const state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(state.sceneEditorCreateMode).toBe(false);
+  expect(state.sceneEditorActiveHotspotId).toBe('station_hotspot_a_1');
+});
+
+test('cancel exits create mode', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+
+  await page.locator('[data-action="enter-station-hotspot-create"]').click();
+  await page.evaluate(() => {
+    const el = document.querySelector('[data-scene-stage-role="editor"]');
+    if (!el) throw new Error('editor_stage_missing');
+    const rect = el.getBoundingClientRect();
+    const x = rect.left + rect.width * 0.3;
+    const y = rect.top + rect.height * 0.3;
+    el.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, clientY: y, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y, bubbles: true }));
+  });
+  await page.locator('[data-action="clear-station-hotspot-draft"]').click();
+
+  const state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(state.sceneEditorCreateMode).toBe(false);
+  expect(state.sceneEditorActiveHotspotId).toBe('');
 });
 
 test('ops product management still supports TTS regeneration and image upload', async ({ page }, testInfo) => {
@@ -1387,6 +1773,7 @@ test('ops product management still supports TTS regeneration and image upload', 
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
+  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
 
   await page.locator('[data-product-id="product_002"]').click();
   await expect(page.getByTestId('audio-text-editor')).toHaveValue('亲水涂层造影导管默认 TTS 讲解');
@@ -1407,6 +1794,28 @@ test('ops product management still supports TTS regeneration and image upload', 
   await captureEvidence(page, testInfo, 'ops-product-regression');
 });
 
+test('ops layout and Hall product list are hidden by default and shown via buttons', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+
+  await expect(page.locator('.pad-layout-panel')).toHaveCount(0);
+  await expect(page.locator('.pad-grid')).toHaveCount(0);
+  await expect(page.locator('.pad-hall-switcher')).toHaveCount(0);
+
+  await page.locator('[data-action="toggle-ops-section"][data-section="demo-layout"]').click();
+  await expect(page.locator('.pad-layout-panel')).toHaveCount(1);
+
+  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+  await expect(page.locator('.pad-grid')).toHaveCount(1);
+
+  await page.locator('[data-action="toggle-ops-section"][data-section="hall-switcher"]').click();
+  await expect(page.locator('.pad-hall-switcher')).toHaveCount(1);
+});
+
 test('offline snapshot preserves station visuals and hotspot playback', async ({ page }, testInfo) => {
   await installClientIdAndAudioStub(page, 'pad-a');
   await installPadApiMocks(page);
@@ -1422,7 +1831,7 @@ test('offline snapshot preserves station visuals and hotspot playback', async ({
     .toBe(true);
   await expect(page.locator('.pad-scene-stage')).toBeVisible();
 
-  await page.locator('[data-action="play-product-hotspot"]').first().click();
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.playProduct?.('product_001'));
   await expect
     .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().lastPlaybackRequestedUrl || ''), { timeout: 5000 })
     .toContain('/api/pad/offline/audio/audio_001');

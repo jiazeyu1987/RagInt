@@ -112,6 +112,18 @@
   const IMAGE_FALLBACK_NOTE = "\u5f53\u524d\u672a\u4e0a\u4f20\u4ea7\u54c1\u56fe\u7247\uff0c\u6b63\u5728\u4f7f\u7528\u9ed8\u8ba4\u5c55\u793a\u56fe\u3002";
   const FALLBACK_IMAGE_LOG_PREFIX = "[pad:fallback-image]";
   const fallbackImageLogKeys = new Set();
+  const CONTROL_HOTSPOT_ACTIONS = Object.freeze({
+    __control_toggle_station__: "toggle_station",
+    __control_toggle_station_narration__: "toggle_station_narration",
+    __control_enter_ops__: "enter_ops",
+    __control_exit_app__: "exit_app",
+  });
+  const CONTROL_HOTSPOT_LABELS = Object.freeze({
+    toggle_station: "站台切换",
+    toggle_station_narration: "全站讲解",
+    enter_ops: "运维",
+    exit_app: "退出",
+  });
 
   const HALL_PRESETS = Object.freeze([
     { clientId: "pad-a", hallId: "hall_01", hallName: "Cardio Implant Hall", shortLabel: "Hall 1" },
@@ -166,6 +178,9 @@
     displayProductPlayCounts: Object.create(null),
     productPlayCounts: Object.create(null),
     demoColumns: DEFAULT_DEMO_COLUMNS,
+    opsShowDemoLayout: false,
+    opsShowHallProductList: false,
+    opsShowHallSwitcher: false,
     demoLeftTabKey: DEFAULT_DEMO_LEFT_TAB,
     demoRightTabKey: DEFAULT_DEMO_RIGHT_TAB,
     scenes: [],
@@ -173,6 +188,7 @@
     sceneDialogHotspotId: "",
     sceneEditorActiveHotspotId: "",
     sceneEditorDraft: null,
+    sceneEditorCreateMode: false,
     demoStationSlots: [],
     recordingOptions: [],
     recordingOptionsReady: false,
@@ -582,6 +598,7 @@
     state.sceneDialogHotspotId = "";
     state.sceneEditorActiveHotspotId = "";
     state.sceneEditorDraft = null;
+    state.sceneEditorCreateMode = false;
     persistStationSlotsState();
     render();
   }
@@ -606,6 +623,7 @@
     state.sceneDialogHotspotId = "";
     state.sceneEditorActiveHotspotId = "";
     state.sceneEditorDraft = null;
+    state.sceneEditorCreateMode = false;
     render();
   }
 
@@ -624,19 +642,41 @@
     const nextDraft = draft && typeof draft === "object" ? draft : null;
     state.sceneEditorDraft = nextDraft;
     state.sceneEditorActiveHotspotId = nextDraft ? String(nextDraft.hotspot_id || "") : "";
+    if (nextDraft && nextDraft.hotspot_id) {
+      state.sceneEditorCreateMode = false;
+    }
+    render();
+  }
+
+  function enterStationHotspotCreateMode() {
+    state.sceneEditorCreateMode = true;
+    state.sceneEditorDraft = null;
+    state.sceneEditorActiveHotspotId = "";
     render();
   }
 
   function updateSceneEditorDraft(fields) {
     const selectedScene = getSelectedScene();
-    if (!selectedScene) return;
+    if (!selectedScene) return null;
     const base = getSceneEditorDraftForScene(selectedScene);
-    if (!base) return;
+    if (!base) return null;
     state.sceneEditorDraft = Object.assign({}, base, fields || {}, {
       scene_id: String(selectedScene.scene_id || ""),
     });
     state.sceneEditorActiveHotspotId = String(state.sceneEditorDraft.hotspot_id || "");
     render();
+    return state.sceneEditorDraft;
+  }
+
+  function hasSceneHotspotGeometryChanged(left, right) {
+    const lhs = left && typeof left === "object" ? left : {};
+    const rhs = right && typeof right === "object" ? right : {};
+    return (
+      clampPct(lhs.x_pct) !== clampPct(rhs.x_pct) ||
+      clampPct(lhs.y_pct) !== clampPct(rhs.y_pct) ||
+      clampPct(lhs.width_pct) !== clampPct(rhs.width_pct) ||
+      clampPct(lhs.height_pct) !== clampPct(rhs.height_pct)
+    );
   }
 
   async function refreshRecordingOptions() {
@@ -821,6 +861,9 @@
           station_id: String(item.station_id || item.station_key || sceneId).trim(),
           station_key: String(item.station_key || sceneId).trim(),
           product_id: String(item.product_id || "").trim(),
+          target_type: String(item.target_type || (item.control_action ? "control" : "product")).trim() || "product",
+          control_action: String(item.control_action || "").trim(),
+          control_label: String(item.control_label || "").trim(),
           sort_order: Number(item.sort_order || 0),
           x_pct: Number(item.x_pct || 0),
           y_pct: Number(item.y_pct || 0),
@@ -1034,14 +1077,45 @@
     return !!(String(item.title || "").trim() || String(item.content_text || "").trim());
   }
 
+  function getHotspotControlAction(hotspot) {
+    const item = hotspot && typeof hotspot === "object" ? hotspot : {};
+    const explicitAction = String(item.control_action || "").trim();
+    if (explicitAction) return explicitAction;
+    return String(CONTROL_HOTSPOT_ACTIONS[String(item.product_id || "").trim()] || "").trim();
+  }
+
+  function getHotspotControlLabel(hotspot) {
+    const item = hotspot && typeof hotspot === "object" ? hotspot : {};
+    const controlAction = getHotspotControlAction(item);
+    if (!controlAction) return "";
+    return String(item.control_label || CONTROL_HOTSPOT_LABELS[controlAction] || "").trim();
+  }
+
+  function getHotspotTargetType(hotspot) {
+    return getHotspotControlAction(hotspot) ? "control" : "product";
+  }
+
   function getHotspotProduct(hotspot) {
-    return findProductById(hotspot && hotspot.product_id ? hotspot.product_id : "");
+    const item = hotspot && typeof hotspot === "object" ? hotspot : {};
+    if (getHotspotControlAction(item) || String(item.target_type || "").trim() === "control") {
+      return null;
+    }
+    return findProductById(item.product_id ? item.product_id : "");
   }
 
   function getHotspotDisplayLabel(hotspot, index) {
+    const item = hotspot && typeof hotspot === "object" ? hotspot : {};
+    const resolvedControlAction = getHotspotControlAction(item);
+    if (resolvedControlAction) {
+      return getHotspotControlLabel(item) || "\u63a7\u5236\u6309\u94ae";
+    }
+    const controlAction = String(item.control_action || "").trim();
+    if (controlAction) {
+      return String(item.control_label || CONTROL_HOTSPOT_LABELS[controlAction] || "").trim() || "控制按钮";
+    }
     const product = getHotspotProduct(hotspot);
     if (product && String(product.product_name || "").trim()) return String(product.product_name || "").trim();
-    const title = String((hotspot && hotspot.title) || "").trim();
+    const title = String((item && item.title) || "").trim();
     if (title) return title;
     return "产品 " + String(index + 1);
   }
@@ -1224,9 +1298,24 @@
     if (state.mode === nextMode) return;
     resetAudioPlayback();
     state.mode = nextMode;
+    state.sceneEditorCreateMode = false;
+    state.sceneEditorDraft = null;
+    state.sceneEditorActiveHotspotId = "";
     if (nextMode === "ops") {
       void refreshRecordingOptions();
       preloadStationSlotRecordingMeta();
+    }
+    render();
+  }
+
+  function toggleOpsSection(section) {
+    const key = String(section || "").trim();
+    if (key === "demo-layout") {
+      state.opsShowDemoLayout = !state.opsShowDemoLayout;
+    } else if (key === "hall-products") {
+      state.opsShowHallProductList = !state.opsShowHallProductList;
+    } else if (key === "hall-switcher") {
+      state.opsShowHallSwitcher = !state.opsShowHallSwitcher;
     }
     render();
   }
@@ -1515,6 +1604,55 @@
     );
   }
 
+  function getAlternateStationSlotKey(slotKey) {
+    const key = normalizeDemoLeftTabKey(slotKey);
+    return key === "display_slot_1" ? "display_slot_2" : "display_slot_1";
+  }
+
+  function renderDemoAudienceControls() {
+    const slot = getActiveStationSlot();
+    const stationStatus = getStationSlotStatus(slot);
+    const stationButtonActive = isStationSlotPlaying(slot) || isStationSlotPending(slot);
+    const stationButtonDisabled = !stationButtonActive && !stationStatus.playable ? " disabled" : "";
+    return (
+      '<div class="pad-demo-audience-controls">' +
+      '<button type="button" class="pad-btn pad-btn--neutral pad-demo-audience-btn" data-action="toggle-demo-station">' +
+      "站台切换" +
+      "</button>" +
+      '<button type="button" class="pad-btn pad-btn--neutral pad-demo-audience-btn" data-action="play-station-slot" data-slot-key="' +
+      escapeHtml(String(slot.slotKey || "")) +
+      '"' +
+      stationButtonDisabled +
+      ">" +
+      escapeHtml(stationButtonActive ? "停止全站讲解" : "全站讲解") +
+      "</button>" +
+      '<button type="button" class="pad-btn pad-btn--neutral pad-demo-audience-btn" data-action="set-mode" data-mode="ops" data-testid="mode-enter-ops">' +
+      "运维" +
+      "</button>" +
+      '<button type="button" class="pad-btn pad-btn--neutral pad-demo-audience-btn" data-action="request-exit">' +
+      "退出" +
+      "</button>" +
+      "</div>"
+    );
+  }
+
+  function requestExit() {
+    const confirmed = typeof window.confirm === "function" ? window.confirm("确认退出程序？") : false;
+    if (!confirmed) return;
+    try {
+      window.__ragint_exit_requested = true;
+    } catch (_) {}
+    if (typeof window.close === "function") {
+      window.close();
+    }
+  }
+
+  function toggleActiveStationSlot() {
+    const nextSlotKey = getAlternateStationSlotKey(state.demoLeftTabKey);
+    resetAudioPlayback();
+    setDemoLeftTab(nextSlotKey);
+  }
+
   function renderDemoStationSummary() {
     const slot = getActiveStationSlot();
     const status = getStationSlotStatus(slot);
@@ -1679,11 +1817,15 @@
     const draft = state.sceneEditorDraft && typeof state.sceneEditorDraft === "object" ? state.sceneEditorDraft : null;
     if (!draft || !scene) return null;
     if (String(draft.scene_id || "") !== String(scene.scene_id || "")) return null;
+    const controlAction = getHotspotControlAction(draft);
     return {
       hotspot_id: String(draft.hotspot_id || "").trim(),
       scene_id: String(scene.scene_id || "").trim(),
       station_key: String(draft.station_key || scene.scene_id || "").trim(),
       product_id: String(draft.product_id || "").trim(),
+      target_type: getHotspotTargetType(draft),
+      control_action: controlAction,
+      control_label: controlAction ? getHotspotControlLabel(draft) : "",
       sort_order: Number(draft.sort_order || 0),
       x_pct: clampPct(draft.x_pct),
       y_pct: clampPct(draft.y_pct),
@@ -1704,6 +1846,9 @@
       scene_id: draft.scene_id,
       station_key: draft.station_key,
       product_id: draft.product_id,
+      target_type: draft.target_type,
+      control_action: draft.control_action,
+      control_label: draft.control_label,
       sort_order: draft.sort_order,
       x_pct: draft.x_pct,
       y_pct: draft.y_pct,
@@ -1761,17 +1906,21 @@
           String(clampPct(hotspot.height_pct) * 100) +
           "%;";
         if (!editor) {
+          const controlAction = String(hotspot.control_action || "").trim();
           return (
             '<button type="button" class="pad-scene-hotspot' +
+            (controlAction ? " pad-scene-hotspot--control" : "") +
             (active ? " is-active" : "") +
             '" data-action="play-product-hotspot" data-product-id="' +
             escapeHtml(String(hotspot.product_id || "")) +
             '" data-hotspot-id="' +
             escapeHtml(hotspotId) +
+            '" data-control-action="' +
+            escapeHtml(controlAction) +
             '" style="' +
             escapeHtml(style) +
             '">' +
-            (opts.showLabels
+            (controlAction || opts.showLabels
               ? '<span class="pad-scene-hotspot__label">' + escapeHtml(label) + "</span>"
               : "") +
             "</button>"
@@ -2463,7 +2612,7 @@
       '<section class="pad-demo-workspace">' +
       '<aside class="pad-demo-sidebar" aria-label="婵犵數濮靛ú妯侯潖婵犳艾桅婵﹩鍎甸悢鐓庣伋鐎规洖娲ㄩ、鍛存⒑绾懐鐒介柛鎰╁妿閸橆剟姊?>' +
       '<aside class="pad-demo-sidebar" aria-label="Demo mode control rail">' +
-      renderDemoStationTabs() +
+      renderDemoAudienceControls() +
       "</div>" +
       '<div class="pad-demo-sidebar__middle">' +
       renderDemoRightTabs() +
@@ -2958,7 +3107,28 @@
       "</div>" +
       '<div class="pad-scene-editor__inspector">' +
       '<div class="pad-scene-editor__sidebar-title">热点内容</div>' +
-      (draft
+      '<div class="pad-scene-editor__scene-actions">' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="enter-station-hotspot-create" aria-pressed="' +
+      (state.sceneEditorCreateMode ? "true" : "false") +
+      '">' +
+      escapeHtml(state.sceneEditorCreateMode ? "正在新建热区" : "新建产品热区") +
+      "</button>" +
+      "</div>" +
+      '<div class="pad-scene-editor__scene-actions">' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="enter-station-hotspot-create" aria-pressed="' +
+      (state.sceneEditorCreateMode ? "true" : "false") +
+      '">' +
+      escapeHtml(state.sceneEditorCreateMode ? "正在新建热区" : "新建产品热区") +
+      "</button>" +
+      "</div>" +
+        '<div class="pad-scene-editor__scene-actions">' +
+        '<button type="button" class="pad-btn pad-btn--neutral" data-action="enter-station-hotspot-create" aria-pressed="' +
+        (state.sceneEditorCreateMode ? "true" : "false") +
+        '">' +
+        escapeHtml(state.sceneEditorCreateMode ? "正在新建热区" : "新建产品热区") +
+        "</button>" +
+        "</div>" +
+        (draft
         ? '<label class="pad-station-config-panel__field"><span>标题</span><input type="text" data-action="scene-draft-title" value="' +
           escapeHtml(String(draft.title || "")) +
           '" /></label>' +
@@ -3285,6 +3455,7 @@
       "</div>" +
       '<div class="pad-scene-editor__inspector">' +
       '<div class="pad-scene-editor__sidebar-title">产品热区</div>' +
+      '<div class="pad-panel__hint">\u62d6\u52a8\u6216\u7f29\u653e\u5df2\u6709\u70ed\u533a\u540e\u4f1a\u81ea\u52a8\u4fdd\u5b58\uff1b\u65b0\u5efa\u70ed\u533a\u9009\u62e9\u4ea7\u54c1\u540e\u4f1a\u81ea\u52a8\u4fdd\u5b58\u3002</div>' +
       (draft
         ? '<label class="pad-station-config-panel__field"><span>绑定产品</span><select data-action="station-hotspot-product">' +
           '<option value="">请选择产品</option>' +
@@ -3361,6 +3532,38 @@
   }
 
   function renderOpsShellV3(hallName, productCount, snapshotBadge) {
+    const demoLayoutPanel = state.opsShowDemoLayout ? renderDemoLayoutPanel() : "";
+    const hallProductsPanel = state.opsShowHallProductList
+      ? (
+          '<section class="pad-grid">' +
+          '<section class="pad-panel">' +
+          '<div class="pad-panel__header">' +
+          "<div>" +
+          '<div class="pad-panel__title">' +
+          escapeHtml(TEXT.hallListTitle) +
+          "</div>" +
+          '<div class="pad-panel__hint" data-testid="hall-name">' +
+          escapeHtml(hallName) +
+          "</div>" +
+          "</div>" +
+          snapshotBadge +
+          "</div>" +
+          renderProductCards() +
+          "</section>" +
+          '<section class="pad-panel">' +
+          renderDetailPanel() +
+          '<div class="pad-panel__header" style="padding-top:0;">' +
+          '<div class="pad-panel__hint">' +
+          escapeHtml(TEXT.lastSyncAt) +
+          '<span data-testid="last-sync-at">' +
+          escapeHtml(formatTimestamp(state.lastSyncedAtMs)) +
+          "</span></div>" +
+          "</div>" +
+          "</section>" +
+          "</section>"
+        )
+      : "";
+    const hallSwitcherPanel = state.opsShowHallSwitcher ? renderHallSwitcher() : "";
     return (
       '<main class="pad-shell">' +
       '<section class="pad-hero">' +
@@ -3412,35 +3615,46 @@
       "</div></div>" +
       "</div>" +
       "</section>" +
-      renderStationFusionConfigPanelV3() +
-      renderDemoLayoutPanel() +
-      renderHallSwitcher() +
-      '<section class="pad-grid">' +
-      '<section class="pad-panel">' +
-      '<div class="pad-panel__header">' +
+      '<section class="pad-panel pad-ops-entry-panel">' +
+      '<div class="pad-panel__header pad-layout-panel__header">' +
       "<div>" +
-      '<div class="pad-panel__title">' +
-      escapeHtml(TEXT.hallListTitle) +
+      '<div class="pad-panel__title">运维布局</div>' +
+      '<div class="pad-panel__hint">点击按钮后再展开对应区域。</div>' +
       "</div>" +
-      '<div class="pad-panel__hint" data-testid="hall-name">' +
-      escapeHtml(hallName) +
+      '<div class="pad-layout-panel__options" role="group" aria-label="运维入口">' +
+      '<button type="button" class="pad-layout-panel__btn' +
+      (state.opsShowDemoLayout ? " is-active" : "") +
+      '" data-action="toggle-ops-section" data-section="demo-layout">演示布局</button>' +
+      '<button type="button" class="pad-layout-panel__btn' +
+      (state.opsShowHallProductList ? " is-active" : "") +
+      '" data-action="toggle-ops-section" data-section="hall-products">Hall product list</button>' +
+      '<button type="button" class="pad-layout-panel__btn' +
+      (state.opsShowHallSwitcher ? " is-active" : "") +
+      '" data-action="toggle-ops-section" data-section="hall-switcher">Quick hall switch</button>' +
       "</div>" +
-      "</div>" +
-      snapshotBadge +
-      "</div>" +
-      renderProductCards() +
-      "</section>" +
-      '<section class="pad-panel">' +
-      renderDetailPanel() +
-      '<div class="pad-panel__header" style="padding-top:0;">' +
-      '<div class="pad-panel__hint">' +
-      escapeHtml(TEXT.lastSyncAt) +
-      '<span data-testid="last-sync-at">' +
-      escapeHtml(formatTimestamp(state.lastSyncedAtMs)) +
-      "</span></div>" +
       "</div>" +
       "</section>" +
+      '<section class="pad-panel pad-ops-entry-panel">' +
+      '<div class="pad-panel__header pad-layout-panel__header">' +
+      "<div>" +
+      '<div class="pad-panel__title">产品热区</div>' +
+      '<div class="pad-panel__hint">默认只编辑已有热区，点按钮后才进入新建状态。</div>' +
+      "</div>" +
+      '<div class="pad-layout-panel__options" role="group" aria-label="产品热区创建">' +
+      '<button type="button" class="pad-layout-panel__btn' +
+      (state.sceneEditorCreateMode ? " is-active" : "") +
+      '" data-action="enter-station-hotspot-create" aria-pressed="' +
+      (state.sceneEditorCreateMode ? "true" : "false") +
+      '">' +
+      escapeHtml(state.sceneEditorCreateMode ? "正在新建热区" : "新建产品热区") +
+      "</button>" +
+      "</div>" +
+      "</div>" +
       "</section>" +
+      renderStationFusionConfigPanelV3() +
+      demoLayoutPanel +
+      hallSwitcherPanel +
+      hallProductsPanel +
       "</main>"
     );
   }
@@ -3502,28 +3716,13 @@
   function renderDemoShellV4(hallName, productCount, snapshotBadge) {
     return (
       '<main class="pad-shell pad-shell--demo">' +
-      '<section class="pad-demo-workspace">' +
-      '<aside class="pad-demo-sidebar" aria-label="Demo mode control rail">' +
-      '<div class="pad-demo-sidebar__top">' +
-      renderDemoStationTabs() +
-      "</div>" +
-      '<div class="pad-demo-sidebar__middle">' +
-      renderDemoRightTabsV2() +
-      "</div>" +
-      '<div class="pad-demo-sidebar__bottom">' +
-      '<button type="button" class="pad-btn pad-btn--neutral pad-demo-sidebar__ops-btn" data-action="set-mode" data-mode="ops" data-testid="mode-enter-ops">运维</button>' +
-      "</div>" +
-      "</aside>" +
-      '<section class="pad-demo-main">' +
-      '<section class="pad-demo-main__meta">' +
-      '<div class="pad-demo-main__hall">' +
-      escapeHtml(hallName) +
-      "</div>" +
-      '<div class="pad-demo-main__badge">' +
-      snapshotBadge +
-      "</div>" +
+      '<section class="pad-demo-workspace pad-demo-workspace--full">' +
+      '<section class="pad-demo-main pad-demo-main--full">' +
+      '<section class="pad-demo-panel pad-demo-panel--scene">' +
+      (getSelectedScene()
+        ? renderSceneStage(getSelectedScene(), { editor: false, showLabels: false, stretchToFit: true })
+        : '<div class="pad-empty">This station has no background configured yet.</div>') +
       "</section>" +
-      renderStationVisualPanelV4() +
       "</section>" +
       "</section>" +
       "</main>"
@@ -3642,6 +3841,12 @@
       });
     });
 
+    refs.app.querySelectorAll('[data-action="toggle-ops-section"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        toggleOpsSection(button.getAttribute("data-section"));
+      });
+    });
+
     refs.app.querySelectorAll('[data-action="set-demo-columns"]').forEach((button) => {
       button.addEventListener("click", () => {
         setDemoColumns(button.getAttribute("data-columns"));
@@ -3657,6 +3862,18 @@
     refs.app.querySelectorAll('[data-action="set-demo-right-tab"]').forEach((button) => {
       button.addEventListener("click", () => {
         setDemoRightTab(button.getAttribute("data-tab-key"));
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="toggle-demo-station"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        toggleActiveStationSlot();
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="request-exit"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        requestExit();
       });
     });
 
@@ -3875,7 +4092,13 @@
 
     if (stationHotspotProductSelect) {
       stationHotspotProductSelect.addEventListener("change", () => {
-        updateSceneEditorDraft({ product_id: String(stationHotspotProductSelect.value || "").trim() });
+        const scene = getSelectedScene();
+        const draft = getSceneEditorDraftForScene(scene);
+        const nextProductId = String(stationHotspotProductSelect.value || "").trim();
+        const nextDraft = updateSceneEditorDraft({ product_id: nextProductId });
+        if (draft && !draft.hotspot_id && nextProductId && nextDraft) {
+          void saveSceneEditorHotspot();
+        }
       });
     }
 
@@ -3891,10 +4114,18 @@
       });
     }
 
+    const enterStationHotspotCreateButton = refs.app.querySelector('[data-action="enter-station-hotspot-create"]');
+    if (enterStationHotspotCreateButton) {
+      enterStationHotspotCreateButton.addEventListener("click", () => {
+        enterStationHotspotCreateMode();
+      });
+    }
+
     if (clearStationHotspotDraftButton) {
       clearStationHotspotDraftButton.addEventListener("click", () => {
         state.sceneEditorDraft = null;
         state.sceneEditorActiveHotspotId = "";
+        state.sceneEditorCreateMode = false;
         render();
       });
     }
@@ -3995,6 +4226,7 @@
       node.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
+        state.sceneEditorCreateMode = false;
         selectSceneHotspotForEditing(node.getAttribute("data-hotspot-id"));
       });
     });
@@ -4017,11 +4249,17 @@
         ) {
           return;
         }
+        if (!state.sceneEditorCreateMode) {
+          state.sceneEditorDraft = null;
+          state.sceneEditorActiveHotspotId = "";
+          render();
+          return;
+        }
         beginSceneEditorInteraction("create", event, "");
       });
     }
 
-    refs.app.querySelectorAll("[data-product-id]").forEach((button) => {
+    refs.app.querySelectorAll('[data-product-id]:not([data-action="play-product-hotspot"])').forEach((button) => {
       button.addEventListener("click", () => {
         const productId = String(button.getAttribute("data-product-id") || "").trim();
         if (!productId) return;
@@ -4035,13 +4273,48 @@
       button.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
+        const controlAction = String(button.getAttribute("data-control-action") || "").trim();
+        if (controlAction) {
+          if (controlAction === "toggle_station") {
+            toggleActiveStationSlot();
+            return;
+          }
+          if (controlAction === "toggle_station_narration") {
+            void toggleStationPlayback(getActiveStationSlot().slotKey);
+            return;
+          }
+          if (controlAction === "enter_ops") {
+            setMode("ops");
+            return;
+          }
+          if (controlAction === "exit_app") {
+            requestExit();
+            return;
+          }
+        }
         const productId = String(button.getAttribute("data-product-id") || "").trim();
-        state.highlightedHotspotId = String(button.getAttribute("data-hotspot-id") || "").trim();
-        state.highlightedProductId = productId;
+        const hotspotId = String(button.getAttribute("data-hotspot-id") || "").trim();
         if (!productId) return;
+        const sameProductPlaying =
+          String(state.selectedProductId || "") === productId &&
+          !String(state.stationPlaybackSlotKey || "").trim() &&
+          (
+            String(state.playingProductId || "") === productId ||
+            String(state.pendingPlaybackProductId || "") === productId ||
+            String(state.lastPlaybackRequestedUrl || "").trim()
+          );
+        if (sameProductPlaying) {
+          interruptCurrentPlayback({
+            preserveError: false,
+            preserveRequestUrl: false,
+            resetSource: true,
+          });
+          render();
+          return;
+        }
         state.selectedProductId = productId;
         setAssetState("", "pending", false, "");
-        void playSelectedProduct(productId);
+        void toggleProductPlayback(productId, hotspotId);
       });
     });
   }
@@ -4412,6 +4685,7 @@
 
   async function refreshHallAfterSceneMutation(successMessage, syncFailedMessage, action, selectedSceneId, selectedHotspotId) {
     await loadCurrentHall({ forceOnline: true });
+    state.sceneEditorCreateMode = false;
     if (selectedSceneId) {
       state.selectedSceneId = String(selectedSceneId || "");
     }
@@ -4652,11 +4926,15 @@
 
   function buildSceneDraft(scene, geometry, sourceHotspot) {
     const hotspot = sourceHotspot && typeof sourceHotspot === "object" ? sourceHotspot : {};
+    const controlAction = getHotspotControlAction(hotspot);
     return {
       scene_id: String(scene.scene_id || ""),
       station_key: String(scene.station_key || scene.scene_id || ""),
       hotspot_id: String(hotspot.hotspot_id || "").trim(),
       product_id: String(hotspot.product_id || "").trim(),
+      target_type: getHotspotTargetType(hotspot),
+      control_action: controlAction,
+      control_label: controlAction ? getHotspotControlLabel(hotspot) : "",
       sort_order: Number(
         hotspot.sort_order != null
           ? hotspot.sort_order
@@ -4673,7 +4951,10 @@
 
   function selectSceneHotspotForEditing(hotspotId) {
     const scene = getSelectedScene();
-    const hotspot = getSceneHotspotById(scene, hotspotId);
+    const draft = getSceneEditorDraftForScene(scene);
+    const normalizedHotspotId = String(hotspotId || "").trim();
+    const hotspot =
+      draft && String(draft.hotspot_id || "") === normalizedHotspotId ? draft : getSceneHotspotById(scene, hotspotId);
     if (!scene || !hotspot) return;
     state.sceneEditorDraft = buildSceneDraft(scene, hotspot, hotspot);
     state.sceneEditorActiveHotspotId = String(hotspot.hotspot_id || "");
@@ -4718,6 +4999,7 @@
           });
       const hotspotId = response && response.hotspot ? response.hotspot.hotspot_id : draft.hotspot_id;
       state.sceneEditorDraft = null;
+      state.sceneEditorCreateMode = false;
       await refreshHallAfterSceneMutation(
         "Hotspot saved and synced offline.",
         "Hotspot saved, but offline sync needs a retry.",
@@ -4750,6 +5032,7 @@
       );
       state.sceneEditorDraft = null;
       state.sceneEditorActiveHotspotId = "";
+      state.sceneEditorCreateMode = false;
       await refreshHallAfterSceneMutation(
         "Hotspot deleted.",
         "Hotspot deleted, but offline sync needs a retry.",
@@ -4852,10 +5135,21 @@
     render();
   }
 
-  function endSceneEditorInteraction() {
-    if (!sceneEditorInteraction) return;
+  async function endSceneEditorInteraction() {
+    const interaction = sceneEditorInteraction;
+    if (!interaction) return;
     sceneEditorInteraction = null;
+    const scene = getSelectedScene();
+    const draft = getSceneEditorDraftForScene(scene);
+    const shouldAutoSave =
+      !!scene &&
+      !!draft &&
+      !!draft.hotspot_id &&
+      interaction.kind !== "create" &&
+      hasSceneHotspotGeometryChanged(interaction.origin_draft, draft);
     render();
+    if (!shouldAutoSave) return;
+    await saveSceneEditorHotspot();
   }
 
   async function cacheAudioAssets(products) {
@@ -5042,6 +5336,7 @@
     state.loading = true;
     state.errorMessage = "";
     state.errorDetail = "";
+    state.sceneEditorCreateMode = false;
     state.online = navigator.onLine !== false;
     render();
 
@@ -5116,8 +5411,9 @@
     }
   }
 
-  async function toggleProductPlayback(productId) {
+  async function toggleProductPlayback(productId, hotspotId) {
     const nextProductId = String(productId || state.selectedProductId || "").trim();
+    const nextHotspotId = String(hotspotId || "").trim();
     if (nextProductId) {
       state.selectedProductId = nextProductId;
     }
@@ -5135,11 +5431,12 @@
       return;
     }
     state.audioError = "";
-    await playSelectedProduct(nextProductId);
+    await playSelectedProduct(nextProductId, nextHotspotId);
   }
 
-  async function playSelectedProduct(productId) {
+  async function playSelectedProduct(productId, hotspotId) {
     const nextProductId = String(productId || state.selectedProductId || "").trim();
+    const nextHotspotId = String(hotspotId || "").trim();
     if (nextProductId) {
       state.selectedProductId = nextProductId;
     }
@@ -5161,9 +5458,12 @@
       preserveRequestUrl: true,
       resetSource: true,
     });
+    const playbackSeq = latestStationPlaybackSeq;
     state.audioBusy = true;
     state.audioError = "";
     state.pendingPlaybackProductId = String(product.product_id || "");
+    state.highlightedHotspotId = nextHotspotId;
+    state.highlightedProductId = String(product.product_id || "");
     state.lastPlaybackRequestedUrl = product.playback_url;
     render();
 
@@ -5173,6 +5473,7 @@
       if (playResult && typeof playResult.then === "function") {
         await playResult;
       }
+      if (playbackSeq !== latestStationPlaybackSeq) return;
       state.audioBusy = false;
       state.audioError = "";
       state.pendingPlaybackProductId = "";
@@ -5180,6 +5481,7 @@
       recordProductPlay(product);
       render();
     } catch (_) {
+      if (playbackSeq !== latestStationPlaybackSeq) return;
       state.audioBusy = false;
       state.pendingPlaybackProductId = "";
       state.playingProductId = "";
@@ -5336,6 +5638,7 @@
           selectedSceneHotspotCount: activeStation && Array.isArray(activeStation.hotspots) ? activeStation.hotspots.length : 0,
           sceneDialogHotspotId: String(state.sceneDialogHotspotId || ""),
           sceneEditorActiveHotspotId: String(state.sceneEditorActiveHotspotId || ""),
+          sceneEditorCreateMode: !!state.sceneEditorCreateMode,
           displayProductIds: getDisplayProducts().map((item) => String(item.product_id || "")),
           selectedProductId: selected ? selected.product_id : "",
           playingProductId: String(state.playingProductId || ""),
@@ -5353,6 +5656,7 @@
           stationPlaybackTimelineEventCount: Array.isArray(state.stationPlaybackTimelineEvents)
             ? state.stationPlaybackTimelineEvents.length
             : 0,
+          exitRequested: !!window.__ragint_exit_requested,
           demoColumns: Number(state.demoColumns || DEFAULT_DEMO_COLUMNS),
           audioError: String(state.audioError || ""),
           displayProductPlayCounts: Object.assign({}, state.displayProductPlayCounts),
@@ -5390,6 +5694,9 @@
       setMode: function (mode) {
         setMode(mode);
       },
+      toggleActiveStationSlot: function () {
+        toggleActiveStationSlot();
+      },
       setDemoLeftTab: function (tabKey) {
         setDemoLeftTab(tabKey);
       },
@@ -5400,7 +5707,10 @@
         return toggleStationPlayback(slotKey);
       },
       playProduct: function (productId) {
-        return playSelectedProduct(productId);
+        return toggleProductPlayback(productId);
+      },
+      requestExit: function () {
+        requestExit();
       },
     };
   }
@@ -5450,11 +5760,20 @@
   });
 
   window.addEventListener("pointerup", () => {
-    endSceneEditorInteraction();
+    void endSceneEditorInteraction();
   });
 
   window.addEventListener("pointercancel", () => {
-    endSceneEditorInteraction();
+    void endSceneEditorInteraction();
+  });
+
+  window.addEventListener("keydown", (event) => {
+    const key = String(event && event.key ? event.key : "").trim().toLowerCase();
+    if (state.mode !== "demo") return;
+    if (key === "h") {
+      event.preventDefault();
+      setMode("ops");
+    }
   });
 
   window.addEventListener("online", () => {

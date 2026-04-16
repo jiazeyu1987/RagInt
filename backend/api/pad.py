@@ -4,6 +4,7 @@ from flask import Blueprint, Response, jsonify, request, send_file
 
 from backend.api.ragflow_config_cache import get_ragflow_config
 from backend.config import resolve_tts_request
+from backend.services.pad_product_store import CONTROL_HOTSPOT_SPECS
 
 
 def _bool_from_value(value, default: bool = True) -> bool:
@@ -190,12 +191,28 @@ def _station_asset_response_payload(*, station: dict, asset_kind: str, offline: 
 
 def _station_hotspot_response_payload(hotspot: dict, *, slot_key: str = "") -> dict:
     item = hotspot if isinstance(hotspot, dict) else {}
+    product_id = str(item.get("product_id") or "")
+    control_action = ""
+    control_label = str(item.get("control_label") or "")
+    if product_id == "__control_toggle_station__":
+        control_action = "toggle_station"
+    elif product_id == "__control_toggle_station_narration__":
+        control_action = "toggle_station_narration"
+    elif product_id == "__control_enter_ops__":
+        control_action = "enter_ops"
+    elif product_id == "__control_exit_app__":
+        control_action = "exit_app"
+    if not control_label and product_id in CONTROL_HOTSPOT_SPECS:
+        control_label = str(CONTROL_HOTSPOT_SPECS[product_id].get("label") or "")
     return {
         "hotspot_id": str(item.get("hotspot_id") or ""),
         "station_id": str(item.get("station_id") or item.get("station_key") or ""),
         "station_key": str(slot_key or item.get("station_key") or ""),
         "slot_key": str(slot_key or item.get("station_key") or ""),
-        "product_id": str(item.get("product_id") or ""),
+        "product_id": product_id,
+        "target_type": "control" if control_action else "product",
+        "control_action": control_action,
+        "control_label": control_label,
         "sort_order": int(item.get("sort_order") or 0),
         "x_pct": float(item.get("x_pct") or 0),
         "y_pct": float(item.get("y_pct") or 0),

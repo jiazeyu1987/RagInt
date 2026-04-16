@@ -77,6 +77,46 @@ def _normalize_station_key(value: str) -> str:
     return _normalize_station_id(value)
 
 
+CONTROL_HOTSPOT_SPECS = {
+    "__control_toggle_station__": {
+        "label": "站台切换",
+        "sort_order": -400,
+        "x_pct": 0.02,
+        "y_pct": 0.05,
+        "width_pct": 0.08,
+        "height_pct": 0.18,
+    },
+    "__control_toggle_station_narration__": {
+        "label": "全站讲解",
+        "sort_order": -399,
+        "x_pct": 0.02,
+        "y_pct": 0.27,
+        "width_pct": 0.08,
+        "height_pct": 0.2,
+    },
+    "__control_enter_ops__": {
+        "label": "运维",
+        "sort_order": -398,
+        "x_pct": 0.02,
+        "y_pct": 0.52,
+        "width_pct": 0.08,
+        "height_pct": 0.14,
+    },
+    "__control_exit_app__": {
+        "label": "退出",
+        "sort_order": -397,
+        "x_pct": 0.02,
+        "y_pct": 0.82,
+        "width_pct": 0.08,
+        "height_pct": 0.14,
+    },
+}
+
+
+def _is_control_hotspot_product_id(product_id: str) -> bool:
+    return str(product_id or "").strip() in CONTROL_HOTSPOT_SPECS
+
+
 class PadProductStore:
     def __init__(self, db_path: Path, audio_root: Path, image_root: Path, *, logger: logging.Logger | None = None):
         self._logger = logger or logging.getLogger(__name__)
@@ -1943,6 +1983,7 @@ class PadProductStore:
         key = _normalize_station_key(station_key)
         if not hid:
             raise ValueError("hall_id_required")
+        self._ensure_default_control_hotspots(hall_id=hid, station_key=key)
         with self._lock:
             conn = self._connect()
             try:
@@ -1966,7 +2007,70 @@ class PadProductStore:
                     """,
                     (hid, key),
                 ).fetchall()
-                return [dict(row) for row in rows]
+                out = []
+                for row in rows:
+                    item = dict(row)
+                    pid = str(item.get("product_id") or "").strip()
+                    if _is_control_hotspot_product_id(pid):
+                        item["control_label"] = str(CONTROL_HOTSPOT_SPECS[pid]["label"])
+                    out.append(item)
+                return out
+            finally:
+                conn.close()
+
+    def _ensure_default_control_hotspots(self, *, hall_id: str, station_key: str) -> None:
+        hid = str(hall_id or "").strip()
+        key = _normalize_station_key(station_key)
+        if not hid:
+            return
+        now_ms = self._now_ms()
+        with self._lock:
+            conn = self._connect()
+            try:
+                existing_rows = conn.execute(
+                    """
+                    SELECT product_id
+                    FROM pad_hall_station_hotspots
+                    WHERE hall_id=? AND station_key=? AND product_id IN ({placeholders})
+                    """.format(placeholders=",".join("?" for _ in CONTROL_HOTSPOT_SPECS)),
+                    (hid, key, *CONTROL_HOTSPOT_SPECS.keys()),
+                ).fetchall()
+                existing = {str(row["product_id"] or "").strip() for row in existing_rows}
+                for product_id, spec in CONTROL_HOTSPOT_SPECS.items():
+                    if product_id in existing:
+                        continue
+                    conn.execute(
+                        """
+                        INSERT INTO pad_hall_station_hotspots (
+                            hotspot_id,
+                            hall_id,
+                            station_key,
+                            product_id,
+                            sort_order,
+                            x_pct,
+                            y_pct,
+                            width_pct,
+                            height_pct,
+                            created_at_ms,
+                            updated_at_ms
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            f"station_hotspot_{uuid.uuid4().hex}",
+                            hid,
+                            key,
+                            product_id,
+                            int(spec["sort_order"]),
+                            float(spec["x_pct"]),
+                            float(spec["y_pct"]),
+                            float(spec["width_pct"]),
+                            float(spec["height_pct"]),
+                            int(now_ms),
+                            int(now_ms),
+                        ),
+                    )
+                conn.commit()
             finally:
                 conn.close()
 
@@ -2020,9 +2124,10 @@ class PadProductStore:
             raise ValueError("hall_id_required")
         if not pid:
             raise ValueError("product_id_required")
-        product = self.get_product(pid)
-        if not product or str(product.get("hall_id") or "") != hid:
-            raise ValueError("product_not_found")
+        if not _is_control_hotspot_product_id(pid):
+            product = self.get_product(pid)
+            if not product or str(product.get("hall_id") or "") != hid:
+                raise ValueError("product_not_found")
         x_value, y_value, width_value, height_value = _normalize_hotspot_geometry(
             x_pct=x_pct,
             y_pct=y_pct,
@@ -2096,9 +2201,10 @@ class PadProductStore:
         hotspot = self.get_station_hotspot(hotspot_key)
         if not hotspot or str(hotspot.get("hall_id") or "") != hid or str(hotspot.get("station_key") or "") != key:
             raise ValueError("hotspot_not_found")
-        product = self.get_product(pid)
-        if not product or str(product.get("hall_id") or "") != hid:
-            raise ValueError("product_not_found")
+        if not _is_control_hotspot_product_id(pid):
+            product = self.get_product(pid)
+            if not product or str(product.get("hall_id") or "") != hid:
+                raise ValueError("product_not_found")
         x_value, y_value, width_value, height_value = _normalize_hotspot_geometry(
             x_pct=x_pct,
             y_pct=y_pct,
