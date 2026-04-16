@@ -162,5 +162,34 @@ describe('SettingsPanel', () => {
     });
     view.unmount();
   });
+
+  test('shows only silence timing control for conversation auto submit in asr tab', () => {
+    const props = buildProps({
+      activeTab: 'asr',
+      controlBarProps: {
+        asrConversationAutoSubmitSilenceMs: 1200,
+        onChangeAsrConversationAutoSubmitSilenceMs: jest.fn(),
+        asrConversationContextStrategy: 'smart_recent_current',
+        onChangeAsrConversationContextStrategy: jest.fn(),
+        asrConversationContextRecentTurns: 10,
+        onChangeAsrConversationContextRecentTurns: jest.fn(),
+        asrConversationContextMaxTokens: 16000,
+        onChangeAsrConversationContextMaxTokens: jest.fn(),
+        asrAutoResumeAfterAnswerEnabled: true,
+        onChangeAsrAutoResumeAfterAnswerEnabled: jest.fn(),
+        asrAutoResumeAfterAnswerDelayMs: 2200,
+        onChangeAsrAutoResumeAfterAnswerDelayMs: jest.fn(),
+        asrRecognitionStage: 'idle',
+        asrPostProcessStage: 'idle',
+        asrPostProcessEvents: [],
+      },
+    });
+    const view = render(<SettingsPanel {...props} />);
+
+    expect(view.container.textContent).toContain('静音判定时长(ms)');
+    expect(view.container.textContent).not.toContain('语音结束后自动发送问题');
+    expect(view.container.textContent).not.toContain('自动发送范围');
+    view.unmount();
+  });
 });
 

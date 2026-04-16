@@ -34,7 +34,7 @@ def _read_source_bytes(source: str) -> tuple[bytes, str]:
 def _base_to_ws(base_url: str, path: str) -> str:
     base = str(base_url or "").strip().rstrip("/")
     if not base:
-        base = "http://localhost:8000"
+        base = "http://localhost:8101"
     if base.lower().startswith("https://"):
         ws_base = "wss://" + base[8:]
     elif base.lower().startswith("http://"):
@@ -68,7 +68,7 @@ def _multipart_form(fields: dict[str, str], files: dict[str, tuple[str, bytes, s
 
 
 def http_test_asr(base_url: str, wav_path: str, client_id: str) -> int:
-    url = str(base_url or "http://localhost:8000").rstrip("/") + "/api/speech_to_text"
+    url = str(base_url or "http://localhost:8101").rstrip("/") + "/api/speech_to_text"
     try:
         raw, filename = _read_source_bytes(wav_path)
     except FileNotFoundError:
@@ -314,7 +314,7 @@ def ws_test_asr(base_url: str, wav_path: str, client_id: str, timeout_s: float) 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Test RagInt backend ASR (HTTP or WebSocket).")
-    ap.add_argument("--base-url", default="http://localhost:8000", help="backend base url, e.g. http://localhost:8000")
+    ap.add_argument("--base-url", default="http://localhost:8101", help="backend base url, e.g. http://localhost:8101")
     ap.add_argument("--mode", choices=("http", "ws"), default="http", help="test mode")
     ap.add_argument("--wav", required=True, help="16kHz mono s16le wav for ws; any audio for http")
     ap.add_argument("--client-id", default="asr_test", help="client id")

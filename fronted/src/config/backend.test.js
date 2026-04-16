@@ -6,6 +6,7 @@ describe('config/backend', () => {
     process.env = { ...ORIGINAL_ENV };
     delete process.env.REACT_APP_BACKEND_URL;
     delete process.env.REACT_APP_BACKEND_BASE;
+    delete process.env.NODE_ENV;
   });
 
   afterAll(() => {
@@ -24,9 +25,10 @@ describe('config/backend', () => {
     expect(getBackendBase()).toBe('http://legacy.local');
   });
 
-  test('getBackendBase defaults to localhost when env vars are absent', () => {
+  test('getBackendBase defaults to localhost:8101 in development when env vars are absent', () => {
+    process.env.NODE_ENV = 'development';
     const { getBackendBase } = require('./backend');
-    expect(getBackendBase()).toBe('http://localhost:8000');
+    expect(getBackendBase()).toBe('http://localhost:8101');
   });
 
   test('backendUrl normalizes leading slash', () => {

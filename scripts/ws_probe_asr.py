@@ -106,7 +106,7 @@ def _ws_recv_frame(sock: socket.socket, timeout_s: float) -> tuple[int, bytes] |
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Probe VoiceKit WS handshake and messages (no extra deps).")
-    ap.add_argument("--url", default="ws://localhost:8000/voicekit/ws/asr", help="ws://host:port/path or wss://...")
+    ap.add_argument("--url", default="ws://localhost:8101/voicekit/ws/asr", help="ws://host:port/path or wss://...")
     ap.add_argument("--timeout", type=float, default=5.0, help="socket timeout seconds")
     ap.add_argument("--start", action="store_true", help="send the JSON start message after handshake")
     ap.add_argument("--client-id", default="probe", help="client_id in start message")

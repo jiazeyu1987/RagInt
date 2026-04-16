@@ -13,7 +13,7 @@ services:
       dockerfile: backend/Dockerfile
     environment:
       RAGINT_HOST: 0.0.0.0
-      RAGINT_PORT: 8000
+      RAGINT_PORT: 8101
       RAGINT_DEBUG: "0"
       RAGINT_STATE_BACKEND: redis
       RAGINT_REDIS_URL: redis://redis:6379/0
@@ -29,7 +29,7 @@ services:
       - ./backend/data:/app/backend/data
       - ./ragflow_demo/ragflow_config.json:/app/ragflow_demo/ragflow_config.json:ro
     ports:
-      - "8000:8000"
+      - "8101:8101"
     depends_on:
       - redis
 

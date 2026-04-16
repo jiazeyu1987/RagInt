@@ -1,0 +1,182 @@
+{
+  "schema_version": 2,
+  "task_id": "d-projectpackage-mylib-raginttts-20260407T223831",
+  "mode": "full",
+  "status": "completed",
+  "current_phase": null,
+  "phase_statuses": [
+    {
+      "phase_id": "P1",
+      "title": "明确提取边界与验证标准",
+      "status": "completed",
+      "objective": "基于当前仓库实际入口与导入关系，确认语音合成前后端的精确提取范围、排除项、目标目录结构与验证策略。",
+      "owned_paths": [
+        "`doc/tasks/d-projectpackage-mylib-raginttts-20260407T223831/prd.md` `doc/tasks/d-projectpackage-mylib-raginttts-20260407T223831/test-plan.md` `doc/tasks/d-projectpackage-mylib-raginttts-20260407T223831/task-state.json`"
+      ],
+      "dependencies": [
+        "源仓库 TTS 模块、测试文件、`spec-driven-delivery` 校验脚本"
+      ],
+      "deliverables": [
+        "完整 PRD 完整测试计划 同步后的阶段状态"
+      ],
+      "evidence_expectation": "",
+      "acceptance_criteria": [
+        {
+          "ac_id": "P1-AC1",
+          "text": "`prd.md` 明确列出提取范围、非目标、前提条件、目标目录和验证策略，且与仓库实际 TTS 结构一致。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p1",
+            "test-report.md#final-verdict"
+          ]
+        },
+        {
+          "ac_id": "P1-AC2",
+          "text": "`test-plan.md` 为每个验收项定义可执行的验证命令或明确的失败条件，不保留模板占位文本。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p1",
+            "test-report.md#final-verdict"
+          ]
+        }
+      ],
+      "evidence": [
+        "execution-log.md#phase-p1"
+      ],
+      "notes": "- Planner artifacts validated and synced into task state.",
+      "last_reviewed_at": "2026-04-07T22:54:58"
+    },
+    {
+      "phase_id": "P2",
+      "title": "提取 TTS 前后端代码到目标目录",
+      "status": "completed",
+      "objective": "将确定范围内的源码与测试文件原样复制到 `D:\\ProjectPackage\\MyLib\\RagIntTTS`，保留相对目录结构，并生成提取说明、清单和哈希信息。",
+      "owned_paths": [
+        "`D:\\ProjectPackage\\MyLib\\RagIntTTS` `doc/tasks/d-projectpackage-mylib-raginttts-20260407T223831/execution-log.md`"
+      ],
+      "dependencies": [
+        "P1 确认的文件范围 源仓库文件可读 目标目录可写"
+      ],
+      "deliverables": [
+        "提取后的 `backend/**` 与 `fronted/**` 子集 清单文件 哈希清单 校验脚本 目标目录 README"
+      ],
+      "evidence_expectation": "",
+      "acceptance_criteria": [
+        {
+          "ac_id": "P2-AC1",
+          "text": "`D:\\ProjectPackage\\MyLib\\RagIntTTS` 中包含约定范围内的后端 TTS 源码、前端 TTS 源码及其对应测试文件，且目录结构与源仓库相对路径一致。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p2",
+            "test-report.md#final-verdict"
+          ]
+        },
+        {
+          "ac_id": "P2-AC2",
+          "text": "所有被提取的源码与测试文件均以“原样复制”方式落地，没有手工改写内容。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p2",
+            "test-report.md#final-verdict"
+          ]
+        },
+        {
+          "ac_id": "P2-AC3",
+          "text": "目标目录包含至少一个可重复执行的清单/校验资产，用于把目标文件与源文件建立一一对应关系并记录哈希。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p2",
+            "test-report.md#final-verdict"
+          ]
+        }
+      ],
+      "evidence": [
+        "execution-log.md#phase-p2"
+      ],
+      "notes": "- Extracted snapshot and generated manifest plus verification tooling under D:\\ProjectPackage\\MyLib\\RagIntTTS.",
+      "last_reviewed_at": "2026-04-07T22:55:10"
+    },
+    {
+      "phase_id": "P3",
+      "title": "验证提取准确性并记录证据",
+      "status": "completed",
+      "objective": "通过哈希一致性、结构检查和原仓库定向 TTS 测试，证明提取结果准确对应当前系统实现。",
+      "owned_paths": [
+        "`doc/tasks/d-projectpackage-mylib-raginttts-20260407T223831/execution-log.md` `doc/tasks/d-projectpackage-mylib-raginttts-20260407T223831/test-report.md` `doc/tasks/d-projectpackage-mylib-raginttts-20260407T223831/task-state.json`"
+      ],
+      "dependencies": [
+        "P2 提取结果 `python` / `pytest` `npm` 与前端现有依赖"
+      ],
+      "deliverables": [
+        "哈希校验结果 后端定向测试结果 前端定向测试结果 最终测试报告与完成状态"
+      ],
+      "evidence_expectation": "",
+      "acceptance_criteria": [
+        {
+          "ac_id": "P3-AC1",
+          "text": "目标目录中的每个被提取文件都能在清单中找到唯一对应的源文件，且哈希比对通过。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p3",
+            "test-report.md#final-verdict"
+          ]
+        },
+        {
+          "ac_id": "P3-AC2",
+          "text": "原仓库中针对 TTS 的后端定向测试通过，证明被提取后端模块对应的是当前可验证实现。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p3",
+            "test-report.md#final-verdict"
+          ]
+        },
+        {
+          "ac_id": "P3-AC3",
+          "text": "原仓库中针对 TTS 的前端定向测试通过，证明被提取前端模块对应的是当前可验证实现。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p3",
+            "test-report.md#final-verdict"
+          ]
+        },
+        {
+          "ac_id": "P3-AC4",
+          "text": "`test-report.md` 记录每项验证命令、结果、证据位置和最终结论，并明确任何剩余限制。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p3",
+            "test-report.md#final-verdict"
+          ]
+        }
+      ],
+      "evidence": [
+        "execution-log.md#phase-p3"
+      ],
+      "notes": "- Hash parity and targeted backend/frontend TTS tests passed; evidence stored under doc/tasks/.../evidence and test-report.md.",
+      "last_reviewed_at": "2026-04-07T22:55:19"
+    }
+  ],
+  "planner_review_status": "approved",
+  "test_status": "passed",
+  "blocking_prereqs": [],
+  "iteration_counts": {
+    "planner_revisions": 0,
+    "executor_loops": 3,
+    "test_loops": 1
+  },
+  "created_at": "2026-04-07T22:38:32",
+  "updated_at": "2026-04-07T22:55:43",
+  "branch": "ragint_latest",
+  "baseline_revision": "baed7cf9d8eeba5b4197b31d97cfddc83ca41140",
+  "workspace_root": "D:\\ProjectPackage\\RagInt",
+  "tasks_root": "D:\\ProjectPackage\\RagInt\\doc\\tasks",
+  "task_dir": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\d-projectpackage-mylib-raginttts-20260407T223831",
+  "goal": "将当前系统的语音合成的前后端代码提取出来,保存到D:\\ProjectPackage\\MyLib\\RagIntTTS\\路径下,并验证准确性",
+  "artifacts": {
+    "prd": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\d-projectpackage-mylib-raginttts-20260407T223831\\prd.md",
+    "test_plan": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\d-projectpackage-mylib-raginttts-20260407T223831\\test-plan.md",
+    "task_state": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\d-projectpackage-mylib-raginttts-20260407T223831\\task-state.json",
+    "execution_log": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\d-projectpackage-mylib-raginttts-20260407T223831\\execution-log.md",
+    "test_report": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\d-projectpackage-mylib-raginttts-20260407T223831\\test-report.md"
+  }
+}

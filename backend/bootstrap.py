@@ -47,6 +47,7 @@ def _build_stores(*, data_dir: Path, logger):
     from backend.services.breakpoint_store import BreakpointStore
     from backend.services.history_store import HistoryStore
     from backend.services.ops_store import OpsStore
+    from backend.services.pad_product_store import PadProductStore
     from backend.services.qa_audio_cache_store import QaAudioCacheStore
     from backend.services.ragflow_config_store import RagflowConfigStore
     from backend.services.recording_store import RecordingStore
@@ -70,6 +71,12 @@ def _build_stores(*, data_dir: Path, logger):
         _env_path("RAGINT_RAGFLOW_CONFIG_DB_PATH", data_dir / "ragflow_config.db"), logger=logger
     )
     app_settings_store = AppSettingsStore(_env_path("RAGINT_APP_SETTINGS_DB_PATH", data_dir / "app_settings.db"), logger=logger)
+    pad_product_store = PadProductStore(
+        _env_path("RAGINT_PAD_PRODUCT_DB_PATH", data_dir / "pad_products.db"),
+        _env_path("RAGINT_PAD_PRODUCT_AUDIO_ROOT", data_dir / "pad_product_audio"),
+        _env_path("RAGINT_PAD_PRODUCT_IMAGE_ROOT", data_dir / "pad_product_images"),
+        logger=logger,
+    )
     return (
         history_store,
         qa_audio_cache_store,
@@ -80,6 +87,7 @@ def _build_stores(*, data_dir: Path, logger):
         ops_store,
         ragflow_config_store,
         app_settings_store,
+        pad_product_store,
     )
 
 
@@ -124,6 +132,7 @@ def build_deps(*, base_dir: Path, config_path: Path, logger) -> AppDeps:
         ops_store,
         ragflow_config_store,
         app_settings_store,
+        pad_product_store,
     ) = _build_stores(
         data_dir=data_dir, logger=logger
     )
@@ -134,12 +143,33 @@ def build_deps(*, base_dir: Path, config_path: Path, logger) -> AppDeps:
         logger=logger
     )
     from backend.services.qa_audio_matcher import QaAudioMatcher
+    from backend.services.pad_hall_scene_service import PadHallSceneService
+    from backend.services.pad_hall_station_service import PadHallStationService
+    from backend.services.pad_product_audio_service import PadProductAudioService
+    from backend.services.pad_product_image_service import PadProductImageService
 
     qa_audio_matcher = QaAudioMatcher(
         store=qa_audio_cache_store,
         ragflow_service=ragflow_service,
         ragflow_chat_manager=ragflow_chat_manager,
         tts_service=tts_service,
+        logger=logger,
+    )
+    pad_product_audio_service = PadProductAudioService(
+        store=pad_product_store,
+        tts_service=tts_service,
+        logger=logger,
+    )
+    pad_product_image_service = PadProductImageService(
+        store=pad_product_store,
+        logger=logger,
+    )
+    pad_hall_scene_service = PadHallSceneService(
+        store=pad_product_store,
+        logger=logger,
+    )
+    pad_hall_station_service = PadHallStationService(
+        store=pad_product_store,
         logger=logger,
     )
     event_store = _build_state_backend()
@@ -168,6 +198,11 @@ def build_deps(*, base_dir: Path, config_path: Path, logger) -> AppDeps:
         qa_audio_matcher=qa_audio_matcher,
         ragflow_config_store=ragflow_config_store,
         app_settings_store=app_settings_store,
+        pad_product_store=pad_product_store,
+        pad_product_audio_service=pad_product_audio_service,
+        pad_product_image_service=pad_product_image_service,
+        pad_hall_scene_service=pad_hall_scene_service,
+        pad_hall_station_service=pad_hall_station_service,
     )
 
 
@@ -198,6 +233,7 @@ def register_blueprints(*, app: Flask, deps: AppDeps) -> None:
     from backend.api.app_settings import create_blueprint as create_app_settings_blueprint
     from backend.api.offline import create_blueprint as create_offline_blueprint
     from backend.api.ops import create_blueprint as create_ops_blueprint
+    from backend.api.pad import create_blueprint as create_pad_blueprint
     from backend.api.qa_audio_cache import create_blueprint as create_qa_audio_cache_blueprint
     from backend.api.ragflow_tour_history import create_blueprint as create_ragflow_tour_history_blueprint
     from backend.api.recordings import create_blueprint as create_recordings_blueprint
@@ -210,6 +246,7 @@ def register_blueprints(*, app: Flask, deps: AppDeps) -> None:
 
     app.register_blueprint(create_ragflow_tour_history_blueprint(deps))
     app.register_blueprint(create_offline_blueprint(deps))
+    app.register_blueprint(create_pad_blueprint(deps))
     app.register_blueprint(create_system_blueprint(deps))
     app.register_blueprint(create_app_settings_blueprint(deps))
     app.register_blueprint(create_breakpoint_blueprint(deps))

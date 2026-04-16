@@ -30,10 +30,10 @@ PowerShell:
 
 ```powershell
 $env:PW_REAL_INTEGRATION='1'
-$env:PW_REAL_BACKEND_URL='http://127.0.0.1:8000'
+$env:PW_REAL_BACKEND_URL='http://127.0.0.1:8101'
 # optional UI-level integration check:
 $env:PW_REAL_UI='1'
-$env:REACT_APP_BACKEND_URL='http://127.0.0.1:8000'
+$env:REACT_APP_BACKEND_URL='http://127.0.0.1:8101'
 npm run test:e2e -- integration.real-services.spec.js
 ```
 
@@ -41,9 +41,9 @@ Bash:
 
 ```bash
 PW_REAL_INTEGRATION=1 \
-PW_REAL_BACKEND_URL=http://127.0.0.1:8000 \
+PW_REAL_BACKEND_URL=http://127.0.0.1:8101 \
 PW_REAL_UI=1 \
-REACT_APP_BACKEND_URL=http://127.0.0.1:8000 \
+REACT_APP_BACKEND_URL=http://127.0.0.1:8101 \
 npm run test:e2e -- integration.real-services.spec.js
 ```
 

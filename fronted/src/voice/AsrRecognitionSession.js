@@ -81,6 +81,19 @@ export class AsrRecognitionSession {
     };
   }
 
+  replaceRecognizedText(text) {
+    const sourceText = safeTrim(text);
+    this._assembler.reset();
+    if (sourceText) this._assembler.applyFinal(sourceText);
+    this._lastRecognizedText = sourceText;
+    return {
+      sourceText,
+      assembledText: sourceText,
+      committedText: this._assembler.getCommittedText(),
+      hypothesisText: this._assembler.getHypothesisText(),
+    };
+  }
+
   applyFinal(text) {
     const sourceText = safeTrim(text);
     const assembledText = this._assembler.applyFinal(sourceText);

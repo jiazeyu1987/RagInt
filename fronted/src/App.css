@@ -231,6 +231,29 @@ body {
   animation-play-state: paused;
 }
 
+.simple-tour-secondary-btn {
+  margin-top: 26px;
+  min-height: 42px;
+  padding: 0 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(18, 59, 45, 0.14);
+  background: rgba(255, 255, 255, 0.86);
+  color: #123b2d;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.12s ease, box-shadow 0.2s ease;
+  box-shadow: 0 10px 24px rgba(18, 59, 45, 0.08);
+}
+
+.simple-tour-secondary-btn:hover {
+  background: rgba(255, 255, 255, 0.98);
+}
+
+.simple-tour-secondary-btn:active {
+  transform: translateY(1px);
+}
+
 @keyframes simple-wave-pulse {
   0%,
   100% {
@@ -1945,12 +1968,8 @@ h1 {
 .home-actions {
   width: 100%;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(var(--home-actions-columns, 2), minmax(0, 1fr));
   gap: 10px;
-}
-
-.home-actions-with-back {
-  grid-template-columns: 0.9fr 1fr 1fr;
 }
 
 .home-action-btn {
@@ -2002,7 +2021,7 @@ h1 {
 }
 
 @media (max-width: 768px) {
-  .home-actions-with-back {
+  .home-actions {
     grid-template-columns: 1fr;
   }
 

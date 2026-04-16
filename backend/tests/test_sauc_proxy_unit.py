@@ -121,7 +121,6 @@ def test_parse_sauc_response_full_and_error_packets():
 def test_parse_sauc_response_handles_invalid_payload_safely():
     assert _parse_sauc_response(b"abc")["payload_msg"] is None
 
-    # Invalid gzip payload should not raise.
     raw = bytearray()
     raw.append((_ProtocolVersion.V1 << 4) | 1)
     raw.append((_MessageType.SERVER_FULL_RESPONSE << 4) | _MessageFlags.POS_SEQUENCE)
@@ -137,15 +136,16 @@ def test_parse_sauc_response_handles_invalid_payload_safely():
 def test_extract_transcript_text_and_delta_logic():
     payload = {
         "data": {
+            "result": {"text": "second revision"},
             "alternatives": [
-                {"text": "短"},
-                {"text": "更长文本"},
+                {"text": "short"},
+                {"text": "longer alt"},
             ],
-            "utterances": [{"text": "忽略"}, {"text": "也可拼接"}],
+            "utterances": [{"text": "first revision"}, {"text": "second revision"}],
         }
     }
-    # Current extractor returns the longest collected candidate.
-    assert _extract_transcript_text(payload) == "忽略也可拼接"
+    assert _extract_transcript_text(payload) == "second revision"
+    assert _extract_transcript_text({"utterances": [{"text": "first"}, {"text": "second"}]}) == "second"
     assert _extract_transcript_text("plain text") == "plain text"
     assert _extract_transcript_text(None) == ""
 

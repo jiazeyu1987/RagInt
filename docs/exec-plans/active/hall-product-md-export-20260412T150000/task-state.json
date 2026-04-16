@@ -1,0 +1,141 @@
+{
+  "schema_version": 2,
+  "task_id": "hall-product-md-export-20260412T150000",
+  "mode": "full",
+  "status": "completed",
+  "current_phase": null,
+  "phase_statuses": [
+    {
+      "phase_id": "P1",
+      "title": "Implement the hall export pipeline",
+      "status": "completed",
+      "objective": "新增一个可重复执行的导出脚本，稳定读取源 Excel、过滤无效尾注行、按展厅归并产品，并输出统一格式的 Markdown 表格文件与总览索引。",
+      "owned_paths": [
+        "`scripts/export_hall_product_tables.py`",
+        "`docs/generated/hall-product-tables/*`",
+        "`docs/exec-plans/active/hall-product-md-export-20260412T150000/execution-log.md`"
+      ],
+      "dependencies": [
+        "`tobedeleted/上海展厅展品列表.xlsx`",
+        "`pandas`",
+        "`openpyxl`",
+        "已确认的 8 个展厅序号范围"
+      ],
+      "deliverables": [
+        "可复跑导出脚本、8 个展厅 Markdown 文件、1 个索引文件"
+      ],
+      "evidence_expectation": "`execution-log.md` 记录脚本路径、输出目录、生成文件清单和关键命令结果，并能直接引用已生成的 Markdown 文件。",
+      "acceptance_criteria": [
+        {
+          "ac_id": "P1-AC1",
+          "text": "导出脚本能够从源 Excel 中读取有效产品行，只保留用户指定的 7 个字段，并对空值、换行和 Markdown 特殊字符做稳定处理，不引入臆测字段。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P1",
+            "test-report.md#Final-Verdict"
+          ]
+        },
+        {
+          "ac_id": "P1-AC2",
+          "text": "导出脚本基于稳定的展厅归并规则把所有有效产品行映射到 8 个产品展厅之一，且不会把尾注说明行误导出为产品记录。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P1",
+            "test-report.md#Final-Verdict"
+          ]
+        },
+        {
+          "ac_id": "P1-AC3",
+          "text": "导出结果会在 `docs/generated/hall-product-tables` 下生成 8 个独立展厅 Markdown 文件和 1 个索引文件，每个展厅文件只包含该展厅的表格内容并保留源表顺序。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P1",
+            "test-report.md#Final-Verdict"
+          ]
+        }
+      ],
+      "evidence": [
+        "execution-log.md#Phase-P1"
+      ],
+      "notes": "",
+      "last_reviewed_at": "2026-04-12T15:32:46"
+    },
+    {
+      "phase_id": "P2",
+      "title": "Validate generated hall tables against the source workbook",
+      "status": "completed",
+      "objective": "执行导出命令并校验生成结果，确认文件数量、展厅覆盖、表头字段、条目顺序和代表性样例行都与源表一致。",
+      "owned_paths": [
+        "`docs/generated/hall-product-tables/*`",
+        "`docs/exec-plans/active/hall-product-md-export-20260412T150000/execution-log.md`",
+        "`docs/exec-plans/active/hall-product-md-export-20260412T150000/test-report.md`"
+      ],
+      "dependencies": [
+        "P1 deliverables",
+        "`python`",
+        "本地工作区中的生成结果"
+      ],
+      "deliverables": [
+        "成功的导出执行记录、结构化验证结果、带 acceptance id 证据的测试报告"
+      ],
+      "evidence_expectation": "`test-report.md` 记录执行命令、环境证明、文件路径证据与最终 verdict；`execution-log.md` 记录源表汇总与生成摘要。",
+      "acceptance_criteria": [
+        {
+          "ac_id": "P2-AC1",
+          "text": "实际运行导出命令后，输出目录中存在且仅存在 8 个展厅 Markdown 文件与 1 个索引文件，展厅名称与 PRD 范围一致。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P2",
+            "test-report.md#Final-Verdict"
+          ]
+        },
+        {
+          "ac_id": "P2-AC2",
+          "text": "每个展厅 Markdown 表格的表头严格包含“产品名称、英文名称、产品介绍（/优势特点）、注册证名称、注册证号、生效时间、所属公司”，且源表中的代表性样例行在导出文件中字段值一致。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P2",
+            "test-report.md#Final-Verdict"
+          ]
+        },
+        {
+          "ac_id": "P2-AC3",
+          "text": "验证结果明确记录每个展厅的条目数与源表归并后的条目数一致，并将结果写入 `test-report.md`，形成可审计证据。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P2",
+            "test-report.md#Final-Verdict"
+          ]
+        }
+      ],
+      "evidence": [
+        "execution-log.md#Phase-P2"
+      ],
+      "notes": "",
+      "last_reviewed_at": "2026-04-12T15:39:19"
+    }
+  ],
+  "planner_review_status": "approved",
+  "test_status": "passed",
+  "blocking_prereqs": [],
+  "iteration_counts": {
+    "planner_revisions": 0,
+    "executor_loops": 2,
+    "test_loops": 1
+  },
+  "created_at": "2026-04-12T15:16:43",
+  "updated_at": "2026-04-12T15:40:50",
+  "branch": "ragint_latest",
+  "baseline_revision": "baed7cf9d8eeba5b4197b31d97cfddc83ca41140",
+  "workspace_root": "D:\\ProjectPackage\\RagInt",
+  "tasks_root": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active",
+  "task_dir": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active\\hall-product-md-export-20260412T150000",
+  "goal": "从上海展厅展品列表.xlsx提取每个展厅的产品名称、英文名称、产品介绍（/优势特点）、注册证名称、注册证号、生效时间、所属公司并生成独立Markdown表格文件",
+  "artifacts": {
+    "prd": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active\\hall-product-md-export-20260412T150000\\prd.md",
+    "test_plan": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active\\hall-product-md-export-20260412T150000\\test-plan.md",
+    "task_state": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active\\hall-product-md-export-20260412T150000\\task-state.json",
+    "execution_log": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active\\hall-product-md-export-20260412T150000\\execution-log.md",
+    "test_report": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active\\hall-product-md-export-20260412T150000\\test-report.md"
+  }
+}

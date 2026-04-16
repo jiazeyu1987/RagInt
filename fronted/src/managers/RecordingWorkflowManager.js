@@ -142,6 +142,11 @@ export class RecordingWorkflowManager {
     return 'keep_partial';
   }
 
+  _usesCumulativeTranscriptMode() {
+    const providerType = safeTrim(this._deps.providerType).toLowerCase() || 'voicekit_ws';
+    return providerType === 'sauc_ws';
+  }
+
   _handleFinalTimeout(partialText) {
     const partial = this._session.resolveTimeoutText(partialText);
     const strategy = this._getFinalTimeoutStrategy();
@@ -325,7 +330,9 @@ export class RecordingWorkflowManager {
         if (requireWake && !this._wsAwakened) return;
         const t = safeTrim(text);
         if (!t) return;
-        const update = this._session.applyPartial(t);
+        const update = this._usesCumulativeTranscriptMode()
+          ? this._session.replaceRecognizedText(t)
+          : this._session.applyPartial(t);
         this._setAsrStage('receiving_partial', {
           text: update.sourceText,
           assembledText: update.assembledText,
@@ -344,7 +351,9 @@ export class RecordingWorkflowManager {
           return;
         }
         const t = safeTrim(text);
-        const update = this._session.applyFinal(t);
+        const update = this._usesCumulativeTranscriptMode()
+          ? this._session.replaceRecognizedText(t)
+          : this._session.applyFinal(t);
         if (update.assembledText || t) this._appendOrReplaceInputText(this._composeLiveInputText(update.assembledText || t));
         if (t && this._wsRequireWake && wakeWord) this._wakeHoldUntilMs = Date.now() + this._wakeHoldMs;
         this._setLoading(false);

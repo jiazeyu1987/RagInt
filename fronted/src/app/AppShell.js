@@ -57,13 +57,77 @@ const TOUR_BTN_MODE = {
 const UI_VIEW_MODE_STORAGE_KEY = 'ragint_ui_view_mode_v1';
 const TOUR_RAGFLOW_CHAT_NAME = '\u5c55\u5385\u804a\u5929';
 
+function trimText(value) {
+  return String(value == null ? '' : value).trim();
+}
+
+function createInitialAsrProbeState() {
+  return {
+    lastFinalTextBeforePostProcess: '',
+    lastFinalReceivedAtMs: 0,
+    lastInputTextFromAsr: '',
+    lastInputTextFromAsrAtMs: 0,
+    inputText: '',
+    queueStatus: '',
+    isRecording: false,
+    isRecognizing: false,
+    recognitionStage: 'idle',
+    asrPostProcessStage: 'idle',
+    asrPostProcessEvents: [],
+    lastPostProcessResult: null,
+    lastUpdatedAtMs: 0,
+  };
+}
+
+function cloneAsrProbeState(state) {
+  const src = state && typeof state === 'object' ? state : createInitialAsrProbeState();
+  return {
+    lastFinalTextBeforePostProcess: String(src.lastFinalTextBeforePostProcess || ''),
+    lastFinalReceivedAtMs: Number(src.lastFinalReceivedAtMs || 0),
+    lastInputTextFromAsr: String(src.lastInputTextFromAsr || ''),
+    lastInputTextFromAsrAtMs: Number(src.lastInputTextFromAsrAtMs || 0),
+    inputText: String(src.inputText || ''),
+    queueStatus: String(src.queueStatus || ''),
+    isRecording: !!src.isRecording,
+    isRecognizing: !!src.isRecognizing,
+    recognitionStage: String(src.recognitionStage || 'idle'),
+    asrPostProcessStage: String(src.asrPostProcessStage || 'idle'),
+    asrPostProcessEvents: Array.isArray(src.asrPostProcessEvents)
+      ? src.asrPostProcessEvents.map((event) => ({
+          ...(event && typeof event === 'object' ? event : {}),
+          fields:
+            event && typeof event === 'object' && event.fields && typeof event.fields === 'object'
+              ? { ...event.fields }
+              : {},
+        }))
+      : [],
+    lastPostProcessResult:
+      src.lastPostProcessResult && typeof src.lastPostProcessResult === 'object'
+        ? { ...src.lastPostProcessResult }
+        : null,
+    lastUpdatedAtMs: Number(src.lastUpdatedAtMs || 0),
+  };
+}
+
 function normalizeUiViewMode(value) {
   const mode = String(value || '').trim();
   return mode === 'simple' ? 'simple' : 'full';
 }
 
+function hasTourEntryParam() {
+  if (typeof window === 'undefined') return false;
+  try {
+    const params = new URLSearchParams(String(window.location.search || ''));
+    return params.get('entry') === 'tour';
+  } catch (_) {
+    return false;
+  }
+}
+
 function readInitialUiViewMode() {
-  if (typeof window === 'undefined' || !window.localStorage) return 'full';
+  if (typeof window === 'undefined') return 'full';
+  if (hasTourEntryParam()) return 'simple';
+  if (!window.localStorage) return 'full';
   try {
     return normalizeUiViewMode(window.localStorage.getItem(UI_VIEW_MODE_STORAGE_KEY));
   } catch (_) {
@@ -165,16 +229,12 @@ function AppShell() {
     setWakeWordCooldownMs,
     wakeWordStrict,
     setWakeWordStrict,
-    asrAutoSubmitOnWakeEnabled,
-    setAsrAutoSubmitOnWakeEnabled,
     asrAutoResumeAfterAnswerEnabled,
     setAsrAutoResumeAfterAnswerEnabled,
     asrAutoResumeAfterAnswerDelayMs,
     setAsrAutoResumeAfterAnswerDelayMs,
     asrConversationAutoSubmitSilenceMs,
     setAsrConversationAutoSubmitSilenceMs,
-    asrConversationAutoSubmitScope,
-    setAsrConversationAutoSubmitScope,
     asrConversationContextStrategy,
     setAsrConversationContextStrategy,
     asrConversationContextRecentTurns,
@@ -401,6 +461,7 @@ function AppShell() {
   const lastAsrInputChangeAtRef = useRef(0);
   const wakeWordHoldUntilRef = useRef(0);
   const pendingAsrClientEventsRef = useRef([]);
+  const asrE2eProbeRef = useRef(createInitialAsrProbeState());
   const asrPostProcessPipelineRef = useRef(null);
   const wakeWordStatusTimerRef = useRef(null);
   const asrPrefetchTimerRef = useRef(null);
@@ -474,24 +535,36 @@ function AppShell() {
     pendingAsrFinalTextRef.current = '';
     if (asrPostProcessPipelineRef.current) asrPostProcessPipelineRef.current.clearPendingAsrText();
     pendingAsrClientEventsRef.current = [];
+    asrE2eProbeRef.current.lastPostProcessResult = null;
     setAsrPostProcessStage('idle');
     setAsrPostProcessEvents([]);
     setInputTextState(next);
+    asrE2eProbeRef.current.inputText = String(next || '');
+    asrE2eProbeRef.current.lastUpdatedAtMs = Date.now();
   };
 
   const setInputTextFromAsr = (next) => {
-    lastAsrInputChangeAtRef.current = Date.now();
+    const nowMs = Date.now();
+    lastAsrInputChangeAtRef.current = nowMs;
     setInputTextState(next);
+    asrE2eProbeRef.current.lastInputTextFromAsr = String(next || '');
+    asrE2eProbeRef.current.lastInputTextFromAsrAtMs = nowMs;
+    asrE2eProbeRef.current.inputText = String(next || '');
+    asrE2eProbeRef.current.lastUpdatedAtMs = nowMs;
   };
 
   const handleAsrFinalText = (text) => {
-    const finalText = String(text || '').trim();
+    const finalText = trimText(text);
+    const nowMs = Date.now();
     pendingAsrFinalTextRef.current = finalText;
     if (asrPostProcessPipelineRef.current) asrPostProcessPipelineRef.current.setPendingAsrText(finalText);
+    asrE2eProbeRef.current.lastFinalTextBeforePostProcess = finalText;
+    asrE2eProbeRef.current.lastFinalReceivedAtMs = nowMs;
+    asrE2eProbeRef.current.lastUpdatedAtMs = nowMs;
   };
 
   const preprocessVoiceText = async ({ text, trigger } = {}) => {
-    const originalText = String(text || '').trim();
+    const originalText = trimText(text);
     pendingAsrFinalTextRef.current = '';
     const pipeline = asrPostProcessPipelineRef.current;
     if (!pipeline) return originalText;
@@ -508,7 +581,7 @@ function AppShell() {
       asrTextFilterChatName,
       asrTextFilterTerms,
       onStatusChange: (status) => {
-        if (status === 'processing_asr_text') setQueueStatus('婵犳鍠楃换鎰緤閽樺鑰挎い蹇撴噹缁剁偤鏌涢弴銊ュ箺闁?ASR 闂備礁鎼崐绋棵洪敃鈧敃?..');
+        if (status === 'processing_asr_text') setQueueStatus('正在过滤和纠错 ASR 文本...');
         else setQueueStatus('');
       },
       onStageChange: (stage) => setAsrPostProcessStage(String(stage || 'idle')),
@@ -522,14 +595,28 @@ function AppShell() {
     });
 
     wakeWordHoldUntilRef.current = pipeline.getWakeHoldUntilMs();
+    asrE2eProbeRef.current.lastPostProcessResult = {
+      originalText,
+      trigger: String(trigger || ''),
+      accepted: !!(result && result.accepted),
+      text: String((result && result.text) || ''),
+      correctedText: String((result && result.correctedText) || ''),
+      reason: String((result && result.reason) || ''),
+      feedback: String((result && result.feedback) || ''),
+      stage: String((result && result.stage) || ''),
+      processedAtMs: Date.now(),
+    };
+    asrE2eProbeRef.current.lastUpdatedAtMs = Date.now();
     if (!result.accepted) {
       setInputTextState('');
+      asrE2eProbeRef.current.inputText = '';
       if (result.feedback === 'wake_word_detected') showTransientQueueStatus('\u5df2\u68c0\u6d4b\u5230\u5524\u9192\u8bcd');
       else if (result.feedback === 'wake_word_missing') showTransientQueueStatus('\u672a\u68c0\u6d4b\u5230\u5524\u9192\u8bcd');
       return '';
     }
 
     setInputTextState(result.text);
+    asrE2eProbeRef.current.inputText = String((result && result.text) || '');
     return result.text;
   };
 
@@ -1079,9 +1166,7 @@ function AppShell() {
     useAgentMode,
     selectedAgentId,
     continueTour,
-    autoBargeInSubmitEnabled: asrAutoSubmitOnWakeEnabled,
     autoSubmitSilenceMs: asrConversationAutoSubmitSilenceMs,
-    autoSubmitScope: asrConversationAutoSubmitScope,
     autoResumeAfterQaEnabled: asrAutoResumeAfterAnswerEnabled,
     shouldAutoResumeTour,
     canAutoResumeTour,
@@ -1385,8 +1470,23 @@ function AppShell() {
     setTourSelectedStopIndex(0);
   };
 
-  const openFullUi = () => setUiViewMode('full');
+  const openFullUi = () => {
+    if (hasTourEntryParam()) {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('entry');
+        window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+      } catch (_) {
+        // ignore
+      }
+    }
+    setUiViewMode('full');
+  };
   const openSimpleUi = () => setUiViewMode('simple');
+  const openPadHome = () => {
+    if (typeof window === 'undefined' || !window.location || typeof window.location.assign !== 'function') return;
+    window.location.assign('/');
+  };
   const simpleTourRunning = !!(tourButtonState && tourButtonState.started);
   const onSimpleTourToggle = async () => {
     if (simpleTourRunning) {
@@ -1463,16 +1563,12 @@ function AppShell() {
     setWakeWordCooldownMs,
     wakeWordStrict,
     setWakeWordStrict,
-    asrAutoSubmitOnWakeEnabled,
-    setAsrAutoSubmitOnWakeEnabled,
     asrAutoResumeAfterAnswerEnabled,
     setAsrAutoResumeAfterAnswerEnabled,
     asrAutoResumeAfterAnswerDelayMs,
     setAsrAutoResumeAfterAnswerDelayMs,
     asrConversationAutoSubmitSilenceMs,
     setAsrConversationAutoSubmitSilenceMs,
-    asrConversationAutoSubmitScope,
-    setAsrConversationAutoSubmitScope,
     asrConversationContextStrategy,
     setAsrConversationContextStrategy,
     asrConversationContextRecentTurns,
@@ -1580,6 +1676,14 @@ function AppShell() {
     submitDisabled
   });
 
+  asrE2eProbeRef.current.inputText = String(inputText || '');
+  asrE2eProbeRef.current.queueStatus = String(queueStatus || '');
+  asrE2eProbeRef.current.isRecording = !!isRecording;
+  asrE2eProbeRef.current.isRecognizing = !!isRecognizing;
+  asrE2eProbeRef.current.recognitionStage = String(recognitionStage || 'idle');
+  asrE2eProbeRef.current.asrPostProcessStage = String(asrPostProcessStage || 'idle');
+  asrE2eProbeRef.current.asrPostProcessEvents = Array.isArray(asrPostProcessEvents) ? asrPostProcessEvents : [];
+
   useEffect(() => {
     if (typeof window === 'undefined') return () => {};
     const bridge = window.__RAGINT_E2E__;
@@ -1590,6 +1694,7 @@ function AppShell() {
     const prevSetUseAgentMode = bridge.setUseAgentMode;
     const prevSetSelectedAgentId = bridge.setSelectedAgentId;
     const prevGetUiState = bridge.getUiState;
+    const prevGetAsrProbeState = bridge.getAsrProbeState;
 
     const setGroupModeForTest = (value) => {
       const next = !!value;
@@ -1617,12 +1722,14 @@ function AppShell() {
       useAgentMode: !!useAgentMode,
       selectedAgentId: String(selectedAgentId || ''),
     });
+    const getAsrProbeState = () => cloneAsrProbeState(asrE2eProbeRef.current);
 
     bridge.setGroupMode = setGroupModeForTest;
     bridge.setQuestionPriority = setQuestionPriorityForTest;
     bridge.setUseAgentMode = setUseAgentModeForTest;
     bridge.setSelectedAgentId = setSelectedAgentIdForTest;
     bridge.getUiState = getUiState;
+    bridge.getAsrProbeState = getAsrProbeState;
 
     return () => {
       if (bridge.setGroupMode === setGroupModeForTest) {
@@ -1645,8 +1752,25 @@ function AppShell() {
         if (typeof prevGetUiState === 'function') bridge.getUiState = prevGetUiState;
         else delete bridge.getUiState;
       }
+      if (bridge.getAsrProbeState === getAsrProbeState) {
+        if (typeof prevGetAsrProbeState === 'function') bridge.getAsrProbeState = prevGetAsrProbeState;
+        else delete bridge.getAsrProbeState;
+      }
     };
-  }, [groupMode, questionPriority, selectedAgentId, setGroupMode, setQuestionPriority, setSelectedAgentId, setUseAgentMode, useAgentMode]);
+  }, [
+    asrPostProcessEvents,
+    asrPostProcessStage,
+    groupMode,
+    inputText,
+    questionPriority,
+    queueStatus,
+    selectedAgentId,
+    setGroupMode,
+    setQuestionPriority,
+    setSelectedAgentId,
+    setUseAgentMode,
+    useAgentMode,
+  ]);
 
   const guideTemplateList = Array.isArray(tourGuideTemplates) ? tourGuideTemplates : [];
   const selectedGuideTemplate =
@@ -1722,6 +1846,7 @@ function AppShell() {
             showWave={simpleTtsPlaying}
             onToggle={onSimpleTourToggle}
             onOpenMainPage={openFullUi}
+            onOpenPadHome={openPadHome}
           />
         </div>
       </div>
@@ -1839,6 +1964,7 @@ function AppShell() {
 
         <InputSection
           onBackToSimple={openSimpleUi}
+          onOpenPadHome={openPadHome}
           onTourToggle={onTourToggle}
           tourToggleLabel={tourToggleLabel}
           tourToggleDanger={tourToggleDanger}

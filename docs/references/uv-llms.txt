@@ -1,0 +1,13 @@
+This repository does not currently use uv as its Python dependency manager.
+
+Observable evidence:
+- There is no pyproject.toml in the workspace root.
+- Backend dependencies are declared in backend/requirements.txt and backend/requirements-dev.txt.
+- Existing run and test instructions reference pip-style installation and pytest.
+
+If uv is introduced later:
+- mirror current dependency sets before changing install docs
+- preserve backend/requirements*.txt compatibility during migration planning
+- document how uv interacts with existing Windows and Docker workflows
+
+Until then, treat pip + requirements files as the source of truth.

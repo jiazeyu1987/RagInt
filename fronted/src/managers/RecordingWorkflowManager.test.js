@@ -1,18 +1,23 @@
 jest.mock('./VoiceKitWsRecorderManager', () => ({
   VoiceKitWsRecorderManager: jest.fn(),
 }));
+jest.mock('./SaucWsRecorderManager', () => ({
+  SaucWsRecorderManager: jest.fn(),
+}));
 jest.mock('voicekit-js', () => ({
   createMicRecorder: jest.fn(),
 }));
 
 import { RecordingWorkflowManager } from './RecordingWorkflowManager';
 import { VoiceKitWsRecorderManager } from './VoiceKitWsRecorderManager';
+import { SaucWsRecorderManager } from './SaucWsRecorderManager';
 
 describe('RecordingWorkflowManager', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2026-03-04T12:00:00+08:00'));
     VoiceKitWsRecorderManager.mockReset();
+    SaucWsRecorderManager.mockReset();
   });
 
   afterEach(() => {
@@ -172,5 +177,49 @@ describe('RecordingWorkflowManager', () => {
       'base text today weather is nice i will go to the supermarket buy some things'
     );
     expect(onFinalText).toHaveBeenCalledWith('today weather is nice i will go to the supermarket buy some things');
+  });
+
+  test('replaces cumulative SAUC transcript updates instead of appending duplicate revisions', () => {
+    let recorderConfig = null;
+    SaucWsRecorderManager.mockImplementation((config) => {
+      recorderConfig = config;
+      return {
+        stop: jest.fn(),
+        cancel: jest.fn(),
+        isRecording: true,
+      };
+    });
+
+    let currentInput = 'base text';
+    const setInputText = jest.fn((value) => {
+      currentInput = value;
+    });
+    const onFinalText = jest.fn();
+    const workflow = new RecordingWorkflowManager();
+    workflow.setDeps({
+      providerType: 'sauc_ws',
+      baseUrl: 'http://localhost:8000',
+      clientId: 'client-1',
+      saucWsUrl: 'wss://example.test/sauc',
+      saucResourceId: 'rid',
+      saucAppKey: 'app-key',
+      saucAccessKey: 'access-key',
+      setInputText,
+      getInputText: () => currentInput,
+      onFinalText,
+    });
+    workflow._snapshotBaseText();
+    workflow._ensureRecorder();
+
+    recorderConfig.onPartialText('2×2=4');
+    recorderConfig.onPartialText('2乘以2=4，就像你有两个小球，再复制一份');
+    recorderConfig.onFinalText('2乘以2等于4，就像你有两个小球，再复制一份，总共就有4个小球了');
+
+    expect(setInputText).toHaveBeenLastCalledWith(
+      'base text 2乘以2等于4，就像你有两个小球，再复制一份，总共就有4个小球了'
+    );
+    expect(onFinalText).toHaveBeenCalledWith(
+      '2乘以2等于4，就像你有两个小球，再复制一份，总共就有4个小球了'
+    );
   });
 });

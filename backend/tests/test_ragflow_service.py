@@ -26,8 +26,16 @@ class _Chat:
 
 
 class _Client:
-    def list_chats(self):
-        return [_Chat("chat_1", "展厅聊天"), _Chat("chat_2", "语音模型")]
+    def list_chats(self, page: int = 1, page_size: int = 30, name: str | None = None):  # noqa: ARG002
+        chats = [_Chat("chat_1", "hall_chat"), _Chat("chat_2", "voice_mode")]
+        if name:
+            chats = [chat for chat in chats if chat.name == name]
+        start = (page - 1) * page_size
+        end = start + page_size
+        return chats[start:end]
+
+    def list_datasets(self, page: int = 1, page_size: int = 30, name: str | None = None):  # noqa: ARG002
+        return []
 
 
 class _Logger:
@@ -53,7 +61,7 @@ def test_clear_chat_sessions_uses_bulk_delete_endpoint():
         return {"code": 0, "data": True}
 
     svc._api_request = fake_api_request  # type: ignore[method-assign]
-    result = svc.clear_chat_sessions("展厅聊天")
+    result = svc.clear_chat_sessions("hall_chat")
 
     assert result["ok"] is True
     assert result["deleted"] == 2
@@ -66,24 +74,24 @@ def test_clear_chat_sessions_uses_bulk_delete_endpoint():
 def test_create_new_session_replaces_cached_session():
     svc = RagflowService(Path("dummy.json"), logger=_Logger())
     svc.client = _Client()
-    svc._sessions["展厅聊天"] = {"id": "old_session"}
+    svc._sessions["hall_chat"] = {"id": "old_session"}
 
-    result = svc.create_new_session("展厅聊天")
+    result = svc.create_new_session("hall_chat")
 
     assert result["ok"] is True
-    assert result["chat_name"] == "展厅聊天"
+    assert result["chat_name"] == "hall_chat"
     assert result["session_id"] == "chat_1_session_new"
-    assert getattr(svc._sessions["展厅聊天"], "id", "") == "chat_1_session_new"
+    assert getattr(svc._sessions["hall_chat"], "id", "") == "chat_1_session_new"
 
 
 def test_ask_chat_reuses_or_creates_persistent_session():
     svc = RagflowService(Path("dummy.json"), logger=_Logger())
     svc.client = _Client()
 
-    result = svc.ask_chat("语音模型", "hello")
+    result = svc.ask_chat("voice_mode", "hello")
 
     assert result == "echo:hello"
-    assert getattr(svc._sessions["语音模型"], "id", "") == "chat_2_session_new"
+    assert getattr(svc._sessions["voice_mode"], "id", "") == "chat_2_session_new"
 
 
 def test_ask_chat_once_returns_text_and_deletes_temp_session():
@@ -97,12 +105,60 @@ def test_ask_chat_once_returns_text_and_deletes_temp_session():
 
     svc._api_request = fake_api_request  # type: ignore[method-assign]
 
-    result = svc.ask_chat_once("展厅聊天", "hello")
+    result = svc.ask_chat_once("hall_chat", "hello")
 
     assert result == "echo:hello"
     assert calls == [
         ("DELETE", "/api/v1/chats/chat_1/sessions", {"ids": ["chat_1_session_new"]}),
     ]
+
+
+def test_find_chat_by_name_uses_server_name_filter_instead_of_first_page_only():
+    class _PagedClient:
+        def __init__(self):
+            self.calls = []
+
+        def list_chats(self, page: int = 1, page_size: int = 30, name: str | None = None):
+            self.calls.append((page, page_size, name))
+            if name == "target":
+                return [_Chat("chat_target", "target")]
+            if page == 1:
+                return [_Chat(f"chat_{idx}", f"chat_{idx}") for idx in range(page_size)]
+            return []
+
+    svc = RagflowService(Path("dummy.json"), logger=_Logger())
+    svc.client = _PagedClient()
+
+    result = svc.get_session("target")
+
+    assert getattr(result, "id", "") == "chat_target_session_new"
+    assert svc.client.calls == [(1, 100, "target")]
+
+
+def test_get_session_recovers_when_create_chat_hits_duplicate_name():
+    class _DuplicateCreateClient:
+        def __init__(self):
+            self.list_calls = []
+            self.create_calls = []
+
+        def list_chats(self, page: int = 1, page_size: int = 30, name: str | None = None):
+            self.list_calls.append((page, page_size, name))
+            if name == "target" and len(self.list_calls) >= 2:
+                return [_Chat("chat_target", "target")]
+            return []
+
+        def create_chat(self, name: str, dataset_ids=None):  # noqa: ARG002
+            self.create_calls.append(name)
+            raise Exception("Duplicated chat name in creating chat.")
+
+    svc = RagflowService(Path("dummy.json"), logger=_Logger())
+    svc.client = _DuplicateCreateClient()
+
+    result = svc.get_session("target")
+
+    assert getattr(result, "id", "") == "chat_target_session_new"
+    assert svc.client.create_calls == ["target"]
+    assert svc.client.list_calls == [(1, 100, "target"), (1, 100, "target")]
 
 
 def test_load_config_bootstraps_from_file_to_db_when_enabled(tmp_path, monkeypatch):

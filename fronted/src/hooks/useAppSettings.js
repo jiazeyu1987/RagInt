@@ -11,7 +11,6 @@ const ALLOWED_TTS_FETCH_CONCURRENCY = new Set([2, 4, 6, 8, 10]);
 const ALLOWED_TTS_MODES = new Set(['sovtts1', 'sovtts2', 'modelscope', 'flash', 'sapi', 'edge']);
 const ALLOWED_ASR_PROVIDER_TYPES = new Set(['voicekit_ws', 'sauc_ws']);
 const ALLOWED_ASR_FINAL_TIMEOUT_STRATEGIES = new Set(['keep_partial', 'keep_input', 'clear_input']);
-const ALLOWED_ASR_AUTO_SUBMIT_SCOPES = new Set(['voice_only', 'voice_and_text']);
 const ALLOWED_ASR_CONTEXT_STRATEGIES = new Set(['smart_recent_current', 'full']);
 const FLASH_VOICE_OPTIONS = new Set(['longanyang', 'longanhuan']);
 const STOP_DURATION_TEMPLATE_KEYS = ['tpl_1m', 'tpl_2m', 'tpl_3m', 'tpl_4m', 'tpl_5m'];
@@ -126,13 +125,6 @@ function normalizeAutoResumeDelayMs(value, fallback = 2200) {
 
 function normalizeAsrConversationAutoSubmitSilenceMs(value, fallback = 1200) {
   return normalizeInteger(value, fallback, { min: 500, max: 3000 });
-}
-
-function normalizeAsrConversationAutoSubmitScope(value) {
-  const scope = String(value || 'voice_only')
-    .trim()
-    .toLowerCase();
-  return ALLOWED_ASR_AUTO_SUBMIT_SCOPES.has(scope) ? scope : 'voice_only';
 }
 
 function normalizeAsrConversationContextStrategy(value) {
@@ -262,11 +254,9 @@ function buildDefaultSettings() {
     wakeWord: '你好小D',
     wakeWordCooldownMs: 5000,
     wakeWordStrict: false,
-    asrAutoSubmitOnWakeEnabled: true,
     asrAutoResumeAfterAnswerEnabled: true,
     asrAutoResumeAfterAnswerDelayMs: 2200,
     asrConversationAutoSubmitSilenceMs: 1200,
-    asrConversationAutoSubmitScope: 'voice_only',
     asrConversationContextStrategy: 'smart_recent_current',
     asrConversationContextRecentTurns: 10,
     asrConversationContextMaxTokens: 16000,
@@ -341,7 +331,6 @@ function normalizeAppSettings(value) {
     wakeWord: String(raw.wakeWord == null ? defaults.wakeWord : raw.wakeWord) || defaults.wakeWord,
     wakeWordCooldownMs: normalizeInteger(raw.wakeWordCooldownMs, defaults.wakeWordCooldownMs, { min: 0, max: 120000 }),
     wakeWordStrict: normalizeBoolean(raw.wakeWordStrict, defaults.wakeWordStrict),
-    asrAutoSubmitOnWakeEnabled: normalizeBoolean(raw.asrAutoSubmitOnWakeEnabled, defaults.asrAutoSubmitOnWakeEnabled),
     asrAutoResumeAfterAnswerEnabled: normalizeBoolean(raw.asrAutoResumeAfterAnswerEnabled, defaults.asrAutoResumeAfterAnswerEnabled),
     asrAutoResumeAfterAnswerDelayMs: normalizeAutoResumeDelayMs(
       raw.asrAutoResumeAfterAnswerDelayMs,
@@ -351,7 +340,6 @@ function normalizeAppSettings(value) {
       raw.asrConversationAutoSubmitSilenceMs,
       defaults.asrConversationAutoSubmitSilenceMs
     ),
-    asrConversationAutoSubmitScope: normalizeAsrConversationAutoSubmitScope(raw.asrConversationAutoSubmitScope),
     asrConversationContextStrategy: normalizeAsrConversationContextStrategy(raw.asrConversationContextStrategy),
     asrConversationContextRecentTurns: normalizeAsrConversationContextRecentTurns(
       raw.asrConversationContextRecentTurns,
@@ -443,11 +431,9 @@ function readLegacySettingsFromLocalStorage() {
   assign('wakeWord', 'wakeWord');
   assign('wakeWordCooldownMs', 'wakeWordCooldownMs', Number);
   assign('wakeWordStrict', 'wakeWordStrict');
-  assign('asrAutoSubmitOnWakeEnabled', 'asrAutoSubmitOnWakeEnabled');
   assign('asrAutoResumeAfterAnswerEnabled', 'asrAutoResumeAfterAnswerEnabled');
   assign('asrAutoResumeAfterAnswerDelayMs', 'asrAutoResumeAfterAnswerDelayMs', Number);
   assign('asrConversationAutoSubmitSilenceMs', 'asrConversationAutoSubmitSilenceMs', Number);
-  assign('asrConversationAutoSubmitScope', 'asrConversationAutoSubmitScope');
   assign('asrConversationContextStrategy', 'asrConversationContextStrategy');
   assign('asrConversationContextRecentTurns', 'asrConversationContextRecentTurns', Number);
   assign('asrConversationContextMaxTokens', 'asrConversationContextMaxTokens', Number);
@@ -604,7 +590,6 @@ export function useAppSettings(clientId) {
   const setWakeWord = useCallback((value) => updateSetting('wakeWord', value), [updateSetting]);
   const setWakeWordCooldownMs = useCallback((value) => updateSetting('wakeWordCooldownMs', value), [updateSetting]);
   const setWakeWordStrict = useCallback((value) => updateSetting('wakeWordStrict', value), [updateSetting]);
-  const setAsrAutoSubmitOnWakeEnabled = useCallback((value) => updateSetting('asrAutoSubmitOnWakeEnabled', value), [updateSetting]);
   const setAsrAutoResumeAfterAnswerEnabled = useCallback(
     (value) => updateSetting('asrAutoResumeAfterAnswerEnabled', value),
     [updateSetting]
@@ -615,10 +600,6 @@ export function useAppSettings(clientId) {
   );
   const setAsrConversationAutoSubmitSilenceMs = useCallback(
     (value) => updateSetting('asrConversationAutoSubmitSilenceMs', value),
-    [updateSetting]
-  );
-  const setAsrConversationAutoSubmitScope = useCallback(
-    (value) => updateSetting('asrConversationAutoSubmitScope', value),
     [updateSetting]
   );
   const setAsrConversationContextStrategy = useCallback(
@@ -692,11 +673,9 @@ export function useAppSettings(clientId) {
     setWakeWord,
     setWakeWordCooldownMs,
     setWakeWordStrict,
-    setAsrAutoSubmitOnWakeEnabled,
     setAsrAutoResumeAfterAnswerEnabled,
     setAsrAutoResumeAfterAnswerDelayMs,
     setAsrConversationAutoSubmitSilenceMs,
-    setAsrConversationAutoSubmitScope,
     setAsrConversationContextStrategy,
     setAsrConversationContextRecentTurns,
     setAsrConversationContextMaxTokens,

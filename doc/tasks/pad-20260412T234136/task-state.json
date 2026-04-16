@@ -1,0 +1,156 @@
+{
+  "schema_version": 2,
+  "task_id": "pad-20260412T234136",
+  "mode": "full",
+  "status": "completed",
+  "current_phase": null,
+  "phase_statuses": [
+    {
+      "phase_id": "P1",
+      "title": "Pad 双模式交互与视觉实现",
+      "status": "completed",
+      "objective": "在现有 pad 首页中增加共享模式状态，默认进入演示模式，并在不新增后端接口的前提下完成演示模式列表、播放状态、音频切换中断和运维模式保留。",
+      "owned_paths": [],
+      "dependencies": [],
+      "deliverables": [],
+      "evidence_expectation": "`execution-log.md` 需要记录模式默认值、改动路径、点击播放与切换中断的实现说明，并给出至少一条浏览器验证或测试证据引用。",
+      "acceptance_criteria": [
+        {
+          "ac_id": "P1-AC1",
+          "text": "pad 首页默认进入 `演示模式`，且页面存在可见、可点击的模式切换入口，能从演示模式切到运维模式，再从运维模式切回演示模式。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P1",
+            "test-report.md#Final-Verdict"
+          ]
+        },
+        {
+          "ac_id": "P1-AC2",
+          "text": "演示模式只展示当前展厅的产品 item 列表，不展示当前运维模式中的大块详情配置面板；每个 item 至少展示产品中文名、英文名，以及现有可直接取用的元信息标签。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P1",
+            "test-report.md#Final-Verdict"
+          ]
+        },
+        {
+          "ac_id": "P1-AC3",
+          "text": "点击带有当前生效音频的 item 时，会立即走现有音频播放链路；当前播放中的 item 需要显示明显的“正在讲解”视觉状态与音浪标识。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P1",
+            "test-report.md#Final-Verdict"
+          ]
+        },
+        {
+          "ac_id": "P1-AC4",
+          "text": "当某个 item 正在播放时，点击另一个可播放 item，前一个 item 的播放状态和音浪标识会立即退出，新 item 成为唯一的当前播放项并开始播放。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P1",
+            "test-report.md#Final-Verdict"
+          ]
+        },
+        {
+          "ac_id": "P1-AC5",
+          "text": "点击没有当前生效音频的 item 时，不会留下错误的播放中状态；页面会继续准确显示该 item 暂无音频。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P1",
+            "test-report.md#Final-Verdict"
+          ]
+        },
+        {
+          "ac_id": "P1-AC6",
+          "text": "运维模式保留当前完整能力，包括在线刷新、离线同步、快速切换展厅、产品详情、当前缓存文字查看、TTS 重生成、录音上传；这些能力继续使用同一份产品与 clientId 上下文。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P1",
+            "test-report.md#Final-Verdict"
+          ]
+        },
+        {
+          "ac_id": "P1-AC7",
+          "text": "模式切换不会丢失当前展厅上下文；从演示模式进入运维模式后，当前已选中的产品仍保持一致，反向切回时也保持同一产品高亮。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P1",
+            "test-report.md#Final-Verdict"
+          ]
+        }
+      ],
+      "evidence": [
+        "execution-log.md#Phase-P1"
+      ],
+      "notes": "- Implemented default demo mode, dual-mode toggle, single-active playback indicator, no-audio handling, and preserved ops-mode controls.",
+      "last_reviewed_at": "2026-04-13T01:36:11"
+    },
+    {
+      "phase_id": "P2",
+      "title": "浏览器回归与证据固化",
+      "status": "completed",
+      "objective": "为双模式行为补充 Playwright 回归，覆盖演示模式主链路与运维模式关键保留能力，并产出真实浏览器证据。",
+      "owned_paths": [],
+      "dependencies": [],
+      "deliverables": [],
+      "evidence_expectation": "`test-report.md` 需要列出已跑命令、每个测试用例的结果、对应 acceptance ids 和真实证据文件路径。",
+      "acceptance_criteria": [
+        {
+          "ac_id": "P2-AC1",
+          "text": "Playwright 用例覆盖默认演示模式展示、双向模式切换、点击 item 播放、播放中音浪状态、切换 item 时旧状态退出新状态生效。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P2",
+            "test-report.md#Final-Verdict"
+          ]
+        },
+        {
+          "ac_id": "P2-AC2",
+          "text": "Playwright 用例覆盖运维模式关键保留能力，至少包括当前缓存文字可见、TTS 重生成链路仍可用，以及 `/ragint` 跳转仍可用。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P2",
+            "test-report.md#Final-Verdict"
+          ]
+        },
+        {
+          "ac_id": "P2-AC3",
+          "text": "测试执行产出真实浏览器证据文件，并在 `test-report.md` 中按测试用例引用。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P2",
+            "test-report.md#Final-Verdict"
+          ]
+        }
+      ],
+      "evidence": [
+        "execution-log.md#Phase-P2"
+      ],
+      "notes": "- Updated Playwright coverage for demo/ops mode behavior and captured browser screenshots under fronted/test-results.",
+      "last_reviewed_at": "2026-04-13T01:36:49"
+    }
+  ],
+  "planner_review_status": "approved",
+  "test_status": "passed",
+  "blocking_prereqs": [],
+  "iteration_counts": {
+    "planner_revisions": 0,
+    "executor_loops": 2,
+    "test_loops": 1
+  },
+  "created_at": "2026-04-12T23:41:36",
+  "updated_at": "2026-04-13T01:38:07",
+  "branch": "ragint_latest",
+  "baseline_revision": "baed7cf9d8eeba5b4197b31d97cfddc83ca41140",
+  "workspace_root": "D:\\ProjectPackage\\RagInt",
+  "tasks_root": "D:\\ProjectPackage\\RagInt\\doc\\tasks",
+  "task_dir": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\pad-20260412T234136",
+  "goal": "pad 前端增加演示模式和运维模式：演示模式展示简洁产品列表，点击即播、当前播放项显示音浪、切换项时中断并播放新项；运维模式保留当前完整配置能力，两个模式可互相切换；按上图风格实现",
+  "artifacts": {
+    "prd": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\pad-20260412T234136\\prd.md",
+    "test_plan": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\pad-20260412T234136\\test-plan.md",
+    "task_state": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\pad-20260412T234136\\task-state.json",
+    "execution_log": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\pad-20260412T234136\\execution-log.md",
+    "test_report": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\pad-20260412T234136\\test-report.md"
+  }
+}

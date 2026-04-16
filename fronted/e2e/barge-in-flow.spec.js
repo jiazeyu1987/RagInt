@@ -66,7 +66,7 @@ async function installApiMocks(page, askCalls) {
           wakeWordEnabled: true,
           wakeWord: 'hello assistant',
           wakeWordStrict: false,
-          asrAutoSubmitOnWakeEnabled: true,
+          asrConversationAutoSubmitSilenceMs: 1200,
           asrAutoResumeAfterAnswerEnabled: true,
           asrAutoResumeAfterAnswerDelayMs: 1200,
           asrTextFilterEnabled: false,
@@ -155,9 +155,9 @@ async function installApiMocks(page, askCalls) {
         tourAction: tourAction || null,
       });
 
-      // Keep narration requests in-flight for a short window so barge-in always
-      // happens during active narration, then answer question requests quickly.
-      await delay(tourAction ? 900 : 100);
+      // Keep narration requests in-flight long enough for the 1200ms
+      // conversation auto-submit silence window to still interrupt narration.
+      await delay(tourAction ? 2200 : 100);
 
       const answer = tourAction ? `tour_${tourAction}_ok` : `qa_${question || 'ok'}`;
       try {
@@ -180,7 +180,7 @@ test('mock full chain: barge-in during narration -> auto ask -> auto resume -> b
   });
 
   await installApiMocks(page, askCalls);
-  await page.goto('/');
+  await page.goto('/ragint/');
 
   await expect(page.locator('.app')).toBeVisible();
   await expect(page.locator('.input-section')).toBeVisible();
@@ -190,21 +190,26 @@ test('mock full chain: barge-in during narration -> auto ask -> auto resume -> b
       async () =>
         page.evaluate(() => ({
           emitAsrFinal: typeof window.__RAGINT_E2E__?.emitAsrFinal,
-          setConversationEnabled: typeof window.__RAGINT_E2E__?.setConversationEnabled,
+          getConversationState: typeof window.__RAGINT_E2E__?.getConversationState,
         })),
       { timeout: 6000 }
     )
     .toEqual({
       emitAsrFinal: 'function',
-      setConversationEnabled: 'function',
+      getConversationState: 'function',
     });
 
-  await page.evaluate(() => {
-    window.__RAGINT_E2E__.setConversationEnabled(true);
-  });
+  const conversationBtn = page.getByRole('button', { name: '开启对话' });
+  await expect(conversationBtn).toBeVisible();
+  await conversationBtn.click();
+  await expect(page.getByRole('button', { name: '结束对话' })).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_E2E__.getConversationState()), { timeout: 4000 })
+    .toEqual({ enabled: true, busy: false });
 
-  const tourBtn = page.locator('.input-section .home-actions button').first();
+  const tourBtn = page.getByRole('button', { name: '开始讲解' });
   await expect(tourBtn).toBeVisible();
+  await expect(tourBtn).toBeEnabled();
   await tourBtn.click();
 
   await expect
@@ -220,12 +225,13 @@ test('mock full chain: barge-in during narration -> auto ask -> auto resume -> b
     .poll(
       () =>
         page
-          .locator('.input-section .home-actions button')
+          .locator('.input-section .home-actions .home-action-primary, .input-section .home-actions .home-action-danger')
           .first()
-          .evaluate((el) => el.classList.contains('home-action-danger')),
+          .textContent()
+          .then((text) => String(text || '').trim()),
       { timeout: 10000 }
     )
-    .toBe(true);
+    .toMatch(/继续讲解|打断/);
 
   await page.evaluate(() => window.__RAGINT_E2E__.emitAsrFinal('mock question two'));
 
@@ -236,12 +242,13 @@ test('mock full chain: barge-in during narration -> auto ask -> auto resume -> b
     .poll(
       () =>
         page
-          .locator('.input-section .home-actions button')
+          .locator('.input-section .home-actions .home-action-primary, .input-section .home-actions .home-action-danger')
           .first()
-          .evaluate((el) => el.classList.contains('home-action-danger')),
+          .textContent()
+          .then((text) => String(text || '').trim()),
       { timeout: 10000 }
     )
-    .toBe(true);
+    .toMatch(/继续讲解|打断/);
 
   const startIdx = askCalls.findIndex((call) => call.tourAction === 'start');
   const q1Idx = askCalls.findIndex((call) => call.question === 'mock question one');

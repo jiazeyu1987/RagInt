@@ -173,7 +173,6 @@ export class TourController {
       setTourStops,
       activeTourRecordingIdRef,
       interruptCurrentRun,
-      fetchJson,
       useAgentModeRef,
       selectedChatRef,
     } = this.deps;

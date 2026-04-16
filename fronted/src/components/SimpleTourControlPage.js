@@ -1,11 +1,12 @@
 import React from 'react';
 
-export function SimpleTourControlPage({ isRunning, showWave, onToggle, onOpenMainPage }) {
+export function SimpleTourControlPage({ isRunning, showWave, onToggle, onOpenMainPage, onOpenPadHome }) {
   const running = !!isRunning;
   const waveVisible = !!showWave;
   const mainBtnLabel = running ? '\u7ed3\u675f' : '\u5f00\u59cb';
   const mainBtnAriaLabel = running ? '\u7ed3\u675f\u8bb2\u89e3' : '\u5f00\u59cb\u8bb2\u89e3';
   const waveBars = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+  const showPadHomeButton = typeof onOpenPadHome === 'function';
 
   return (
     <div className="simple-tour-page">
@@ -44,6 +45,12 @@ export function SimpleTourControlPage({ isRunning, showWave, onToggle, onOpenMai
             />
           ))}
         </div>
+
+        {showPadHomeButton ? (
+          <button type="button" className="simple-tour-secondary-btn" onClick={onOpenPadHome}>
+            {'\u8fd4\u56de\u4ea7\u54c1\u8bb2\u89e3'}
+          </button>
+        ) : null}
       </div>
     </div>
   );

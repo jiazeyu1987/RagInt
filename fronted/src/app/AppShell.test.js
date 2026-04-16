@@ -14,6 +14,7 @@ const mockOrchestrationSpies = {
 
 let mockLatestInputSectionProps = null;
 let mockLatestStatusBarProps = null;
+let mockLatestVoiceConversationControlsArgs = null;
 let mockAppSettingsOverride = null;
 let mockTourRecordingOptionsOverride = null;
 
@@ -84,16 +85,12 @@ function mockBuildAppSettings() {
     setWakeWordCooldownMs: jest.fn(),
     wakeWordStrict: false,
     setWakeWordStrict: jest.fn(),
-    asrAutoSubmitOnWakeEnabled: true,
-    setAsrAutoSubmitOnWakeEnabled: jest.fn(),
     asrAutoResumeAfterAnswerEnabled: true,
     setAsrAutoResumeAfterAnswerEnabled: jest.fn(),
     asrAutoResumeAfterAnswerDelayMs: 1200,
     setAsrAutoResumeAfterAnswerDelayMs: jest.fn(),
     asrConversationAutoSubmitSilenceMs: 1200,
     setAsrConversationAutoSubmitSilenceMs: jest.fn(),
-    asrConversationAutoSubmitScope: 'voice_only',
-    setAsrConversationAutoSubmitScope: jest.fn(),
     asrConversationContextStrategy: 'smart_recent_current',
     setAsrConversationContextStrategy: jest.fn(),
     asrConversationContextRecentTurns: 10,
@@ -292,21 +289,24 @@ jest.mock('../hooks/useQueueStatusMonitor', () => ({
 }));
 
 jest.mock('../hooks/useVoiceConversationControls', () => ({
-  useVoiceConversationControls: () => ({
-    isRecording: false,
-    isRecognizing: false,
-    recognitionStage: 'idle',
-    startRecording: jest.fn(),
-    stopRecording: jest.fn(),
-    onRecordPointerDown: jest.fn(),
-    onRecordPointerUp: jest.fn(),
-    onRecordPointerCancel: jest.fn(),
-    conversationEnabled: false,
-    conversationBusy: false,
-    onToggleConversation: jest.fn(),
-    handleTextSubmit: jest.fn(),
-    submitTextAuto: jest.fn(),
-  }),
+  useVoiceConversationControls: (args) => {
+    mockLatestVoiceConversationControlsArgs = args;
+    return {
+      isRecording: false,
+      isRecognizing: false,
+      recognitionStage: 'idle',
+      startRecording: jest.fn(),
+      stopRecording: jest.fn(),
+      onRecordPointerDown: jest.fn(),
+      onRecordPointerUp: jest.fn(),
+      onRecordPointerCancel: jest.fn(),
+      conversationEnabled: false,
+      conversationBusy: false,
+      onToggleConversation: jest.fn(),
+      handleTextSubmit: jest.fn(),
+      submitTextAuto: jest.fn(),
+    };
+  },
 }));
 
 jest.mock('../hooks/useRunOrchestration', () => ({
@@ -420,8 +420,10 @@ describe('AppShell', () => {
     if (typeof window !== 'undefined' && window.localStorage) {
       window.localStorage.clear();
     }
+    window.history.replaceState({}, '', '/');
     mockLatestInputSectionProps = null;
     mockLatestStatusBarProps = null;
+    mockLatestVoiceConversationControlsArgs = null;
     mockAppSettingsOverride = null;
     mockTourRecordingOptionsOverride = null;
     mockOrchestrationSpies.startTour.mockClear();
@@ -521,6 +523,30 @@ describe('AppShell', () => {
     const view = render(React.createElement(AppShell));
     expect(setSelectedTourRecordingId).toHaveBeenCalledWith('rec-1');
     expect(setPlayTourRecordingEnabled).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  test('passes only silence timing for conversation auto submit settings', () => {
+    const view = render(React.createElement(AppShell));
+
+    expect(mockLatestVoiceConversationControlsArgs).toBeTruthy();
+    expect(mockLatestVoiceConversationControlsArgs.autoSubmitSilenceMs).toBe(1200);
+    expect('autoBargeInSubmitEnabled' in mockLatestVoiceConversationControlsArgs).toBe(false);
+    expect('autoSubmitScope' in mockLatestVoiceConversationControlsArgs).toBe(false);
+    expect(typeof mockLatestInputSectionProps.onOpenPadHome).toBe('function');
+
+    view.unmount();
+  });
+
+  test('entry=tour forces simple mode on initial load', () => {
+    window.localStorage.setItem('ragint_ui_view_mode_v1', 'full');
+    window.history.replaceState({}, '', '/ragint/?entry=tour');
+    const view = render(React.createElement(AppShell));
+
+    expect(view.container.querySelector('.simple-tour-main-btn')).toBeTruthy();
+    expect(view.container.querySelector('[data-testid="input-section-mock"]')).toBeFalsy();
+    expect(view.container.textContent).toContain('\u8fd4\u56de\u4ea7\u54c1\u8bb2\u89e3');
+
     view.unmount();
   });
 });

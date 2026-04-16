@@ -1,0 +1,10 @@
+This repository does not currently use Nixpacks.
+
+Observable evidence:
+- There is no nixpacks.toml at the repo root.
+- Deployment examples are based on Dockerfiles and docker-compose.yml.
+- Backend dependencies come from backend/requirements.txt.
+- Frontend dependencies come from fronted/package.json.
+
+If Nixpacks is evaluated later, treat it as a packaging migration, not as an existing fact.
+Do not document Nixpacks as the active build path unless the repo adds real config files and CI usage.

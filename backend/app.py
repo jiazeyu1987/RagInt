@@ -84,9 +84,9 @@ def create_app() -> Flask:
 def main() -> None:
     host = str(os.environ.get("RAGINT_HOST") or "0.0.0.0").strip() or "0.0.0.0"
     try:
-        port = int(os.environ.get("RAGINT_PORT") or 8000)
+        port = int(os.environ.get("RAGINT_PORT") or 8101)
     except Exception:
-        port = 8000
+        port = 8101
     debug = _parse_bool(os.environ.get("RAGINT_DEBUG"), default=False)
 
     app = create_app()

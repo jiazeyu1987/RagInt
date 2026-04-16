@@ -1,0 +1,252 @@
+{
+  "schema_version": 2,
+  "task_id": "docs-20260407T232251",
+  "mode": "full",
+  "status": "completed",
+  "current_phase": null,
+  "phase_statuses": [
+    {
+      "phase_id": "P1",
+      "title": "建立文档骨架与架构总览",
+      "status": "completed",
+      "objective": "基于真实代码补齐项目级总览文档、核心导航和设计文档索引，先让仓库具备可浏览的文档入口与架构主线。",
+      "owned_paths": [
+        "AGENTS.md",
+        "ARCHITECTURE.md",
+        "docs/DESIGN.md",
+        "docs/FRONTEND.md",
+        "docs/design-docs/index.md",
+        "docs/design-docs/core-beliefs.md",
+        "docs/design-docs/frontend-architecture.md",
+        "docs/design-docs/backend-architecture.md",
+        "docs/design-docs/interaction-flow.md"
+      ],
+      "dependencies": [
+        "backend/app.py",
+        "backend/bootstrap.py",
+        "backend/openapi.json",
+        "fronted/src/app/AppShell.js",
+        "fronted/src/api",
+        "fronted/src/hooks",
+        "fronted/src/managers",
+        "docker-compose.yml",
+        "fronted/docs/interaction-flow.md"
+      ],
+      "deliverables": [
+        "根目录协作文档与架构总览",
+        "设计文档索引",
+        "前端/后端架构拆解文档",
+        "讲解与问答交互流说明"
+      ],
+      "evidence_expectation": "通过文件存在校验、索引互链校验和关键词对齐校验，证明文档入口齐全且架构描述与代码模块名称一致。",
+      "acceptance_criteria": [
+        {
+          "ac_id": "P1-AC1",
+          "text": "根目录 `AGENTS.md` 与 `ARCHITECTURE.md` 建立完成，能够描述仓库协作约束、运行入口、前后端边界、关键服务与核心数据流。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p1",
+            "test-report.md#final-verdict"
+          ]
+        },
+        {
+          "ac_id": "P1-AC2",
+          "text": "`docs/design-docs/` 至少包含可导航的 `index.md`、`core-beliefs.md`、前端/后端架构文档和交互流文档，且内容直接引用真实模块、目录或接口。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p1",
+            "test-report.md#final-verdict"
+          ]
+        },
+        {
+          "ac_id": "P1-AC3",
+          "text": "`docs/DESIGN.md` 与 `docs/FRONTEND.md` 能从项目总览跳转到设计细节，并准确反映 React 18 + AppShell + hooks/managers 组织方式。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p1",
+            "test-report.md#final-verdict"
+          ]
+        }
+      ],
+      "evidence": [
+        "execution-log.md#phase-p1"
+      ],
+      "notes": "",
+      "last_reviewed_at": "2026-04-07T23:48:46"
+    },
+    {
+      "phase_id": "P2",
+      "title": "补齐产品、计划、质量与生成文档",
+      "status": "completed",
+      "objective": "将产品视角、计划视角、质量/可靠性/安全视角和数据库结构文档化，并把文档结构补到用户要求的目录级别。",
+      "owned_paths": [
+        "docs/PLANS.md",
+        "docs/PRODUCT_SENSE.md",
+        "docs/QUALITY_SCORE.md",
+        "docs/RELIABILITY.md",
+        "docs/SECURITY.md",
+        "docs/product-specs/index.md",
+        "docs/product-specs/new-user-onboarding.md",
+        "docs/product-specs/voice-qa.md",
+        "docs/product-specs/guided-tour.md",
+        "docs/exec-plans/tech-debt-tracker.md",
+        "docs/exec-plans/completed/README.md",
+        "docs/generated/db-schema.md",
+        "docs/references/design-system-reference-llms.txt",
+        "docs/references/nixpacks-llms.txt",
+        "docs/references/uv-llms.txt",
+        "docs/references/runtime-config-reference.md"
+      ],
+      "dependencies": [
+        "backend/data/app_settings.db",
+        "backend/data/breakpoints.db",
+        "backend/data/ops.db",
+        "backend/data/qa_audio_cache.db",
+        "backend/data/qa_history.db",
+        "backend/data/ragflow_config.db",
+        "backend/data/selling_points.db",
+        "backend/data/tour_control.db",
+        "backend/data/recordings/recordings.db",
+        "backend/.env.example",
+        "fronted/.env.example",
+        "backend/tests",
+        "fronted/e2e",
+        "backend/requirements.txt",
+        "fronted/package.json"
+      ],
+      "deliverables": [
+        "产品与用户流程文档",
+        "计划与技术债文档",
+        "质量/可靠性/安全文档",
+        "基于 SQLite 的 schema 文档",
+        "工具链参考文档"
+      ],
+      "evidence_expectation": "通过目录结构校验、数据库 schema 关键表名校验、敏感信息扫描和文档内容关键词校验，证明文档集合覆盖完整且内容基于真实仓库。",
+      "acceptance_criteria": [
+        {
+          "ac_id": "P2-AC1",
+          "text": "`docs/product-specs/`、`docs/exec-plans/`、`docs/generated/`、`docs/references/` 下的目标文件均已创建，并使用项目真实能力描述产品流程、计划与参考信息。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p2",
+            "test-report.md#final-verdict"
+          ]
+        },
+        {
+          "ac_id": "P2-AC2",
+          "text": "`docs/generated/db-schema.md` 基于当前 `backend/data/*.db` 中的真实表结构生成，至少覆盖 `app_settings`、`breakpoints`、`devices`、`qa_audio_pairs`、`qa_history`、`recordings`、`tour_control_commands` 等核心表。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p2",
+            "test-report.md#final-verdict"
+          ]
+        },
+        {
+          "ac_id": "P2-AC3",
+          "text": "`docs/QUALITY_SCORE.md`、`docs/RELIABILITY.md`、`docs/SECURITY.md` 明确记录测试入口、运行时依赖、已知风险与当前防护现状，且不泄露真实密钥值。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p2",
+            "test-report.md#final-verdict"
+          ]
+        },
+        {
+          "ac_id": "P2-AC4",
+          "text": "`docs/references/nixpacks-llms.txt` 与 `docs/references/uv-llms.txt` 不杜撰现有实现，而是明确说明仓库当前使用 Dockerfile / requirements.txt / npm 的事实与未采用原因。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p2",
+            "test-report.md#final-verdict"
+          ]
+        }
+      ],
+      "evidence": [
+        "execution-log.md#phase-p2"
+      ],
+      "notes": "",
+      "last_reviewed_at": "2026-04-07T23:48:55"
+    },
+    {
+      "phase_id": "P3",
+      "title": "交叉引用校对与代码事实对齐",
+      "status": "completed",
+      "objective": "检查新增文档是否完整覆盖目标结构、索引互链是否闭环、关键代码事实是否准确映射，并记录执行证据。",
+      "owned_paths": [
+        "AGENTS.md",
+        "ARCHITECTURE.md",
+        "docs",
+        "docs/exec-plans/active/docs-20260407T232251/execution-log.md"
+      ],
+      "dependencies": [
+        "P1 deliverables",
+        "P2 deliverables",
+        "python",
+        "backend/openapi.json",
+        "backend/bootstrap.py",
+        "fronted/src/app/AppShell.js"
+      ],
+      "deliverables": [
+        "经校对的最终文档集合",
+        "可复查的执行日志与证据引用"
+      ],
+      "evidence_expectation": "通过自动化校验脚本与人工抽样核对，证明文档结构、交叉引用和关键事实映射均可复查。",
+      "acceptance_criteria": [
+        {
+          "ac_id": "P3-AC1",
+          "text": "顶层文档与子目录索引形成闭环导航，至少从 `ARCHITECTURE.md`、`docs/DESIGN.md`、`docs/product-specs/index.md`、`docs/design-docs/index.md` 能互相定位到对应主题文档。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p3",
+            "test-report.md#final-verdict"
+          ]
+        },
+        {
+          "ac_id": "P3-AC2",
+          "text": "文档中的关键事实与代码一致，包括后端 Flask + blueprint 组织、前端 React AppShell 架构、Redis/SQLite/RAGFlow/VoiceKit/SAUC 相关能力、前后端端口与启动方式。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p3",
+            "test-report.md#final-verdict"
+          ]
+        },
+        {
+          "ac_id": "P3-AC3",
+          "text": "`execution-log.md` 记录本次文档编写覆盖的文件、使用的验证命令、对应验收项和剩余风险。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p3",
+            "test-report.md#final-verdict"
+          ]
+        }
+      ],
+      "evidence": [
+        "execution-log.md#phase-p3"
+      ],
+      "notes": "",
+      "last_reviewed_at": "2026-04-07T23:49:04"
+    }
+  ],
+  "planner_review_status": "approved",
+  "test_status": "passed",
+  "blocking_prereqs": [],
+  "iteration_counts": {
+    "planner_revisions": 0,
+    "executor_loops": 3,
+    "test_loops": 1
+  },
+  "created_at": "2026-04-07T23:22:51",
+  "updated_at": "2026-04-07T23:56:28",
+  "branch": "ragint_latest",
+  "baseline_revision": "baed7cf9d8eeba5b4197b31d97cfddc83ca41140",
+  "workspace_root": "D:\\ProjectPackage\\RagInt",
+  "tasks_root": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active",
+  "task_dir": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active\\docs-20260407T232251",
+  "goal": "读取前后端代码，按照指定文档结构在仓库 docs/ 下编写并落地项目文档，覆盖前后端架构、设计、产品、计划、质量、可靠性与安全说明。",
+  "artifacts": {
+    "prd": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active\\docs-20260407T232251\\prd.md",
+    "test_plan": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active\\docs-20260407T232251\\test-plan.md",
+    "task_state": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active\\docs-20260407T232251\\task-state.json",
+    "execution_log": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active\\docs-20260407T232251\\execution-log.md",
+    "test_report": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active\\docs-20260407T232251\\test-report.md"
+  }
+}

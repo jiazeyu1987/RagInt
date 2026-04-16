@@ -21,11 +21,9 @@ function withTimeout(promise, timeoutMs) {
   ]);
 }
 
-function normalizeAutoSubmitScope(value) {
-  const scope = String(value || 'voice_only')
-    .trim()
-    .toLowerCase();
-  return scope === 'voice_and_text' ? 'voice_and_text' : 'voice_only';
+function isE2eAsrMockEnabled() {
+  if (typeof window === 'undefined') return false;
+  return !!(window.__RAGINT_E2E__ && window.__RAGINT_E2E__.enableAsrMock);
 }
 
 export function useVoiceConversationControls({
@@ -69,9 +67,7 @@ export function useVoiceConversationControls({
   useAgentMode,
   selectedAgentId,
   continueTour,
-  autoBargeInSubmitEnabled = true,
   autoSubmitSilenceMs = 1200,
-  autoSubmitScope = 'voice_only',
   autoResumeAfterQaEnabled = true,
   shouldAutoResumeTour,
   canAutoResumeTour,
@@ -194,11 +190,6 @@ export function useVoiceConversationControls({
     clearAutoSubmitTimer();
   }, [clearAutoSubmitTimer, conversationEnabled]);
 
-  useEffect(() => {
-    if (autoBargeInSubmitEnabled) return;
-    clearAutoSubmitTimer();
-  }, [autoBargeInSubmitEnabled, clearAutoSubmitTimer]);
-
   const wakeWordFeedback = useCallback(
     ({ message } = {}) => {
       showTransientStatus(message, 2000);
@@ -234,11 +225,8 @@ export function useVoiceConversationControls({
         }
       }
       if (!conversationEnabled) return;
-      if (!autoBargeInSubmitEnabled) return;
       if (!finalText) return;
       if (typeof submitUserText !== 'function') return;
-      const scope = normalizeAutoSubmitScope(autoSubmitScope);
-      if (scope !== 'voice_only' && scope !== 'voice_and_text') return;
       if (useAgentMode && !selectedAgentId) {
         showTransientStatus('请先选择智能体后再提问', 1800);
         return;
@@ -254,7 +242,11 @@ export function useVoiceConversationControls({
 
       const resumeContextLikely =
         !!autoResumeAfterQaEnabled &&
-        ((typeof shouldAutoResumeTour === 'function' && !!shouldAutoResumeTour()) || !!resumeWantedRef.current);
+        (
+          (typeof shouldAutoResumeTour === 'function' && !!shouldAutoResumeTour()) ||
+          (typeof canAutoResumeTour === 'function' && !!canAutoResumeTour()) ||
+          !!resumeWantedRef.current
+        );
       if (resumeContextLikely) {
         resumeWantedRef.current = true;
         resumeLatestSeqRef.current = seq;
@@ -305,8 +297,6 @@ export function useVoiceConversationControls({
       }, waitMs);
     },
     [
-      autoBargeInSubmitEnabled,
-      autoSubmitScope,
       autoSubmitSilenceMs,
       autoResumeAfterQaEnabled,
       clearAutoSubmitTimer,
@@ -314,6 +304,7 @@ export function useVoiceConversationControls({
       conversationEnabled,
       onAsrFinalText,
       scheduleTourResume,
+      canAutoResumeTour,
       selectedAgentId,
       shouldAutoResumeTour,
       showTransientStatus,
@@ -324,9 +315,8 @@ export function useVoiceConversationControls({
   );
 
   useEffect(() => {
-    if (typeof window === 'undefined') return () => {};
+    if (!isE2eAsrMockEnabled()) return () => {};
     const bridge = window.__RAGINT_E2E__;
-    if (!bridge || !bridge.enableAsrMock) return () => {};
 
     // Test-only bridge for deterministic E2E voice flow.
     const prevEmitAsrFinal = bridge.emitAsrFinal;
@@ -417,11 +407,12 @@ export function useVoiceConversationControls({
 
   const onToggleConversation = useCallback(async () => {
     if (conversationBusy) return;
+    const e2eAsrMockEnabled = isE2eAsrMockEnabled();
 
     if (conversationEnabled) {
       setConversationEnabled(false);
       clearAutoSubmitTimer();
-      stopRecording();
+      if (!e2eAsrMockEnabled) stopRecording();
       showTransientStatus('已结束语音对话');
       return;
     }
@@ -433,6 +424,13 @@ export function useVoiceConversationControls({
     // eslint-disable-next-line no-console
     console.info('[ASR-UI] conversation_start_requested');
     try {
+      if (e2eAsrMockEnabled) {
+        // E2E ASR mock bypasses real microphone startup so Playwright can
+        // validate the real button click path deterministically.
+        setConversationEnabled(true);
+        showTransientStatus('语音对话已开启');
+        return;
+      }
       const result = await withTimeout(startRecording(), CONVERSATION_START_TIMEOUT_MS);
       const started = typeof result === 'object' && result && Object.prototype.hasOwnProperty.call(result, 'started')
         ? !!result.started

@@ -1,0 +1,20 @@
+RagInt 当前没有独立发布的设计系统仓库。
+
+对自动化代理和后续开发者而言，当前最接近“设计系统事实来源”的内容是：
+- fronted/src/components/ 下的组件分层
+- fronted/src/app/AppShell.js 对页面布局的装配方式
+- fronted/src/App.css 中的全局样式
+
+在没有新设计系统前，新增界面应优先复用以下已有界面概念：
+- HomeStatusBar
+- SettingsPanel
+- MainLayout
+- RightPanelTabs
+- InputSection
+- SimpleTourControlPage
+
+如果未来抽离设计系统，应保留现有产品语义：
+- 问答区
+- 导览区
+- 调试/状态区
+- 录制与回放控制区

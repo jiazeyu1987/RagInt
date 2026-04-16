@@ -1,0 +1,200 @@
+{
+  "schema_version": 2,
+  "task_id": "task-4732427cb5-20260412T163924",
+  "mode": "full",
+  "status": "completed",
+  "current_phase": null,
+  "phase_statuses": [
+    {
+      "phase_id": "P1",
+      "title": "后端 pad 产品讲解数据域与接口",
+      "status": "completed",
+      "objective": "建立 pad 专用数据表、导入脚本、音频资产管理与 `/api/pad/*` 接口，确保按 `client_id` 返回当前展厅的数据与音频。",
+      "owned_paths": [
+        "`backend/app_deps.py` `backend/bootstrap.py` `backend/api/request_context.py` `backend/api/pad.py` `backend/services/pad_product_store.py` `backend/services/pad_product_audio_service.py` `scripts/import_pad_hall_products.py` `backend/tests/test_pad_product_store.py` `backend/tests/test_pad_api_blueprint_unit.py` `backend/tests/test_pad_import_script.py`"
+      ],
+      "dependencies": [
+        "现有 `TTSSvc`、现有请求头 `X-Client-ID`、Excel 产品源文件。"
+      ],
+      "deliverables": [
+        "新 SQLite 表、音频资产目录、导入脚本、后端接口、后端自动化测试。"
+      ],
+      "evidence_expectation": "",
+      "acceptance_criteria": [
+        {
+          "ac_id": "P1-AC1",
+          "text": "后端存在 pad 专用 SQLite 表 `pad_hall_bindings`、`hall_products`、`product_audio_assets`，并满足“一个 `client_id` 只绑定一个展厅”“一个产品任意时刻只有一个当前生效音频”的约束。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p1",
+            "test-report.md#results"
+          ]
+        },
+        {
+          "ac_id": "P1-AC2",
+          "text": "导入脚本可从 `tobedeleted/上海展厅展品列表.xlsx` 导入 8 个展厅产品到 `hall_products`，保留排序与需求中指定字段。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p1",
+            "test-report.md#results"
+          ]
+        },
+        {
+          "ac_id": "P1-AC3",
+          "text": "`GET /api/pad/bootstrap`、`GET /api/pad/halls/current/products`、`GET /api/pad/offline/manifest` 只能按当前 `X-Client-ID` 返回本 pad 所属展厅数据。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p1",
+            "test-report.md#results"
+          ]
+        },
+        {
+          "ac_id": "P1-AC4",
+          "text": "`GET /api/pad/products/<product_id>/audio/current` 始终返回当前生效音频；上传录音与 TTS 重生成都能切换当前生效音频且不污染旧录音业务表。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p1",
+            "test-report.md#results"
+          ]
+        }
+      ],
+      "evidence": [
+        "execution-log.md#phase-p1"
+      ],
+      "notes": "",
+      "last_reviewed_at": "2026-04-12T17:28:20"
+    },
+    {
+      "phase_id": "P2",
+      "title": "新 pad 前端、离线缓存与双前端部署",
+      "status": "completed",
+      "objective": "实现新的 pad 首页前端与离线缓存机制，并将旧前端迁移至 `/ragint`，完成 nginx 双 SPA 托管。",
+      "owned_paths": [
+        "`pad-frontend/` 下的新前端资源 `fronted/nginx.conf` `fronted/Dockerfile` `docker-compose.yml` `fronted/e2e/pad-frontend.spec.js`"
+      ],
+      "dependencies": [
+        "P1 的 `/api/pad/*` 接口稳定可用；现有 `clientId` 共享约定延续。"
+      ],
+      "deliverables": [
+        "pad 前端静态应用、service worker/离线缓存、部署改造、pad 前端 e2e。"
+      ],
+      "evidence_expectation": "",
+      "acceptance_criteria": [
+        {
+          "ac_id": "P2-AC1",
+          "text": "新 pad 前端作为 `/` 默认首页启动，读取共享 `localStorage.clientId`，调用 `/api/pad/bootstrap` 与 `/api/pad/halls/current/products` 后仅展示本厅产品。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p2",
+            "test-report.md#results"
+          ]
+        },
+        {
+          "ac_id": "P2-AC2",
+          "text": "pad 前端点击产品后可播放当前生效音频，并提供进入旧前端 `/ragint/?entry=tour` 的可见入口。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p2",
+            "test-report.md#results"
+          ]
+        },
+        {
+          "ac_id": "P2-AC3",
+          "text": "pad 前端实现“每台 pad 只缓存自己展厅完整资源”的离线能力；首次同步成功后断网仍可打开 `/`、查看列表并播放已缓存音频；若从未完成同步则明确报错而非静默降级。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p2",
+            "test-report.md#results"
+          ]
+        },
+        {
+          "ac_id": "P2-AC4",
+          "text": "nginx/Docker 构建同时托管 `/` pad 前端、`/ragint` 旧前端与 `/api/*` 后端代理，旧前端静态资源前缀与路由可在子路径下正常工作。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p2",
+            "test-report.md#results"
+          ]
+        }
+      ],
+      "evidence": [
+        "execution-log.md#phase-p2"
+      ],
+      "notes": "",
+      "last_reviewed_at": "2026-04-12T19:51:17"
+    },
+    {
+      "phase_id": "P3",
+      "title": "旧 RagInt 前端入口整合、双向导航与回归验证",
+      "status": "completed",
+      "objective": "让旧前端适配 `/ragint` 子路径与 `?entry=tour` 启动参数，提供返回 pad 前端入口，并补齐相关单测/e2e 回归。",
+      "owned_paths": [
+        "`fronted/src/App.js` `fronted/src/app/AppShell.js` `fronted/src/components/HomeActions.js` `fronted/src/components/HomeActions.test.js` `fronted/src/app/AppShell.test.js` `fronted/e2e/app-shell.spec.js` `fronted/e2e/business-flows.spec.js`"
+      ],
+      "dependencies": [
+        "P2 的部署路径和 pad 首页入口已确定。"
+      ],
+      "deliverables": [
+        "旧前端入口改造、双向跳转、共享 `clientId` 验证、自动化回归通过。"
+      ],
+      "evidence_expectation": "",
+      "acceptance_criteria": [
+        {
+          "ac_id": "P3-AC1",
+          "text": "旧 RagInt 前端在 `/ragint` 下正常启动，并在 `?entry=tour` 时直接进入展厅讲解模式而不是普通问答初始态。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p3",
+            "test-report.md#results"
+          ]
+        },
+        {
+          "ac_id": "P3-AC2",
+          "text": "旧前端提供返回 pad 产品讲解首页的入口，pad 前端也可跳转到旧前端，两者切换过程中 `localStorage.clientId` 保持不变。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p3",
+            "test-report.md#results"
+          ]
+        },
+        {
+          "ac_id": "P3-AC3",
+          "text": "与本次改动耦合的旧前端单测与 e2e 回归完成，手动文本发送和原有问答主链路未因路径迁移而损坏。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p3",
+            "test-report.md#results"
+          ]
+        }
+      ],
+      "evidence": [
+        "execution-log.md#phase-p3"
+      ],
+      "notes": "",
+      "last_reviewed_at": "2026-04-12T19:51:18"
+    }
+  ],
+  "planner_review_status": "approved",
+  "test_status": "passed",
+  "blocking_prereqs": [],
+  "iteration_counts": {
+    "planner_revisions": 0,
+    "executor_loops": 3,
+    "test_loops": 2
+  },
+  "created_at": "2026-04-12T16:39:24",
+  "updated_at": "2026-04-12T20:18:20",
+  "branch": "ragint_latest",
+  "baseline_revision": "baed7cf9d8eeba5b4197b31d97cfddc83ca41140",
+  "workspace_root": "D:\\ProjectPackage\\RagInt",
+  "tasks_root": "D:\\ProjectPackage\\RagInt\\doc\\tasks",
+  "task_dir": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\task-4732427cb5-20260412T163924",
+  "goal": "双前端展厅产品讲解系统正式方案",
+  "artifacts": {
+    "prd": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\task-4732427cb5-20260412T163924\\prd.md",
+    "test_plan": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\task-4732427cb5-20260412T163924\\test-plan.md",
+    "task_state": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\task-4732427cb5-20260412T163924\\task-state.json",
+    "execution_log": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\task-4732427cb5-20260412T163924\\execution-log.md",
+    "test_report": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\task-4732427cb5-20260412T163924\\test-report.md"
+  }
+}

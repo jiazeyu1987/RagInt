@@ -2,6 +2,7 @@ import React from 'react';
 
 export function HomeActions({
   onBackToSimple,
+  onOpenPadHome,
   onTourToggle,
   tourToggleLabel,
   tourToggleDanger,
@@ -9,12 +10,19 @@ export function HomeActions({
   onReset,
 }) {
   const showBackButton = typeof onBackToSimple === 'function';
+  const showPadHomeButton = typeof onOpenPadHome === 'function';
+  const actionCount = 2 + (showBackButton ? 1 : 0) + (showPadHomeButton ? 1 : 0);
 
   return (
-    <div className={`home-actions ${showBackButton ? 'home-actions-with-back' : ''}`}>
+    <div className="home-actions" style={{ '--home-actions-columns': String(actionCount) }}>
       {showBackButton ? (
         <button type="button" className="home-action-btn home-action-neutral" onClick={onBackToSimple}>
           {'\u6781\u7b80\u9875'}
+        </button>
+      ) : null}
+      {showPadHomeButton ? (
+        <button type="button" className="home-action-btn home-action-neutral" onClick={onOpenPadHome}>
+          {'\u8fd4\u56de\u4ea7\u54c1\u8bb2\u89e3'}
         </button>
       ) : null}
       <button

@@ -716,15 +716,6 @@ function AsrTab({ controlBarProps }) {
             </label>
           ) : null}
 
-          <label className="settings-toggle">
-            <input
-              type="checkbox"
-              checked={!!c.asrAutoSubmitOnWakeEnabled}
-              onChange={(e) => c.onChangeAsrAutoSubmitOnWakeEnabled && c.onChangeAsrAutoSubmitOnWakeEnabled(e.target.checked)}
-            />
-            <span>语音结束后自动发送问题</span>
-          </label>
-
           <label className="settings-field">
             <span>静音判定时长(ms)</span>
             <input
@@ -739,17 +730,6 @@ function AsrTab({ controlBarProps }) {
               }
               placeholder="1200"
             />
-          </label>
-
-          <label className="settings-field">
-            <span>自动发送范围</span>
-            <select
-              value={String(c.asrConversationAutoSubmitScope || 'voice_only')}
-              onChange={(e) => c.onChangeAsrConversationAutoSubmitScope && c.onChangeAsrConversationAutoSubmitScope(e.target.value)}
-            >
-              <option value="voice_only">仅语音</option>
-              <option value="voice_and_text">语音和文本</option>
-            </select>
           </label>
 
           <label className="settings-field">

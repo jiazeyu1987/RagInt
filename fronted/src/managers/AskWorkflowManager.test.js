@@ -200,5 +200,89 @@ describe('AskWorkflowManager', () => {
     expect(setActiveRagflowConversationName).toHaveBeenNthCalledWith(2, '\u95ee\u9898\u6bd4\u5bf9');
     expect(setActiveRagflowConversationName).toHaveBeenNthCalledWith(3, '\u5c55\u5385\u804a\u5929');
   });
-});
 
+  test('keeps global ragflow availability unchanged after ask transport failure', async () => {
+    global.TextDecoder = class {
+      decode() {
+        return '';
+      }
+    };
+    const setQueueStatus = jest.fn();
+    const onRagflowUnavailable = jest.fn();
+    const manager = new AskWorkflowManager({
+      getIsLoading: () => false,
+      requestSeqRef: { current: 0 },
+      interruptManagerRef: { current: { snapshot: () => 1, isCurrent: () => true } },
+      askAbortRef: { current: null },
+      currentAudioRef: { current: null },
+      ttsManagerRef: { current: null },
+      ttsEnabledRef: { current: false },
+      debugRef: { current: null },
+      beginDebugRun: jest.fn(),
+      debugMark: jest.fn(),
+      setLastQuestion: jest.fn(),
+      setAnswer: jest.fn(),
+      setAnswerCacheMeta: jest.fn(),
+      setQaCacheDebug: jest.fn(),
+      setIsLoading: jest.fn(),
+      receivedSegmentsRef: { current: false },
+      getTtsManager: () => null,
+      abortPrefetch: jest.fn(),
+      setTourState: jest.fn(),
+      tourStateRef: { current: { stopIndex: 0, mode: 'idle' } },
+      tourResumeRef: { current: {} },
+      getTourStopName: () => '',
+      startStatusMonitor: jest.fn(),
+      setQueueStatus,
+      onRagflowUnavailable,
+      clientIdRef: { current: 'client-1' },
+      activeAskRequestIdRef: { current: null },
+      baseUrl: 'http://localhost',
+      guideDurationRef: { current: '10' },
+      guideStyleRef: { current: 'friendly' },
+      guideEnabledRef: { current: false },
+      audienceProfileRef: { current: 'general' },
+      qaAnswerTargetCharsRef: { current: '10' },
+      qaAudioCacheConfidenceThresholdRef: { current: '0.85' },
+      qaAudioCacheLookupEnabledRef: { current: true },
+      tourStopDurationsRef: { current: [] },
+      tourStopTargetCharsRef: { current: [] },
+      useAgentModeRef: { current: false },
+      selectedChatRef: { current: 'chat' },
+      selectedAgentIdRef: { current: '' },
+      setCurrentIntent: jest.fn(),
+      getTourPipeline: () => null,
+      getHistorySort: () => 'latest',
+      fetchHistory: jest.fn(),
+      maybeStartNextQueuedQuestion: jest.fn(),
+      runCoordinatorRef: { current: null },
+      getTourStops: () => [],
+      tourRecordingEnabledRef: { current: false },
+      playTourRecordingEnabledRef: { current: false },
+      selectedTourRecordingIdRef: { current: '' },
+      activeTourRecordingIdRef: { current: '' },
+      finishTourRecordingArchive: jest.fn(),
+      globalPromptPrefixRef: { current: '' },
+      emitClientEvent: jest.fn(),
+      consumePendingAsrClientEvents: () => [],
+    });
+
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      body: null,
+      headers: {
+        get() {
+          return 'application/json';
+        },
+      },
+    });
+
+    await manager.ask('will fail');
+
+    expect(setQueueStatus).toHaveBeenCalledWith(
+      'RAGFlow \u95ee\u7b54\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u5f53\u524d\u8fde\u63a5\u6216\u7a0d\u540e\u91cd\u8bd5\u3002'
+    );
+    expect(onRagflowUnavailable).not.toHaveBeenCalled();
+  });
+});

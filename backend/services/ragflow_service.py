@@ -91,43 +91,50 @@ def _ragflow_response_text(resp) -> str:
     return str(resp or "")
 
 
-def find_dataset_by_name(client, dataset_name):
-    if not dataset_name:
+def _ragflow_named_value(item):
+    if item is None:
+        return ""
+    if hasattr(item, "name"):
+        return str(getattr(item, "name") or "").strip()
+    if isinstance(item, dict):
+        return str(item.get("name") or item.get("title") or "").strip()
+    return str(item).strip()
+
+
+def _find_named_resource(list_fn, expected_name: str, *, filter_key: str, page_size: int = 100):
+    name = str(expected_name or "").strip()
+    if not name:
         return None
 
-    try:
-        datasets = client.list_datasets()
-        for dataset in datasets:
-            if hasattr(dataset, "name"):
-                if dataset.name == dataset_name:
-                    return dataset.id if hasattr(dataset, "id") else dataset
-            elif isinstance(dataset, dict):
-                if dataset.get("name") == dataset_name:
-                    return dataset.get("id") or dataset
-            else:
-                if dataset_name in str(dataset):
-                    return dataset
-    except Exception:
-        pass
-    return None
+    page = 1
+    while True:
+        items = list_fn(page=page, page_size=page_size, **{filter_key: name}) or []
+        for item in items:
+            if _ragflow_named_value(item) == name:
+                return item
+        if len(items) < page_size:
+            return None
+        page += 1
+
+
+def find_dataset_by_name(client, dataset_name):
+    dataset = _find_named_resource(client.list_datasets, dataset_name, filter_key="name")
+    if dataset is None:
+        return None
+    if hasattr(dataset, "id"):
+        return dataset.id
+    if isinstance(dataset, dict):
+        return dataset.get("id") or dataset
+    return dataset
 
 
 def find_chat_by_name(client, chat_name):
-    try:
-        chats = client.list_chats()
-        for chat in chats:
-            if hasattr(chat, "name"):
-                if chat.name == chat_name:
-                    return chat
-            elif isinstance(chat, dict):
-                if chat.get("name") == chat_name:
-                    return chat
-            else:
-                if chat_name in str(chat):
-                    return chat
-    except Exception:
-        pass
-    return None
+    return _find_named_resource(client.list_chats, chat_name, filter_key="name")
+
+
+def _is_duplicate_chat_name_error(err: Exception) -> bool:
+    msg = str(err or "").strip().lower()
+    return "duplicated chat name" in msg or "duplicate chat name" in msg
 
 
 class RagflowService:
@@ -362,6 +369,22 @@ class RagflowService:
         agents.sort(key=lambda x: x.get("title") or "")
         return {"agents": agents, "default": agents[0]["id"] if agents else None}
 
+    def _resolve_or_create_chat(self, name: str):
+        chat = find_chat_by_name(self.client, name)
+        if chat:
+            return chat
+
+        try:
+            return self.client.create_chat(name=name, dataset_ids=[self.dataset_id] if self.dataset_id else [])
+        except Exception as e:
+            if not _is_duplicate_chat_name_error(e):
+                raise
+            self._logger.warning("ragflow_chat_create_duplicate_detected chat=%s; retrying lookup", name)
+            chat = find_chat_by_name(self.client, name)
+            if chat:
+                return chat
+            raise RuntimeError(f"ragflow_chat_duplicate_name_but_lookup_failed:{name}") from e
+
     def get_session(self, chat_name: str):
         if not self.client:
             return None
@@ -373,9 +396,7 @@ class RagflowService:
             if name in self._sessions:
                 return self._sessions[name]
 
-        chat = find_chat_by_name(self.client, name)
-        if not chat:
-            chat = self.client.create_chat(name=name, dataset_ids=[self.dataset_id] if self.dataset_id else [])
+        chat = self._resolve_or_create_chat(name)
         sess = chat.create_session("Chat Session")
         with self._lock:
             self._sessions[name] = sess
@@ -421,7 +442,7 @@ class RagflowService:
 
         chat = find_chat_by_name(self.client, name)
         if not chat and create_if_missing:
-            chat = self.client.create_chat(name=name, dataset_ids=[self.dataset_id] if self.dataset_id else [])
+            chat = self._resolve_or_create_chat(name)
         if not chat:
             raise RuntimeError(f"ragflow_chat_not_found:{name}")
 
@@ -461,9 +482,7 @@ class RagflowService:
         if not name:
             return {"ok": False, "chat_name": "", "error": "chat_name_required"}
 
-        chat = find_chat_by_name(self.client, name)
-        if not chat:
-            chat = self.client.create_chat(name=name, dataset_ids=[self.dataset_id] if self.dataset_id else [])
+        chat = self._resolve_or_create_chat(name)
 
         sess = chat.create_session("Chat Session")
         with self._lock:

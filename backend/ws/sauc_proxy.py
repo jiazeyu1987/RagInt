@@ -204,14 +204,16 @@ def _parse_sauc_response(raw: bytes) -> dict[str, Any]:
 def _extract_utterances_text(utterances: Any) -> str:
     if not isinstance(utterances, list):
         return ""
-    parts: list[str] = []
+    latest = ""
     for item in utterances:
         if not isinstance(item, dict):
             continue
-        text = _safe_trim(item.get("text"))
-        if text:
-            parts.append(text)
-    return "".join(parts)
+        for key in ("text", "sentence_text", "display_text", "transcript"):
+            text = _safe_trim(item.get(key))
+            if text:
+                latest = text
+                break
+    return latest
 
 
 def _collect_text_candidates(node: Any, out: list[str], *, depth: int = 0) -> None:

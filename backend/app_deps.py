@@ -32,6 +32,11 @@ class AppDeps:
     qa_audio_matcher: Any
     ragflow_config_store: Any
     app_settings_store: Any
+    pad_product_store: Any
+    pad_product_audio_service: Any
+    pad_product_image_service: Any
+    pad_hall_scene_service: Any
+    pad_hall_station_service: Any
 
     session: Any = None
     ragflow_default_chat_name: str = ""

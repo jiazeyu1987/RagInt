@@ -4,6 +4,7 @@ import { TextInputControls } from './TextInputControls';
 
 export function InputSection({
   onBackToSimple,
+  onOpenPadHome,
   onTourToggle,
   tourToggleLabel,
   tourToggleDanger,
@@ -17,6 +18,7 @@ export function InputSection({
     <div className="input-section">
       <HomeActions
         onBackToSimple={onBackToSimple}
+        onOpenPadHome={onOpenPadHome}
         onTourToggle={onTourToggle}
         tourToggleLabel={tourToggleLabel}
         tourToggleDanger={tourToggleDanger}

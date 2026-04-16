@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>展厅产品讲解</title>
+    <link rel="stylesheet" href="/app.css?v=20260415e" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <footer class="pad-audio-dock" aria-label="音频播放区域">
+      <div class="pad-audio-dock__meta">
+        <div class="pad-audio-dock__eyebrow">当前播放</div>
+        <div id="audio-status-text" class="pad-audio-dock__title">尚未选择产品</div>
+      </div>
+      <audio id="product-audio" class="pad-audio-dock__player" controls preload="none"></audio>
+    </footer>
+    <script src="/app.js?v=20260415e" defer></script>
+  </body>
+</html>

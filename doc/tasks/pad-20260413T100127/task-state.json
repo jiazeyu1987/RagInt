@@ -1,0 +1,227 @@
+{
+  "schema_version": 2,
+  "task_id": "pad-20260413T100127",
+  "mode": "full",
+  "status": "completed",
+  "current_phase": null,
+  "phase_statuses": [
+    {
+      "phase_id": "P1",
+      "title": "Pad 产品图片资产与 API",
+      "status": "completed",
+      "objective": "为 pad 产品建立独立图片资产域，支持上传、读取、离线读取，并把图片元数据接入产品列表与离线 manifest。",
+      "owned_paths": [
+        "`backend/services/pad_product_store.py` `backend/services/pad_product_image_service.py` `backend/api/pad.py` `backend/bootstrap.py` `backend/app_deps.py` `backend/tests/test_pad_product_store.py` `backend/tests/test_pad_api_blueprint_unit.py`"
+      ],
+      "dependencies": [
+        "现有 `pad_hall_bindings`、`hall_products`、离线 manifest、客户端 `X-Client-ID` 绑定逻辑。"
+      ],
+      "deliverables": [
+        "独立图片资产表与文件目录、图片上传接口、图片访问接口、离线图片接口、产品接口中的图片字段、后端单测。"
+      ],
+      "evidence_expectation": "",
+      "acceptance_criteria": [
+        {
+          "ac_id": "P1-AC1",
+          "text": "pad 后端存在独立产品图片资产存储，单个产品可保存一张或多张图片，且删除产品时会同步清理该产品图片资产记录与文件目录。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p1-review",
+            "test-report.md#t1-pad-product-image-store-persistence-and-cleanup",
+            "test-report.md#t2-pad-api-returns-image-payloads-and-enforces-hall-scope",
+            "test-report.md#t3-demo-mode-shows-product-images",
+            "test-report.md#t4-ops-mode-uploads-product-images-and-refreshes-immediately",
+            "test-report.md#t5-offline-mode-shows-cached-product-images",
+            "test-report.md#t6-existing-pad-audio-flow-still-works-after-image-support-lands"
+          ]
+        },
+        {
+          "ac_id": "P1-AC2",
+          "text": "`GET /api/pad/halls/current/products` 与 `GET /api/pad/offline/manifest` 会返回每个产品的图片列表与主展示图片信息，且展厅版本更新时间会反映图片变更。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p1-review",
+            "test-report.md#t1-pad-product-image-store-persistence-and-cleanup",
+            "test-report.md#t2-pad-api-returns-image-payloads-and-enforces-hall-scope",
+            "test-report.md#t3-demo-mode-shows-product-images",
+            "test-report.md#t4-ops-mode-uploads-product-images-and-refreshes-immediately",
+            "test-report.md#t5-offline-mode-shows-cached-product-images",
+            "test-report.md#t6-existing-pad-audio-flow-still-works-after-image-support-lands"
+          ]
+        },
+        {
+          "ac_id": "P1-AC3",
+          "text": "`POST /api/pad/products/<product_id>/images/upload` 能成功写入图片资产；在线图片访问与离线图片访问都受当前 `client_id -> hall_id` 绑定约束。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p1-review",
+            "test-report.md#t1-pad-product-image-store-persistence-and-cleanup",
+            "test-report.md#t2-pad-api-returns-image-payloads-and-enforces-hall-scope",
+            "test-report.md#t3-demo-mode-shows-product-images",
+            "test-report.md#t4-ops-mode-uploads-product-images-and-refreshes-immediately",
+            "test-report.md#t5-offline-mode-shows-cached-product-images",
+            "test-report.md#t6-existing-pad-audio-flow-still-works-after-image-support-lands"
+          ]
+        }
+      ],
+      "evidence": [
+        "execution-log.md#phase-p1-review"
+      ],
+      "notes": "- Backend pad product image asset storage, API payloads, and hall-scoped image access passed review.",
+      "last_reviewed_at": "2026-04-13T11:15:28"
+    },
+    {
+      "phase_id": "P2",
+      "title": "Pad 双模式图片展示与离线缓存",
+      "status": "completed",
+      "objective": "在演示模式与运维模式中展示产品图片，并把图片接入现有离线资源同步与本地快照。",
+      "owned_paths": [
+        "`pad-frontend/app.js` `pad-frontend/app.css`"
+      ],
+      "dependencies": [
+        "P1 的产品图片接口与 manifest 字段。"
+      ],
+      "deliverables": [
+        "演示模式图片展示、运维模式图片画廊与上传入口、图片缓存逻辑、离线加载能力。"
+      ],
+      "evidence_expectation": "",
+      "acceptance_criteria": [
+        {
+          "ac_id": "P2-AC1",
+          "text": "演示模式中，带图片的产品 item 会显示对应产品图片；无图片的产品不会渲染伪装的成功图片状态。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p2-review",
+            "test-report.md#t1-pad-product-image-store-persistence-and-cleanup",
+            "test-report.md#t2-pad-api-returns-image-payloads-and-enforces-hall-scope",
+            "test-report.md#t3-demo-mode-shows-product-images",
+            "test-report.md#t4-ops-mode-uploads-product-images-and-refreshes-immediately",
+            "test-report.md#t5-offline-mode-shows-cached-product-images",
+            "test-report.md#t6-existing-pad-audio-flow-still-works-after-image-support-lands"
+          ]
+        },
+        {
+          "ac_id": "P2-AC2",
+          "text": "运维模式中，选中产品后可看到当前图片列表，并可通过页面上传图片；上传完成后当前产品图片会立即更新显示。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p2-review",
+            "test-report.md#t1-pad-product-image-store-persistence-and-cleanup",
+            "test-report.md#t2-pad-api-returns-image-payloads-and-enforces-hall-scope",
+            "test-report.md#t3-demo-mode-shows-product-images",
+            "test-report.md#t4-ops-mode-uploads-product-images-and-refreshes-immediately",
+            "test-report.md#t5-offline-mode-shows-cached-product-images",
+            "test-report.md#t6-existing-pad-audio-flow-still-works-after-image-support-lands"
+          ]
+        },
+        {
+          "ac_id": "P2-AC3",
+          "text": "图片会进入离线 manifest、本地缓存和本地快照；完成同步后断网重新进入 pad 首页时，仍能显示已同步的产品图片。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p2-review",
+            "test-report.md#t1-pad-product-image-store-persistence-and-cleanup",
+            "test-report.md#t2-pad-api-returns-image-payloads-and-enforces-hall-scope",
+            "test-report.md#t3-demo-mode-shows-product-images",
+            "test-report.md#t4-ops-mode-uploads-product-images-and-refreshes-immediately",
+            "test-report.md#t5-offline-mode-shows-cached-product-images",
+            "test-report.md#t6-existing-pad-audio-flow-still-works-after-image-support-lands"
+          ]
+        }
+      ],
+      "evidence": [
+        "execution-log.md#phase-p2-review"
+      ],
+      "notes": "- Pad demo and ops modes now render product images, support image upload, and cache images offline.",
+      "last_reviewed_at": "2026-04-13T11:15:42"
+    },
+    {
+      "phase_id": "P3",
+      "title": "回归验证与证据固化",
+      "status": "completed",
+      "objective": "通过后端测试和真实浏览器 e2e 固化图片能力，同时确认现有演示模式音频行为未回退。",
+      "owned_paths": [
+        "`backend/tests/test_pad_product_store.py` `backend/tests/test_pad_api_blueprint_unit.py` `fronted/e2e/pad-frontend.spec.js` `doc/tasks/pad-20260413T100127/execution-log.md` `doc/tasks/pad-20260413T100127/test-report.md`"
+      ],
+      "dependencies": [
+        "P1、P2 完成。"
+      ],
+      "deliverables": [
+        "通过的 `pytest` 与 Playwright 结果、浏览器证据文件、任务工件中的执行与测试记录。"
+      ],
+      "evidence_expectation": "",
+      "acceptance_criteria": [
+        {
+          "ac_id": "P3-AC1",
+          "text": "`pytest` 针对 pad 产品存储与 pad API 的图片相关测试全部通过。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p3-review",
+            "test-report.md#t1-pad-product-image-store-persistence-and-cleanup",
+            "test-report.md#t2-pad-api-returns-image-payloads-and-enforces-hall-scope",
+            "test-report.md#t3-demo-mode-shows-product-images",
+            "test-report.md#t4-ops-mode-uploads-product-images-and-refreshes-immediately",
+            "test-report.md#t5-offline-mode-shows-cached-product-images",
+            "test-report.md#t6-existing-pad-audio-flow-still-works-after-image-support-lands"
+          ]
+        },
+        {
+          "ac_id": "P3-AC2",
+          "text": "Playwright 真实浏览器回归覆盖演示模式显示图片、运维模式上传图片、离线模式显示已缓存图片，且保留现有音频讲解切换行为。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p3-review",
+            "test-report.md#t1-pad-product-image-store-persistence-and-cleanup",
+            "test-report.md#t2-pad-api-returns-image-payloads-and-enforces-hall-scope",
+            "test-report.md#t3-demo-mode-shows-product-images",
+            "test-report.md#t4-ops-mode-uploads-product-images-and-refreshes-immediately",
+            "test-report.md#t5-offline-mode-shows-cached-product-images",
+            "test-report.md#t6-existing-pad-audio-flow-still-works-after-image-support-lands"
+          ]
+        },
+        {
+          "ac_id": "P3-AC3",
+          "text": "`test-report.md` 中的每个图片相关通过用例都引用至少一个真实浏览器证据文件。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#phase-p3-review",
+            "test-report.md#t1-pad-product-image-store-persistence-and-cleanup",
+            "test-report.md#t2-pad-api-returns-image-payloads-and-enforces-hall-scope",
+            "test-report.md#t3-demo-mode-shows-product-images",
+            "test-report.md#t4-ops-mode-uploads-product-images-and-refreshes-immediately",
+            "test-report.md#t5-offline-mode-shows-cached-product-images",
+            "test-report.md#t6-existing-pad-audio-flow-still-works-after-image-support-lands"
+          ]
+        }
+      ],
+      "evidence": [
+        "execution-log.md#phase-p3-review"
+      ],
+      "notes": "- Backend pytest and Playwright browser regressions passed with screenshot evidence for image scenarios.\n- Backend pytest and Playwright browser regressions passed with screenshot evidence for image scenarios.",
+      "last_reviewed_at": "2026-04-13T11:16:01"
+    }
+  ],
+  "planner_review_status": "approved",
+  "test_status": "passed",
+  "blocking_prereqs": [],
+  "iteration_counts": {
+    "planner_revisions": 0,
+    "executor_loops": 4,
+    "test_loops": 1
+  },
+  "created_at": "2026-04-13T10:01:28",
+  "updated_at": "2026-04-13T11:16:36",
+  "branch": "ragint_latest",
+  "baseline_revision": "baed7cf9d8eeba5b4197b31d97cfddc83ca41140",
+  "workspace_root": "D:\\ProjectPackage\\RagInt",
+  "tasks_root": "D:\\ProjectPackage\\RagInt\\doc\\tasks",
+  "task_dir": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\pad-20260413T100127",
+  "goal": "pad 产品支持上传图片并在新老模式中显示对应产品图片",
+  "artifacts": {
+    "prd": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\pad-20260413T100127\\prd.md",
+    "test_plan": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\pad-20260413T100127\\test-plan.md",
+    "task_state": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\pad-20260413T100127\\task-state.json",
+    "execution_log": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\pad-20260413T100127\\execution-log.md",
+    "test_report": "D:\\ProjectPackage\\RagInt\\doc\\tasks\\pad-20260413T100127\\test-report.md"
+  }
+}

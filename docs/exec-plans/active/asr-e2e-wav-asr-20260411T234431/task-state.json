@@ -1,0 +1,187 @@
+{
+  "schema_version": 2,
+  "task_id": "asr-e2e-wav-asr-20260411T234431",
+  "mode": "full",
+  "status": "testing",
+  "current_phase": null,
+  "phase_statuses": [
+    {
+      "phase_id": "P1",
+      "title": "固化样本与只读观测面",
+      "status": "completed",
+      "objective": "选定可执行的 `wav` gold set，并补充前端只读 E2E 观测面，确保 Playwright 能在不注入文本的前提下读取真实识别结果。",
+      "owned_paths": [
+        "`fronted/e2e/fixtures/asr-accuracy/*`",
+        "`fronted/src/app/AppShell.js`",
+        "`fronted/src/app/AppShell.test.js`",
+        "`docs/exec-plans/active/asr-e2e-wav-asr-20260411T234431/*`"
+      ],
+      "dependencies": [
+        "`backend/data/qa_audio_cache.db`",
+        "`backend/data/qa_audio_cache/audio/*.wav`",
+        "`fronted/src/app/AppShell.js`"
+      ],
+      "deliverables": [
+        "fixture manifest、样本文本标注、只读 ASR probe getter、对应回归测试或验证说明"
+      ],
+      "evidence_expectation": "通过 manifest 文件内容、样本文件存在校验、以及真实页面上 `window.__RAGINT_E2E__.getAsrProbeState()` 可读来证明 P1 完成。",
+      "evidence": [
+        "execution-log.md#Phase-P1"
+      ],
+      "notes": "",
+      "last_reviewed_at": "2026-04-12T13:59:48",
+      "acceptance_criteria": [
+        {
+          "ac_id": "P1-AC1",
+          "text": "新增的 ASR fixture manifest 至少定义 3 个可执行样本；每个样本都引用仓库内真实 `wav` 路径，并声明 `id`、`audio path`、`expected transcript`、`hold/play duration`、`timeout`。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P1",
+            "test-report.md#Final-Verdict"
+          ]
+        },
+        {
+          "ac_id": "P1-AC2",
+          "text": "前端暴露只读 E2E probe，用于读取“前端收到的最终 ASR 文本”“当前输入框文本”“关键时间戳/状态”；不得新增任何能写入识别文本或直接切换识别状态的注入接口。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P1",
+            "test-report.md#Final-Verdict"
+          ]
+        }
+      ]
+    },
+    {
+      "phase_id": "P2",
+      "title": "实现真实 wav -> fake mic -> SAUC 的 Playwright 链路",
+      "status": "completed",
+      "objective": "新增专用 Playwright 配置、真实 E2E spec 与 runner，支持按 fixture 逐个启动 Chromium 并用 fake microphone 回放目标 `wav`。",
+      "owned_paths": [
+        "`fronted/playwright.asr-accuracy.config.js`",
+        "`fronted/e2e/asr-accuracy.real.spec.js`",
+        "`fronted/scripts/run_asr_accuracy_e2e.js`",
+        "`fronted/package.json`"
+      ],
+      "dependencies": [
+        "P1 deliverables",
+        "`fronted/playwright.config.js`",
+        "`fronted/e2e/README.md`",
+        "本地 Chromium",
+        "本地前后端运行环境"
+      ],
+      "deliverables": [
+        "可执行 runner、真实浏览器 spec、fake mic 启动参数、每个 case 的结果产物与截图证据"
+      ],
+      "evidence_expectation": "通过 runner 日志、Playwright 结果文件、截图证据和 spec 断言结果证明 P2 完成。",
+      "evidence": [
+        "execution-log.md#Phase-P2",
+        "execution-log.md#Follow-up-Loop-2"
+      ],
+      "notes": "",
+      "last_reviewed_at": "2026-04-12T14:32:08",
+      "acceptance_criteria": [
+        {
+          "ac_id": "P2-AC1",
+          "text": "新增的 Playwright 专用配置会以 Chromium 启动真实页面，并带有 fake microphone 所需参数与麦克风权限。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P2",
+            "test-report.md#Final-Verdict",
+            "execution-log.md#Follow-up-Loop-2"
+          ]
+        },
+        {
+          "ac_id": "P2-AC2",
+          "text": "runner 会在执行单个 fixture 前验证真实 backend/SAUC 健康状态、fixture 文件存在性和必要环境变量；任一缺失时直接失败并给出明确原因。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P2",
+            "test-report.md#Final-Verdict",
+            "execution-log.md#Follow-up-Loop-2"
+          ]
+        },
+        {
+          "ac_id": "P2-AC3",
+          "text": "真实 E2E spec 至少完成以下链路断言：打开页面、用户级操作触发录音、`wav` 经 fake mic 送入 ASR、前端 probe 观测到最终识别文本、识别文本与 gold transcript 按约定规则比较、产出至少一个截图或等价浏览器证据文件。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P2",
+            "test-report.md#Final-Verdict",
+            "execution-log.md#Follow-up-Loop-2"
+          ]
+        }
+      ]
+    },
+    {
+      "phase_id": "P3",
+      "title": "执行验证并回填证据",
+      "status": "completed",
+      "objective": "在真实本地运行态下执行选定 fixture，记录通过/失败结果、阻塞项和证据文件，完成当前任务工件闭环。",
+      "owned_paths": [
+        "`docs/exec-plans/active/asr-e2e-wav-asr-20260411T234431/execution-log.md`",
+        "`docs/exec-plans/active/asr-e2e-wav-asr-20260411T234431/test-report.md`"
+      ],
+      "dependencies": [
+        "P1 deliverables",
+        "P2 deliverables",
+        "本地 backend 运行态",
+        "Playwright 产出的截图/trace/result json"
+      ],
+      "deliverables": [
+        "reviewed execution log、independent test report、按 acceptance id 归档的证据引用"
+      ],
+      "evidence_expectation": "通过 `execution-log.md`、`test-report.md` 与非任务工件证据文件之间的交叉引用证明 P3 完成。",
+      "evidence": [
+        "execution-log.md#Phase-P3",
+        "execution-log.md#Follow-up-Loop-2"
+      ],
+      "notes": "",
+      "last_reviewed_at": "2026-04-12T14:32:20",
+      "acceptance_criteria": [
+        {
+          "ac_id": "P3-AC1",
+          "text": "`execution-log.md` 记录本次实现覆盖的真实路径、执行命令、已覆盖 acceptance ids、仍存风险和阻塞项。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P3",
+            "test-report.md#Final-Verdict",
+            "execution-log.md#Follow-up-Loop-2"
+          ]
+        },
+        {
+          "ac_id": "P3-AC2",
+          "text": "`test-report.md` 以独立 tester 视角记录至少 3 个 fixture case 的真实浏览器结果，并为每个通过的浏览器 case 引用至少一个存在的截图、trace、video 或结果文件。",
+          "status": "completed",
+          "evidence": [
+            "execution-log.md#Phase-P3",
+            "test-report.md#Final-Verdict",
+            "execution-log.md#Follow-up-Loop-2"
+          ]
+        }
+      ]
+    }
+  ],
+  "planner_review_status": "approved",
+  "test_status": "failed",
+  "blocking_prereqs": [],
+  "iteration_counts": {
+    "planner_revisions": 0,
+    "executor_loops": 2,
+    "test_loops": 2
+  },
+  "created_at": "2026-04-11T23:44:31",
+  "updated_at": "2026-04-12T14:32:33",
+  "branch": "ragint_latest",
+  "baseline_revision": "baed7cf9d8eeba5b4197b31d97cfddc83ca41140",
+  "workspace_root": "D:\\ProjectPackage\\RagInt",
+  "tasks_root": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active",
+  "task_dir": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active\\asr-e2e-wav-asr-20260411T234431",
+  "goal": "ASR 准确性 E2E 测试：使用测试 wav 数据进行真实浏览器/真实 ASR 评测",
+  "artifacts": {
+    "prd": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active\\asr-e2e-wav-asr-20260411T234431\\prd.md",
+    "test_plan": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active\\asr-e2e-wav-asr-20260411T234431\\test-plan.md",
+    "task_state": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active\\asr-e2e-wav-asr-20260411T234431\\task-state.json",
+    "execution_log": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active\\asr-e2e-wav-asr-20260411T234431\\execution-log.md",
+    "test_report": "D:\\ProjectPackage\\RagInt\\docs\\exec-plans\\active\\asr-e2e-wav-asr-20260411T234431\\test-report.md"
+  }
+}

@@ -1,6 +1,6 @@
 param(
   [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\\..")).Path,
-  [int]$BackendPort = 8000,
+  [int]$BackendPort = 8101,
   [int]$FrontendPort = 4981,
   [string]$FrontendUrl = "http://localhost:4981",
   [string]$PythonExe = "",
@@ -40,6 +40,22 @@ function Wait-UrlReady {
     Start-Sleep -Seconds 2
   }
   throw "$Name start timeout: $Url"
+}
+
+function Join-UrlPath {
+  param(
+    [string]$BaseUrl,
+    [string]$Path
+  )
+  $base = ""
+  if (-not [string]::IsNullOrWhiteSpace($BaseUrl)) {
+    $base = $BaseUrl.TrimEnd("/")
+  }
+  $suffix = ""
+  if (-not [string]::IsNullOrWhiteSpace($Path)) {
+    $suffix = "/" + $Path.TrimStart("/")
+  }
+  return "$base$suffix"
 }
 
 function Get-PortProcessIds {
@@ -230,9 +246,11 @@ $pythonCommand = Resolve-PythonCommand -PythonExe $PythonExe
 $npmCommand = Resolve-CommandPath -Name "npm"
 $backendHealthUrl = "http://localhost:$BackendPort/health"
 $frontendRootUrl = $FrontendUrl
+$dualFrontendProbeUrl = Join-UrlPath -BaseUrl $frontendRootUrl -Path "ragint/"
 
 Write-Step "RepoRoot: $RepoRoot"
 Write-Step "FrontendUrl: $frontendRootUrl"
+Write-Step "DualFrontendProbeUrl: $dualFrontendProbeUrl"
 Write-Step "BackendHealthUrl: $backendHealthUrl"
 if ($env:CONDA_DEFAULT_ENV) {
   Write-Step "CondaEnv: $($env:CONDA_DEFAULT_ENV)"
@@ -249,18 +267,26 @@ Start-Process powershell -WorkingDirectory $RepoRoot -ArgumentList "-NoExit", "-
 Wait-UrlReady -Url $backendHealthUrl -TimeoutSec $BackendTimeoutSec -Name "backend"
 
 if (Test-UrlReady -Url $frontendRootUrl) {
-  Write-Step "Frontend is already running, reusing it"
-} else {
+  if (Test-UrlReady -Url $dualFrontendProbeUrl) {
+    Write-Step "Dual frontend is already running, reusing it"
+  } else {
+    Write-Step "Existing frontend on $FrontendPort is not dual-frontend mode, restarting"
+    Stop-PortProcesses -Port $FrontendPort -Name "frontend"
+  }
+}
+
+if (-not (Test-UrlReady -Url $frontendRootUrl) -or -not (Test-UrlReady -Url $dualFrontendProbeUrl)) {
   $frontendPids = @(Get-PortProcessIds -Port $FrontendPort)
   if ($frontendPids.Count -gt 0) {
     Stop-PortProcesses -Port $FrontendPort -Name "frontend"
   }
-  $frontendCommand = "Set-Location '$RepoRoot\\fronted'; & '$npmCommand' start"
-  Write-Step "Starting frontend"
+  $frontendCommand = "Set-Location '$RepoRoot\\fronted'; `$env:DUAL_FRONTEND_BACKEND_URL='http://127.0.0.1:$BackendPort'; & '$npmCommand' run serve:dual:e2e"
+  Write-Step "Starting dual frontend"
   Start-Process powershell -WorkingDirectory (Join-Path $RepoRoot "fronted") -ArgumentList "-NoExit", "-Command", $frontendCommand | Out-Null
 }
 
 Wait-UrlReady -Url $frontendRootUrl -TimeoutSec $FrontendTimeoutSec -Name "frontend"
+Wait-UrlReady -Url $dualFrontendProbeUrl -TimeoutSec $FrontendTimeoutSec -Name "dual frontend /ragint route"
 Write-Step "Opening browser: $frontendRootUrl"
 Start-Process $frontendRootUrl | Out-Null
 Write-Step "Frontend and backend are both ready"

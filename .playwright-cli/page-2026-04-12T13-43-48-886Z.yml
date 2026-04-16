@@ -1,0 +1,358 @@
+- generic [active] [ref=e1]:
+  - main [ref=e162]:
+    - generic [ref=e163]:
+      - generic [ref=e164]:
+        - generic [ref=e165]:
+          - generic [ref=e166]: Hall Product Explainer
+          - heading "心内介植入展厅" [level=1] [ref=e167]
+          - paragraph [ref=e168]: 当前设备会根据固定的 clientId 绑定展厅，只展示本厅产品，并优先维护本厅离线资源。
+        - generic [ref=e169]:
+          - button "刷新在线数据" [ref=e170] [cursor=pointer]
+          - button "同步离线资源" [ref=e171] [cursor=pointer]
+          - link "进入展厅讲解模式" [ref=e172] [cursor=pointer]:
+            - /url: /ragint/?entry=tour
+      - generic [ref=e173]:
+        - generic [ref=e174]:
+          - generic [ref=e175]: 设备 clientId
+          - generic [ref=e176]: pad-a
+        - generic [ref=e177]:
+          - generic [ref=e178]: 当前产品数
+          - generic [ref=e179]: "25"
+        - generic [ref=e180]:
+          - generic [ref=e181]: 网络状态
+          - generic [ref=e183]: 在线
+        - generic [ref=e184]:
+          - generic [ref=e185]: 离线状态
+          - generic [ref=e187]: 离线资源已同步（0 条音频）
+    - region "快速切换展厅" [ref=e188]:
+      - generic [ref=e189]:
+        - generic [ref=e190]: 快速切换展厅
+        - generic [ref=e191]: 点击按钮后会自动切换当前 Pad 的 clientId 与展厅内容
+      - generic [ref=e192]:
+        - button "展厅 1 心内介植入展厅 pad-a" [ref=e193] [cursor=pointer]:
+          - generic [ref=e194]: 展厅 1
+          - generic [ref=e195]: 心内介植入展厅
+          - generic [ref=e196]: pad-a
+        - button "展厅 2 心脏植入展厅 pad-b" [ref=e197] [cursor=pointer]:
+          - generic [ref=e198]: 展厅 2
+          - generic [ref=e199]: 心脏植入展厅
+          - generic [ref=e200]: pad-b
+        - button "展厅 3 外周介植入展厅 pad-c" [ref=e201] [cursor=pointer]:
+          - generic [ref=e202]: 展厅 3
+          - generic [ref=e203]: 外周介植入展厅
+          - generic [ref=e204]: pad-c
+        - button "展厅 4 神经介植入展厅 pad-d" [ref=e205] [cursor=pointer]:
+          - generic [ref=e206]: 展厅 4
+          - generic [ref=e207]: 神经介植入展厅
+          - generic [ref=e208]: pad-d
+        - button "展厅 5 外泌体与超声聚焦展厅 pad-e" [ref=e209] [cursor=pointer]:
+          - generic [ref=e210]: 展厅 5
+          - generic [ref=e211]: 外泌体与超声聚焦展厅
+          - generic [ref=e212]: pad-e
+        - button "展厅 6 骨科与泌尿产品展厅 pad-f" [ref=e213] [cursor=pointer]:
+          - generic [ref=e214]: 展厅 6
+          - generic [ref=e215]: 骨科与泌尿产品展厅
+          - generic [ref=e216]: pad-f
+        - button "展厅 7 非介入类产品展厅 pad-g" [ref=e217] [cursor=pointer]:
+          - generic [ref=e218]: 展厅 7
+          - generic [ref=e219]: 非介入类产品展厅
+          - generic [ref=e220]: pad-g
+        - button "展厅 8 医疗标准件展厅 pad-h" [ref=e221] [cursor=pointer]:
+          - generic [ref=e222]: 展厅 8
+          - generic [ref=e223]: 医疗标准件展厅
+          - generic [ref=e224]: pad-h
+    - generic [ref=e225]:
+      - generic [ref=e226]:
+        - generic [ref=e227]:
+          - generic [ref=e228]:
+            - generic [ref=e229]: 本厅产品列表
+            - generic [ref=e230]: 心内介植入展厅
+          - generic [ref=e231]: 实时数据
+        - generic [ref=e232]:
+          - button "三通旋塞-OFF Manifold for Single use-OFF 暂无音频 瑛泰 注册证号 沪械注准20242030122 生效时间 2024.5.30" [ref=e233] [cursor=pointer]:
+            - generic [ref=e234]:
+              - generic [ref=e235]:
+                - generic [ref=e236]: 三通旋塞-OFF
+                - generic [ref=e237]: Manifold for Single use-OFF
+              - generic [ref=e238]: 暂无音频
+            - generic [ref=e239]:
+              - generic [ref=e240]: 瑛泰
+              - generic [ref=e241]: 注册证号 沪械注准20242030122
+              - generic [ref=e242]: 生效时间 2024.5.30
+          - button "三通旋塞-ON Manifold for Single use-ON 暂无音频 瑛泰 注册证号 沪械注准20242030122 生效时间 2024.5.30" [ref=e243] [cursor=pointer]:
+            - generic [ref=e244]:
+              - generic [ref=e245]:
+                - generic [ref=e246]: 三通旋塞-ON
+                - generic [ref=e247]: Manifold for Single use-ON
+              - generic [ref=e248]: 暂无音频
+            - generic [ref=e249]:
+              - generic [ref=e250]: 瑛泰
+              - generic [ref=e251]: 注册证号 沪械注准20242030122
+              - generic [ref=e252]: 生效时间 2024.5.30
+          - button "Y型连接器 Stanch™ Y Connector Pack 暂无音频 瑛泰 注册证号 沪械注准20242030313 生效时间 2025.1.14" [ref=e253] [cursor=pointer]:
+            - generic [ref=e254]:
+              - generic [ref=e255]:
+                - generic [ref=e256]: Y型连接器
+                - generic [ref=e257]: Stanch™ Y Connector Pack
+              - generic [ref=e258]: 暂无音频
+            - generic [ref=e259]:
+              - generic [ref=e260]: 瑛泰
+              - generic [ref=e261]: 注册证号 沪械注准20242030313
+              - generic [ref=e262]: 生效时间 2025.1.14
+          - button "按压式Y型连接器 Stanch™ Y Connector Pack 暂无音频 瑛泰 注册证号 沪械注准20222030087 生效时间 2022.7.25" [ref=e263] [cursor=pointer]:
+            - generic [ref=e264]:
+              - generic [ref=e265]:
+                - generic [ref=e266]: 按压式Y型连接器
+                - generic [ref=e267]: Stanch™ Y Connector Pack
+              - generic [ref=e268]: 暂无音频
+            - generic [ref=e269]:
+              - generic [ref=e270]: 瑛泰
+              - generic [ref=e271]: 注册证号 沪械注准20222030087
+              - generic [ref=e272]: 生效时间 2022.7.25
+          - button "Y型连接阀套件 Stanch™ Y Connector Pack 暂无音频 瑛泰 注册证号 沪械注准20232030324 生效时间 2023.11.24" [ref=e273] [cursor=pointer]:
+            - generic [ref=e274]:
+              - generic [ref=e275]:
+                - generic [ref=e276]: Y型连接阀套件
+                - generic [ref=e277]: Stanch™ Y Connector Pack
+              - generic [ref=e278]: 暂无音频
+            - generic [ref=e279]:
+              - generic [ref=e280]: 瑛泰
+              - generic [ref=e281]: 注册证号 沪械注准20232030324
+              - generic [ref=e282]: 生效时间 2023.11.24
+          - button "穿刺针 Seldinger Needle 暂无音频 瑛泰 注册证号 国械注准20193031843 生效时间 2024.5.8" [ref=e283] [cursor=pointer]:
+            - generic [ref=e284]:
+              - generic [ref=e285]:
+                - generic [ref=e286]: 穿刺针
+                - generic [ref=e287]: Seldinger Needle
+              - generic [ref=e288]: 暂无音频
+            - generic [ref=e289]:
+              - generic [ref=e290]: 瑛泰
+              - generic [ref=e291]: 注册证号 国械注准20193031843
+              - generic [ref=e292]: 生效时间 2024.5.8
+          - button "一次性使用血管鞘 Introducer 暂无音频 瑛泰 注册证号 国械注准20213030647 生效时间 2021.8.18" [ref=e293] [cursor=pointer]:
+            - generic [ref=e294]:
+              - generic [ref=e295]:
+                - generic [ref=e296]: 一次性使用血管鞘
+                - generic [ref=e297]: Introducer
+              - generic [ref=e298]: 暂无音频
+            - generic [ref=e299]:
+              - generic [ref=e300]: 瑛泰
+              - generic [ref=e301]: 注册证号 国械注准20213030647
+              - generic [ref=e302]: 生效时间 2021.8.18
+          - button "一次性使用导管鞘套装 Introducer Set 暂无音频 瑛泰 注册证号 沪械注准20242030270 生效时间 2024.8.20" [ref=e303] [cursor=pointer]:
+            - generic [ref=e304]:
+              - generic [ref=e305]:
+                - generic [ref=e306]: 一次性使用导管鞘套装
+                - generic [ref=e307]: Introducer Set
+              - generic [ref=e308]: 暂无音频
+            - generic [ref=e309]:
+              - generic [ref=e310]: 瑛泰
+              - generic [ref=e311]: 注册证号 沪械注准20242030270
+              - generic [ref=e312]: 生效时间 2024.8.20
+          - button "一次性使用亲水涂层导管鞘套装 Introducer Set 暂无音频 瑛泰 注册证号 国械注准20203031014 生效时间 2020.12.31" [ref=e313] [cursor=pointer]:
+            - generic [ref=e314]:
+              - generic [ref=e315]:
+                - generic [ref=e316]: 一次性使用亲水涂层导管鞘套装
+                - generic [ref=e317]: Introducer Set
+              - generic [ref=e318]: 暂无音频
+            - generic [ref=e319]:
+              - generic [ref=e320]: 瑛泰
+              - generic [ref=e321]: 注册证号 国械注准20203031014
+              - generic [ref=e322]: 生效时间 2020.12.31
+          - button "股动脉鞘套装 Femoral Introducer set 暂无音频 瑛泰 注册证号 国械注准20213030647 生效时间 2021.8.18" [ref=e323] [cursor=pointer]:
+            - generic [ref=e324]:
+              - generic [ref=e325]:
+                - generic [ref=e326]: 股动脉鞘套装
+                - generic [ref=e327]: Femoral Introducer set
+              - generic [ref=e328]: 暂无音频
+            - generic [ref=e329]:
+              - generic [ref=e330]: 瑛泰
+              - generic [ref=e331]: 注册证号 国械注准20213030647
+              - generic [ref=e332]: 生效时间 2021.8.18
+          - button "桡动脉鞘套装 Transradial introducer Set 暂无音频 瑛泰 注册证号 国械注准20213030647 生效时间 2021.8.18" [ref=e333] [cursor=pointer]:
+            - generic [ref=e334]:
+              - generic [ref=e335]:
+                - generic [ref=e336]: 桡动脉鞘套装
+                - generic [ref=e337]: Transradial introducer Set
+              - generic [ref=e338]: 暂无音频
+            - generic [ref=e339]:
+              - generic [ref=e340]: 瑛泰
+              - generic [ref=e341]: 注册证号 国械注准20213030647
+              - generic [ref=e342]: 生效时间 2021.8.18
+          - button "球囊扩张压力泵 ForceFlator™ Inflation Device 暂无音频 瑛泰 注册证号 沪械注准20212030373 生效时间 2021.6.19" [ref=e343] [cursor=pointer]:
+            - generic [ref=e344]:
+              - generic [ref=e345]:
+                - generic [ref=e346]: 球囊扩张压力泵
+                - generic [ref=e347]: ForceFlator™ Inflation Device
+              - generic [ref=e348]: 暂无音频
+            - generic [ref=e349]:
+              - generic [ref=e350]: 瑛泰
+              - generic [ref=e351]: 注册证号 沪械注准20212030373
+              - generic [ref=e352]: 生效时间 2021.6.19
+          - button "数显球囊扩张压力泵 Digiflator®Digital Inflation Device 暂无音频 瑛泰 注册证号 沪械注准20232030021 生效时间 2023.2.6" [ref=e353] [cursor=pointer]:
+            - generic [ref=e354]:
+              - generic [ref=e355]:
+                - generic [ref=e356]: 数显球囊扩张压力泵
+                - generic [ref=e357]: Digiflator®Digital Inflation Device
+              - generic [ref=e358]: 暂无音频
+            - generic [ref=e359]:
+              - generic [ref=e360]: 瑛泰
+              - generic [ref=e361]: 注册证号 沪械注准20232030021
+              - generic [ref=e362]: 生效时间 2023.2.6
+          - button "按压式球囊扩张压力泵 FastFlator™ Inflation Device 暂无音频 瑛泰 注册证号 沪械注准20212030374 生效时间 2021.6.19" [ref=e363] [cursor=pointer]:
+            - generic [ref=e364]:
+              - generic [ref=e365]:
+                - generic [ref=e366]: 按压式球囊扩张压力泵
+                - generic [ref=e367]: FastFlator™ Inflation Device
+              - generic [ref=e368]: 暂无音频
+            - generic [ref=e369]:
+              - generic [ref=e370]: 瑛泰
+              - generic [ref=e371]: 注册证号 沪械注准20212030374
+              - generic [ref=e372]: 生效时间 2021.6.19
+          - button "按压式球囊扩张压力泵 Inflation Device II 暂无音频 瑛泰 注册证号 沪械注准20232030005 生效时间 2023.1.13" [ref=e373] [cursor=pointer]:
+            - generic [ref=e374]:
+              - generic [ref=e375]:
+                - generic [ref=e376]: 按压式球囊扩张压力泵
+                - generic [ref=e377]: Inflation Device II
+              - generic [ref=e378]: 暂无音频
+            - generic [ref=e379]:
+              - generic [ref=e380]: 瑛泰
+              - generic [ref=e381]: 注册证号 沪械注准20232030005
+              - generic [ref=e382]: 生效时间 2023.1.13
+          - button "造影剂推入器 Angiography Syringe 暂无音频 瑛泰 注册证号 国械注准20153030120 生效时间 2024.5.30" [ref=e383] [cursor=pointer]:
+            - generic [ref=e384]:
+              - generic [ref=e385]:
+                - generic [ref=e386]: 造影剂推入器
+                - generic [ref=e387]: Angiography Syringe
+              - generic [ref=e388]: 暂无音频
+            - generic [ref=e389]:
+              - generic [ref=e390]: 瑛泰
+              - generic [ref=e391]: 注册证号 国械注准20153030120
+              - generic [ref=e392]: 生效时间 2024.5.30
+          - button "造影剂推入器-C PC Syringe 暂无音频 瑛泰 注册证号 国械注准20153030120 生效时间 2024.5.30" [ref=e393] [cursor=pointer]:
+            - generic [ref=e394]:
+              - generic [ref=e395]:
+                - generic [ref=e396]: 造影剂推入器-C
+                - generic [ref=e397]: PC Syringe
+              - generic [ref=e398]: 暂无音频
+            - generic [ref=e399]:
+              - generic [ref=e400]: 瑛泰
+              - generic [ref=e401]: 注册证号 国械注准20153030120
+              - generic [ref=e402]: 生效时间 2024.5.30
+          - button "股动脉止血带 Femoral Pressure Bandage 暂无音频 瑛泰 注册证号 沪械注准20212140484 生效时间 2021.8.24" [ref=e403] [cursor=pointer]:
+            - generic [ref=e404]:
+              - generic [ref=e405]:
+                - generic [ref=e406]: 股动脉止血带
+                - generic [ref=e407]: Femoral Pressure Bandage
+              - generic [ref=e408]: 暂无音频
+            - generic [ref=e409]:
+              - generic [ref=e410]: 瑛泰
+              - generic [ref=e411]: 注册证号 沪械注准20212140484
+              - generic [ref=e412]: 生效时间 2021.8.24
+          - button "股动脉止血带 Femoral Pressure Bandage 暂无音频 瑛泰 注册证号 沪械注准20212140395 生效时间 2021.6.29" [ref=e413] [cursor=pointer]:
+            - generic [ref=e414]:
+              - generic [ref=e415]:
+                - generic [ref=e416]: 股动脉止血带
+                - generic [ref=e417]: Femoral Pressure Bandage
+              - generic [ref=e418]: 暂无音频
+            - generic [ref=e419]:
+              - generic [ref=e420]: 瑛泰
+              - generic [ref=e421]: 注册证号 沪械注准20212140395
+              - generic [ref=e422]: 生效时间 2021.6.29
+          - button "气囊式止血带II Transradial Pressure Bandage II 暂无音频 瑛泰 注册证号 沪械注准20202140417 生效时间 2020.8.31" [ref=e423] [cursor=pointer]:
+            - generic [ref=e424]:
+              - generic [ref=e425]:
+                - generic [ref=e426]: 气囊式止血带II
+                - generic [ref=e427]: Transradial Pressure Bandage II
+              - generic [ref=e428]: 暂无音频
+            - generic [ref=e429]:
+              - generic [ref=e430]: 瑛泰
+              - generic [ref=e431]: 注册证号 沪械注准20202140417
+              - generic [ref=e432]: 生效时间 2020.8.31
+          - button "桡动脉止血带I Transradial Pressure Bandage I 暂无音频 瑛泰 注册证号 沪械注准20202140509 生效时间 2020.10.27" [ref=e433] [cursor=pointer]:
+            - generic [ref=e434]:
+              - generic [ref=e435]:
+                - generic [ref=e436]: 桡动脉止血带I
+                - generic [ref=e437]: Transradial Pressure Bandage I
+              - generic [ref=e438]: 暂无音频
+            - generic [ref=e439]:
+              - generic [ref=e440]: 瑛泰
+              - generic [ref=e441]: 注册证号 沪械注准20202140509
+              - generic [ref=e442]: 生效时间 2020.10.27
+          - button "压力传感器 Extension Transducer 暂无音频 瑛泰 注册证号 国械注准20173073316 生效时间 2022.8.29" [ref=e443] [cursor=pointer]:
+            - generic [ref=e444]:
+              - generic [ref=e445]:
+                - generic [ref=e446]: 压力传感器
+                - generic [ref=e447]: Extension Transducer
+              - generic [ref=e448]: 暂无音频
+            - generic [ref=e449]:
+              - generic [ref=e450]: 瑛泰
+              - generic [ref=e451]: 注册证号 国械注准20173073316
+              - generic [ref=e452]: 生效时间 2022.8.29
+          - button "有创压力传感器 Pressure Transducer 暂无音频 瑛泰 注册证号 国械注准20173073316 生效时间 2022.8.29" [ref=e453] [cursor=pointer]:
+            - generic [ref=e454]:
+              - generic [ref=e455]:
+                - generic [ref=e456]: 有创压力传感器
+                - generic [ref=e457]: Pressure Transducer
+              - generic [ref=e458]: 暂无音频
+            - generic [ref=e459]:
+              - generic [ref=e460]: 瑛泰
+              - generic [ref=e461]: 注册证号 国械注准20173073316
+              - generic [ref=e462]: 生效时间 2022.8.29
+          - button "高压延长管 High Pressure Tubing 暂无音频 瑛泰 注册证号 国械注准20223030034 生效时间 2022.1.12" [ref=e463] [cursor=pointer]:
+            - generic [ref=e464]:
+              - generic [ref=e465]:
+                - generic [ref=e466]: 高压延长管
+                - generic [ref=e467]: High Pressure Tubing
+              - generic [ref=e468]: 暂无音频
+            - generic [ref=e469]:
+              - generic [ref=e470]: 瑛泰
+              - generic [ref=e471]: 注册证号 国械注准20223030034
+              - generic [ref=e472]: 生效时间 2022.1.12
+          - button "介入手术器械包 Manifold Kit 暂无音频 瑛泰 注册证号 国械注准20193031843 生效时间 2024.5.8" [ref=e473] [cursor=pointer]:
+            - generic [ref=e474]:
+              - generic [ref=e475]:
+                - generic [ref=e476]: 介入手术器械包
+                - generic [ref=e477]: Manifold Kit
+              - generic [ref=e478]: 暂无音频
+            - generic [ref=e479]:
+              - generic [ref=e480]: 瑛泰
+              - generic [ref=e481]: 注册证号 国械注准20193031843
+              - generic [ref=e482]: 生效时间 2024.5.8
+      - generic [ref=e483]:
+        - generic [ref=e484]:
+          - generic [ref=e485]:
+            - generic [ref=e486]:
+              - heading "三通旋塞-OFF" [level=1] [ref=e487]
+              - generic [ref=e488]: Manifold for Single use-OFF
+            - generic [ref=e489]:
+              - button "播放产品讲解" [disabled] [ref=e490]
+              - button "生成TTS讲解" [ref=e491] [cursor=pointer]
+              - button "上传录音" [ref=e492] [cursor=pointer]
+          - generic [ref=e493]: 本厅离线资源已就绪，断网后仍可继续播放。
+          - generic [ref=e494]:
+            - generic [ref=e495]: 讲解音频
+            - generic [ref=e496]: 当前还没有生效讲解音频。
+          - generic [ref=e497]:
+            - generic [ref=e498]: 产品介绍
+            - generic [ref=e499]: 用于介入手术中压力监测管路中的连接、输液和通路切换。 ON-阀门开关所指方向开放
+          - generic [ref=e500]:
+            - generic [ref=e501]: 产品信息
+            - generic [ref=e502]:
+              - generic [ref=e503]:
+                - generic [ref=e504]: 注册证名称
+                - generic [ref=e505]: 一次性使用三通旋塞
+              - generic [ref=e506]:
+                - generic [ref=e507]: 注册证号
+                - generic [ref=e508]: 沪械注准20242030122
+              - generic [ref=e509]:
+                - generic [ref=e510]: 生效时间
+                - generic [ref=e511]: 2024.5.30
+              - generic [ref=e512]:
+                - generic [ref=e513]: 所属公司
+                - generic [ref=e514]: 瑛泰
+        - generic [ref=e516]: 最近同步时间：2026/04/12 21:43
+  - contentinfo "音频播放区域" [ref=e79]:
+    - generic [ref=e80]:
+      - generic [ref=e81]: 当前播放
+      - generic [ref=e82]: 三通旋塞-OFF：暂无当前生效音频

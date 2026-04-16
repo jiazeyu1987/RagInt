@@ -1,0 +1,372 @@
+- generic [active] [ref=e1]:
+  - main [ref=e512]:
+    - generic [ref=e513]:
+      - generic [ref=e514]:
+        - generic [ref=e515]:
+          - generic [ref=e516]: Hall Product Explainer
+          - heading "医疗标准件展厅" [level=1] [ref=e517]
+          - paragraph [ref=e518]: 当前设备会根据固定的 clientId 绑定展厅，只展示本厅产品，并优先维护本厅离线资源。
+        - generic [ref=e519]:
+          - button "刷新在线数据" [ref=e520] [cursor=pointer]
+          - button "同步离线资源" [ref=e521] [cursor=pointer]
+          - link "进入展厅讲解模式" [ref=e522] [cursor=pointer]:
+            - /url: /ragint/?entry=tour
+      - generic [ref=e523]:
+        - generic [ref=e524]:
+          - generic [ref=e525]: 设备 clientId
+          - generic [ref=e526]: pad-h
+        - generic [ref=e527]:
+          - generic [ref=e528]: 当前产品数
+          - generic [ref=e529]: "27"
+        - generic [ref=e530]:
+          - generic [ref=e531]: 网络状态
+          - generic [ref=e533]: 在线
+        - generic [ref=e534]:
+          - generic [ref=e535]: 离线状态
+          - generic [ref=e537]: 离线资源已同步（0 条音频）
+    - region "快速切换展厅" [ref=e538]:
+      - generic [ref=e539]:
+        - generic [ref=e540]: 快速切换展厅
+        - generic [ref=e541]: 点击按钮后会自动切换当前 Pad 的 clientId 与展厅内容
+      - generic [ref=e542]:
+        - button "展厅 1 心内介植入展厅 pad-a" [ref=e543] [cursor=pointer]:
+          - generic [ref=e544]: 展厅 1
+          - generic [ref=e545]: 心内介植入展厅
+          - generic [ref=e546]: pad-a
+        - button "展厅 2 心脏植入展厅 pad-b" [ref=e547] [cursor=pointer]:
+          - generic [ref=e548]: 展厅 2
+          - generic [ref=e549]: 心脏植入展厅
+          - generic [ref=e550]: pad-b
+        - button "展厅 3 外周介植入展厅 pad-c" [ref=e551] [cursor=pointer]:
+          - generic [ref=e552]: 展厅 3
+          - generic [ref=e553]: 外周介植入展厅
+          - generic [ref=e554]: pad-c
+        - button "展厅 4 神经介植入展厅 pad-d" [ref=e555] [cursor=pointer]:
+          - generic [ref=e556]: 展厅 4
+          - generic [ref=e557]: 神经介植入展厅
+          - generic [ref=e558]: pad-d
+        - button "展厅 5 外泌体与超声聚焦展厅 pad-e" [ref=e559] [cursor=pointer]:
+          - generic [ref=e560]: 展厅 5
+          - generic [ref=e561]: 外泌体与超声聚焦展厅
+          - generic [ref=e562]: pad-e
+        - button "展厅 6 骨科与泌尿产品展厅 pad-f" [ref=e563] [cursor=pointer]:
+          - generic [ref=e564]: 展厅 6
+          - generic [ref=e565]: 骨科与泌尿产品展厅
+          - generic [ref=e566]: pad-f
+        - button "展厅 7 非介入类产品展厅 pad-g" [ref=e567] [cursor=pointer]:
+          - generic [ref=e568]: 展厅 7
+          - generic [ref=e569]: 非介入类产品展厅
+          - generic [ref=e570]: pad-g
+        - button "展厅 8 医疗标准件展厅 pad-h" [ref=e571] [cursor=pointer]:
+          - generic [ref=e572]: 展厅 8
+          - generic [ref=e573]: 医疗标准件展厅
+          - generic [ref=e574]: pad-h
+    - generic [ref=e575]:
+      - generic [ref=e576]:
+        - generic [ref=e577]:
+          - generic [ref=e578]:
+            - generic [ref=e579]: 本厅产品列表
+            - generic [ref=e580]: 医疗标准件展厅
+          - generic [ref=e581]: 实时数据
+        - generic [ref=e582]:
+          - button "颅内血栓抽吸导管 Intracranial Thrombus Aspiration Catheter 暂无音频 璞慧 注册证号 国械注准20233030307 生效时间 2023.3.13" [ref=e583] [cursor=pointer]:
+            - generic [ref=e584]:
+              - generic [ref=e585]:
+                - generic [ref=e586]: 颅内血栓抽吸导管
+                - generic [ref=e587]: Intracranial Thrombus Aspiration Catheter
+              - generic [ref=e588]: 暂无音频
+            - generic [ref=e589]:
+              - generic [ref=e590]: 璞慧
+              - generic [ref=e591]: 注册证号 国械注准20233030307
+              - generic [ref=e592]: 生效时间 2023.3.13
+          - button "神经输送支架微导管 Neurovascular Stent Delivery Micro Catheter 暂无音频 璞康 注册证号 / 生效时间 /" [ref=e593] [cursor=pointer]:
+            - generic [ref=e594]:
+              - generic [ref=e595]:
+                - generic [ref=e596]: 神经输送支架微导管
+                - generic [ref=e597]: Neurovascular Stent Delivery Micro Catheter
+              - generic [ref=e598]: 暂无音频
+            - generic [ref=e599]:
+              - generic [ref=e600]: 璞康
+              - generic [ref=e601]: 注册证号 /
+              - generic [ref=e602]: 生效时间 /
+          - button "可控弯导管 内径6F-20F Steerable Catheter Tube ID：6F-20F 暂无音频 瑛泰 注册证号 沪械注准20242030241 生效时间 2024.7.19" [ref=e603] [cursor=pointer]:
+            - generic [ref=e604]:
+              - generic [ref=e605]:
+                - generic [ref=e606]: 可控弯导管 内径6F-20F
+                - generic [ref=e607]: Steerable Catheter Tube ID：6F-20F
+              - generic [ref=e608]: 暂无音频
+            - generic [ref=e609]:
+              - generic [ref=e610]: 瑛泰
+              - generic [ref=e611]: 注册证号 沪械注准20242030241
+              - generic [ref=e612]: 生效时间 2024.7.19
+          - button "胆道用斑马导丝 Zebra Guide Wire 暂无音频 七木 注册证号 沪械注准20212020385 生效时间 2021.6.22" [ref=e613] [cursor=pointer]:
+            - generic [ref=e614]:
+              - generic [ref=e615]:
+                - generic [ref=e616]: 胆道用斑马导丝
+                - generic [ref=e617]: Zebra Guide Wire
+              - generic [ref=e618]: 暂无音频
+            - generic [ref=e619]:
+              - generic [ref=e620]: 七木
+              - generic [ref=e621]: 注册证号 沪械注准20212020385
+              - generic [ref=e622]: 生效时间 2021.6.22
+          - button "胆道取石球囊导管 Biliary stone extraction balloon catheter 暂无音频 瑛泰 注册证号 沪械注准20222020035 生效时间 2022.3.9" [ref=e623] [cursor=pointer]:
+            - generic [ref=e624]:
+              - generic [ref=e625]:
+                - generic [ref=e626]: 胆道取石球囊导管
+                - generic [ref=e627]: Biliary stone extraction balloon catheter
+              - generic [ref=e628]: 暂无音频
+            - generic [ref=e629]:
+              - generic [ref=e630]: 瑛泰
+              - generic [ref=e631]: 注册证号 沪械注准20222020035
+              - generic [ref=e632]: 生效时间 2022.3.9
+          - button "取石网篮 Stone extractor 暂无音频 瑛泰 注册证号 沪械注准20212020492 生效时间 2021.8.25" [ref=e633] [cursor=pointer]:
+            - generic [ref=e634]:
+              - generic [ref=e635]:
+                - generic [ref=e636]: 取石网篮
+                - generic [ref=e637]: Stone extractor
+              - generic [ref=e638]: 暂无音频
+            - generic [ref=e639]:
+              - generic [ref=e640]: 瑛泰
+              - generic [ref=e641]: 注册证号 沪械注准20212020492
+              - generic [ref=e642]: 生效时间 2021.8.25
+          - button "心内输送导丝微导管 Cardiology Micro Catheter 暂无音频 璞康 注册证号 / 生效时间 /" [ref=e643] [cursor=pointer]:
+            - generic [ref=e644]:
+              - generic [ref=e645]:
+                - generic [ref=e646]: 心内输送导丝微导管
+                - generic [ref=e647]: Cardiology Micro Catheter
+              - generic [ref=e648]: 暂无音频
+            - generic [ref=e649]:
+              - generic [ref=e650]: 璞康
+              - generic [ref=e651]: 注册证号 /
+              - generic [ref=e652]: 生效时间 /
+          - button "OEM编织导管 OEM Breidinp Tube 暂无音频 璞康 注册证号 / 生效时间 /" [ref=e653] [cursor=pointer]:
+            - generic [ref=e654]:
+              - generic [ref=e655]:
+                - generic [ref=e656]: OEM编织导管
+                - generic [ref=e657]: OEM Breidinp Tube
+              - generic [ref=e658]: 暂无音频
+            - generic [ref=e659]:
+              - generic [ref=e660]: 璞康
+              - generic [ref=e661]: 注册证号 /
+              - generic [ref=e662]: 生效时间 /
+          - button "PTFE管 壁厚：5μm PTFE Tube 暂无音频 瑛泰 注册证号 / 生效时间 /" [ref=e663] [cursor=pointer]:
+            - generic [ref=e664]:
+              - generic [ref=e665]:
+                - generic [ref=e666]: PTFE管 壁厚：5μm
+                - generic [ref=e667]: PTFE Tube
+              - generic [ref=e668]: 暂无音频
+            - generic [ref=e669]:
+              - generic [ref=e670]: 瑛泰
+              - generic [ref=e671]: 注册证号 /
+              - generic [ref=e672]: 生效时间 /
+          - button "热收缩管收缩比2:1 Heat shrink tubeShrink ratio 2:1 暂无音频 瑛泰 注册证号 / 生效时间 /" [ref=e673] [cursor=pointer]:
+            - generic [ref=e674]:
+              - generic [ref=e675]:
+                - generic [ref=e676]: 热收缩管收缩比2:1
+                - generic [ref=e677]: Heat shrink tubeShrink ratio 2:1
+              - generic [ref=e678]: 暂无音频
+            - generic [ref=e679]:
+              - generic [ref=e680]: 瑛泰
+              - generic [ref=e681]: 注册证号 /
+              - generic [ref=e682]: 生效时间 /
+          - button "可调弯导管 Steerable Catheter 暂无音频 瑛泰 注册证号 / 生效时间 /" [ref=e683] [cursor=pointer]:
+            - generic [ref=e684]:
+              - generic [ref=e685]:
+                - generic [ref=e686]: 可调弯导管
+                - generic [ref=e687]: Steerable Catheter
+              - generic [ref=e688]: 暂无音频
+            - generic [ref=e689]:
+              - generic [ref=e690]: 瑛泰
+              - generic [ref=e691]: 注册证号 /
+              - generic [ref=e692]: 生效时间 /
+          - button "亲水涂层溶液 Hydrophilic Coating Solution 暂无音频 瑛泰 注册证号 / 生效时间 /" [ref=e693] [cursor=pointer]:
+            - generic [ref=e694]:
+              - generic [ref=e695]:
+                - generic [ref=e696]: 亲水涂层溶液
+                - generic [ref=e697]: Hydrophilic Coating Solution
+              - generic [ref=e698]: 暂无音频
+            - generic [ref=e699]:
+              - generic [ref=e700]: 瑛泰
+              - generic [ref=e701]: 注册证号 /
+              - generic [ref=e702]: 生效时间 /
+          - button "海波管 Hypotube 暂无音频 自动化 注册证号 / 生效时间 /" [ref=e703] [cursor=pointer]:
+            - generic [ref=e704]:
+              - generic [ref=e705]:
+                - generic [ref=e706]: 海波管
+                - generic [ref=e707]: Hypotube
+              - generic [ref=e708]: 暂无音频
+            - generic [ref=e709]:
+              - generic [ref=e710]: 自动化
+              - generic [ref=e711]: 注册证号 /
+              - generic [ref=e712]: 生效时间 /
+          - button "蚀刻PTFE内衬管 PTFE LinerFEP 暂无音频 瑛泰 注册证号 / 生效时间 /" [ref=e713] [cursor=pointer]:
+            - generic [ref=e714]:
+              - generic [ref=e715]:
+                - generic [ref=e716]: 蚀刻PTFE内衬管
+                - generic [ref=e717]: PTFE LinerFEP
+              - generic [ref=e718]: 暂无音频
+            - generic [ref=e719]:
+              - generic [ref=e720]: 瑛泰
+              - generic [ref=e721]: 注册证号 /
+              - generic [ref=e722]: 生效时间 /
+          - button "导丝芯轴 Guide Wire Rod 暂无音频 瑛泰 注册证号 / 生效时间 /" [ref=e723] [cursor=pointer]:
+            - generic [ref=e724]:
+              - generic [ref=e725]:
+                - generic [ref=e726]: 导丝芯轴
+                - generic [ref=e727]: Guide Wire Rod
+              - generic [ref=e728]: 暂无音频
+            - generic [ref=e729]:
+              - generic [ref=e730]: 瑛泰
+              - generic [ref=e731]: 注册证号 /
+              - generic [ref=e732]: 生效时间 /
+          - button "扁丝 Stanless Steel Flat Wire 暂无音频 自动化 注册证号 / 生效时间 /" [ref=e733] [cursor=pointer]:
+            - generic [ref=e734]:
+              - generic [ref=e735]:
+                - generic [ref=e736]: 扁丝
+                - generic [ref=e737]: Stanless Steel Flat Wire
+              - generic [ref=e738]: 暂无音频
+            - generic [ref=e739]:
+              - generic [ref=e740]: 自动化
+              - generic [ref=e741]: 注册证号 /
+              - generic [ref=e742]: 生效时间 /
+          - button "热收缩管 Heat shrink tube 暂无音频 瑛泰 注册证号 / 生效时间 /" [ref=e743] [cursor=pointer]:
+            - generic [ref=e744]:
+              - generic [ref=e745]:
+                - generic [ref=e746]: 热收缩管
+                - generic [ref=e747]: Heat shrink tube
+              - generic [ref=e748]: 暂无音频
+            - generic [ref=e749]:
+              - generic [ref=e750]: 瑛泰
+              - generic [ref=e751]: 注册证号 /
+              - generic [ref=e752]: 生效时间 /
+          - button "PTFE涂层钢丝 PTFE Coated Wires 暂无音频 瑛泰 注册证号 / 生效时间 /" [ref=e753] [cursor=pointer]:
+            - generic [ref=e754]:
+              - generic [ref=e755]:
+                - generic [ref=e756]: PTFE涂层钢丝
+                - generic [ref=e757]: PTFE Coated Wires
+              - generic [ref=e758]: 暂无音频
+            - generic [ref=e759]:
+              - generic [ref=e760]: 瑛泰
+              - generic [ref=e761]: 注册证号 /
+              - generic [ref=e762]: 生效时间 /
+          - button "磨削芯丝 Guided core wire 暂无音频 自动化 注册证号 / 生效时间 /" [ref=e763] [cursor=pointer]:
+            - generic [ref=e764]:
+              - generic [ref=e765]:
+                - generic [ref=e766]: 磨削芯丝
+                - generic [ref=e767]: Guided core wire
+              - generic [ref=e768]: 暂无音频
+            - generic [ref=e769]:
+              - generic [ref=e770]: 自动化
+              - generic [ref=e771]: 注册证号 /
+              - generic [ref=e772]: 生效时间 /
+          - button "冲洗阀 Flush Device 暂无音频 瑛泰 注册证号 / 生效时间 /" [ref=e773] [cursor=pointer]:
+            - generic [ref=e774]:
+              - generic [ref=e775]:
+                - generic [ref=e776]: 冲洗阀
+                - generic [ref=e777]: Flush Device
+              - generic [ref=e778]: 暂无音频
+            - generic [ref=e779]:
+              - generic [ref=e780]: 瑛泰
+              - generic [ref=e781]: 注册证号 /
+              - generic [ref=e782]: 生效时间 /
+          - button "单向阀 Check Valve 暂无音频 瑛泰 注册证号 / 生效时间 /" [ref=e783] [cursor=pointer]:
+            - generic [ref=e784]:
+              - generic [ref=e785]:
+                - generic [ref=e786]: 单向阀
+                - generic [ref=e787]: Check Valve
+              - generic [ref=e788]: 暂无音频
+            - generic [ref=e789]:
+              - generic [ref=e790]: 瑛泰
+              - generic [ref=e791]: 注册证号 /
+              - generic [ref=e792]: 生效时间 /
+          - button "正压接头 Positive pressure connector 暂无音频 瑛泰 注册证号 国械标准20183141510 生效时间 2023.1.4" [ref=e793] [cursor=pointer]:
+            - generic [ref=e794]:
+              - generic [ref=e795]:
+                - generic [ref=e796]: 正压接头
+                - generic [ref=e797]: Positive pressure connector
+              - generic [ref=e798]: 暂无音频
+            - generic [ref=e799]:
+              - generic [ref=e800]: 瑛泰
+              - generic [ref=e801]: 注册证号 国械标准20183141510
+              - generic [ref=e802]: 生效时间 2023.1.4
+          - button "精量调节器 Flow Regulator 暂无音频 瑛泰 注册证号 / 生效时间 /" [ref=e803] [cursor=pointer]:
+            - generic [ref=e804]:
+              - generic [ref=e805]:
+                - generic [ref=e806]: 精量调节器
+                - generic [ref=e807]: Flow Regulator
+              - generic [ref=e808]: 暂无音频
+            - generic [ref=e809]:
+              - generic [ref=e810]: 瑛泰
+              - generic [ref=e811]: 注册证号 /
+              - generic [ref=e812]: 生效时间 /
+          - button "接头类 Connectors 暂无音频 瑛泰 注册证号 / 生效时间 /" [ref=e813] [cursor=pointer]:
+            - generic [ref=e814]:
+              - generic [ref=e815]:
+                - generic [ref=e816]: 接头类
+                - generic [ref=e817]: Connectors
+              - generic [ref=e818]: 暂无音频
+            - generic [ref=e819]:
+              - generic [ref=e820]: 瑛泰
+              - generic [ref=e821]: 注册证号 /
+              - generic [ref=e822]: 生效时间 /
+          - button "三通旋塞 Stopcock 暂无音频 瑛泰 注册证号 沪械注准20242030122 生效时间 2024.5.30" [ref=e823] [cursor=pointer]:
+            - generic [ref=e824]:
+              - generic [ref=e825]:
+                - generic [ref=e826]: 三通旋塞
+                - generic [ref=e827]: Stopcock
+              - generic [ref=e828]: 暂无音频
+            - generic [ref=e829]:
+              - generic [ref=e830]: 瑛泰
+              - generic [ref=e831]: 注册证号 沪械注准20242030122
+              - generic [ref=e832]: 生效时间 2024.5.30
+          - button "无针加药接头 Needle Free Connectors 暂无音频 瑛泰 注册证号 / 生效时间 /" [ref=e833] [cursor=pointer]:
+            - generic [ref=e834]:
+              - generic [ref=e835]:
+                - generic [ref=e836]: 无针加药接头
+                - generic [ref=e837]: Needle Free Connectors
+              - generic [ref=e838]: 暂无音频
+            - generic [ref=e839]:
+              - generic [ref=e840]: 瑛泰
+              - generic [ref=e841]: 注册证号 /
+              - generic [ref=e842]: 生效时间 /
+          - button "抗脂三通 Lipid-resistant Stopcock 暂无音频 德瑞 注册证号 / 生效时间 /" [ref=e843] [cursor=pointer]:
+            - generic [ref=e844]:
+              - generic [ref=e845]:
+                - generic [ref=e846]: 抗脂三通
+                - generic [ref=e847]: Lipid-resistant Stopcock
+              - generic [ref=e848]: 暂无音频
+            - generic [ref=e849]:
+              - generic [ref=e850]: 德瑞
+              - generic [ref=e851]: 注册证号 /
+              - generic [ref=e852]: 生效时间 /
+      - generic [ref=e853]:
+        - generic [ref=e854]:
+          - generic [ref=e855]:
+            - generic [ref=e856]:
+              - heading "颅内血栓抽吸导管" [level=1] [ref=e857]
+              - generic [ref=e858]: Intracranial Thrombus Aspiration Catheter
+            - button "播放产品讲解" [disabled] [ref=e860]
+          - generic [ref=e861]: 本厅离线资源已就绪，断网后仍可继续播放。
+          - generic [ref=e862]:
+            - generic [ref=e863]: 产品介绍
+            - generic [ref=e864]: 适用于对颅内大血管阻塞（颈内动脉、大脑中动脉—M1段和M2段、基底动脉和椎动脉内）继发急性缺血性脑中风的患者进行血管再通，而且必须在症状发作的8小时内。不能使用静脉组织型纤溶酶原激活物（IV t-PA）或IV t-PA治疗失败的患者是该治疗的人选。
+          - generic [ref=e865]:
+            - generic [ref=e866]: 产品信息
+            - generic [ref=e867]:
+              - generic [ref=e868]:
+                - generic [ref=e869]: 注册证名称
+                - generic [ref=e870]: 颅内血栓抽吸导管
+              - generic [ref=e871]:
+                - generic [ref=e872]: 注册证号
+                - generic [ref=e873]: 国械注准20233030307
+              - generic [ref=e874]:
+                - generic [ref=e875]: 生效时间
+                - generic [ref=e876]: 2023.3.13
+              - generic [ref=e877]:
+                - generic [ref=e878]: 所属公司
+                - generic [ref=e879]: 璞慧
+        - generic [ref=e881]: 最近同步时间：2026/04/12 21:15
+  - contentinfo "音频播放区域" [ref=e79]:
+    - generic [ref=e80]:
+      - generic [ref=e81]: 当前播放
+      - generic [ref=e82]: 颅内血栓抽吸导管：暂无当前生效音频

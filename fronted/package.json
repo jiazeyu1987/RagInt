@@ -11,8 +11,10 @@
   "scripts": {
     "start": "set PORT=4981&& react-scripts start",
     "build": "react-scripts build",
+    "serve:dual:e2e": "node scripts/serve_dual_frontends.js",
     "test": "react-scripts test",
     "test:e2e": "playwright test",
+    "test:e2e:asr-accuracy": "node scripts/run_asr_accuracy_e2e.js",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed",
     "pw:install": "playwright install chromium",

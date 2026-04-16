@@ -25,9 +25,9 @@ module.exports = defineConfig({
     },
   ],
   webServer: {
-    command: 'npm start',
+    command: 'npm run serve:dual:e2e',
     url: 'http://127.0.0.1:4981',
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
+    reuseExistingServer: !!process.env.PW_REUSE_EXISTING_SERVER,
+    timeout: 240_000,
   },
 });

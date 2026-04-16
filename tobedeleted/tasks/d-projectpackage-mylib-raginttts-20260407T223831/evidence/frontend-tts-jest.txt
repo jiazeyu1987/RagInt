@@ -1,0 +1,17 @@
+
+> voice-qa-frontend@1.0.0 test
+> react-scripts test --watchAll=false --runInBand src/audio/ttsAudio.test.js src/hooks/useTtsUiSync.test.js src/managers/LocalSpeechTtsManager.test.js src/managers/TtsBroadcastManager.test.js src/managers/TtsQueueManager.test.js src/managers/createTtsManager.test.js src/managers/createTtsOnStopIndexChange.test.js
+
+PASS src/managers/TtsQueueManager.test.js
+PASS src/hooks/useTtsUiSync.test.js
+PASS src/managers/createTtsManager.test.js
+PASS src/audio/ttsAudio.test.js
+PASS src/managers/LocalSpeechTtsManager.test.js
+PASS src/managers/createTtsOnStopIndexChange.test.js
+PASS src/managers/TtsBroadcastManager.test.js
+
+Test Suites: 7 passed, 7 total
+Tests:       24 passed, 24 total
+Snapshots:   0 total
+Time:        0.893 s, estimated 1 s
+Ran all test suites matching /src\\audio\\ttsAudio.test.js|src\\hooks\\useTtsUiSync.test.js|src\\managers\\LocalSpeechTtsManager.test.js|src\\managers\\TtsBroadcastManager.test.js|src\\managers\\TtsQueueManager.test.js|src\\managers\\createTtsManager.test.js|src\\managers\\createTtsOnStopIndexChange.test.js/i.

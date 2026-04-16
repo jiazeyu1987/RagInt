@@ -7,7 +7,7 @@ export function getBackendBase() {
   const explicit = process.env.REACT_APP_BACKEND_URL || process.env.REACT_APP_BACKEND_BASE;
   const raw = String(explicit || '').trim();
   if (raw) return raw.replace(/\/+$/, '');
-  if (process.env.NODE_ENV === 'development') return 'http://localhost:8000';
+  if (process.env.NODE_ENV === 'development') return 'http://localhost:8101';
   return '';
 }
 

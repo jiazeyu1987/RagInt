@@ -3,7 +3,7 @@ const { test, expect } = require('@playwright/test');
 const RUN_REAL_INTEGRATION = String(process.env.PW_REAL_INTEGRATION || '').trim() === '1';
 const RUN_REAL_UI = String(process.env.PW_REAL_UI || '').trim() === '1';
 const BACKEND_BASE = String(
-  process.env.PW_REAL_BACKEND_URL || process.env.REACT_APP_BACKEND_URL || 'http://127.0.0.1:8000'
+  process.env.PW_REAL_BACKEND_URL || process.env.REACT_APP_BACKEND_URL || 'http://127.0.0.1:8101'
 )
   .trim()
   .replace(/\/+$/, '');
@@ -82,7 +82,7 @@ test.describe('real services integration', () => {
   test('frontend text submit works against real backend', async ({ page }) => {
     test.skip(!RUN_REAL_UI, 'Set PW_REAL_UI=1 to include UI-level integration check.');
 
-    await page.goto('/');
+    await page.goto('/ragint/');
     await expect(page.locator('.app')).toBeVisible();
 
     const text = String(process.env.PW_REAL_UI_TEXT || 'Please answer with one concise line.').trim();

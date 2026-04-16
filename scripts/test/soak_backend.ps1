@@ -1,5 +1,5 @@
 param(
-  [string]$BackendBaseUrl = "http://localhost:8000",
+  [string]$BackendBaseUrl = "http://localhost:8101",
   [int]$Seconds = 180,
   [int]$IntervalMs = 500,
   [string]$OutFile = ""

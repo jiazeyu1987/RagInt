@@ -60,7 +60,6 @@ function buildDefaultSettings(overrides = {}) {
     wakeWord: 'hello assistant',
     wakeWordStrict: false,
     wakeWordCooldownMs: 5000,
-    asrAutoSubmitOnWakeEnabled: true,
     asrAutoResumeAfterAnswerEnabled: true,
     asrAutoResumeAfterAnswerDelayMs: 1200,
     ...overrides,
@@ -282,7 +281,7 @@ async function submitText(page, text) {
 }
 
 async function clickStartTour(page) {
-  await page.locator('.input-section .home-actions button').first().click();
+  await page.getByRole('button', { name: /\u5f00\u59cb\u8bb2\u89e3|\u7ee7\u7eed\u8bb2\u89e3|\u6253\u65ad/ }).first().click();
 }
 
 function createState(settingsOverrides = {}) {
@@ -312,7 +311,7 @@ function createState(settingsOverrides = {}) {
 test('recording narration flow: start tour with recording enabled', async ({ page }) => {
   const state = createState({ tourRecordingEnabled: true });
   await installApiMocks(page, state);
-  await page.goto('/');
+  await page.goto('/ragint/');
   await expect(page.locator('.app')).toBeVisible();
 
   await clickStartTour(page);
@@ -326,7 +325,7 @@ test('recording narration flow: start tour with recording enabled', async ({ pag
 test('playback archive flow: start tour reads archived stop payload', async ({ page }) => {
   const state = createState({ playTourRecordingEnabled: true, selectedTourRecordingId: 'rec-archive-1' });
   await installApiMocks(page, state);
-  await page.goto('/');
+  await page.goto('/ragint/');
   await expect(page.locator('.app')).toBeVisible();
 
   await clickStartTour(page);
@@ -351,7 +350,7 @@ test('recording management flow: rename -> regenerate segment -> delete archive'
   };
 
   await installApiMocks(page, state);
-  await page.goto('/');
+  await page.goto('/ragint/');
   await expect(page.locator('.app')).toBeVisible();
 
   await page.locator('.settings-tab-btn').nth(4).click();
@@ -405,7 +404,7 @@ test('group high priority takeover: active tour is interrupted and takeover ques
     window.__RAGINT_E2E__ = { enableAsrMock: true };
   });
   await installApiMocks(page, state);
-  await page.goto('/');
+  await page.goto('/ragint/');
   await expect(page.locator('.app')).toBeVisible();
 
   await expect
@@ -441,7 +440,7 @@ test('agent mode constraint: blocks submit when agent missing, allows after sele
     window.__RAGINT_E2E__ = { enableAsrMock: true };
   });
   await installApiMocks(page, state);
-  await page.goto('/');
+  await page.goto('/ragint/');
   await expect(page.locator('.app')).toBeVisible();
 
   await expect
@@ -487,7 +486,7 @@ test('agent mode constraint: blocks submit when agent missing, allows after sele
 test('voice command chain: next/prev/jump commands are parsed and executed', async ({ page }) => {
   const state = createState();
   await installApiMocks(page, state);
-  await page.goto('/');
+  await page.goto('/ragint/');
   await expect(page.locator('.app')).toBeVisible();
 
   await submitText(page, 'next');
@@ -512,7 +511,7 @@ test('error recovery: first ask fails and next ask still succeeds', async ({ pag
   const state = createState();
   state.askFailOnce = true;
   await installApiMocks(page, state);
-  await page.goto('/');
+  await page.goto('/ragint/');
   await expect(page.locator('.app')).toBeVisible();
 
   await submitText(page, 'fail once');
@@ -526,7 +525,7 @@ test('timeout recovery: first ask times out and next ask still succeeds', async 
   const state = createState();
   state.askTimeoutOnce = true;
   await installApiMocks(page, state);
-  await page.goto('/');
+  await page.goto('/ragint/');
   await expect(page.locator('.app')).toBeVisible();
 
   await submitText(page, 'timeout once');
@@ -542,7 +541,7 @@ test('disconnect recovery: stream ends without done and next ask still succeeds'
   const state = createState();
   state.askDisconnectOnce = true;
   await installApiMocks(page, state);
-  await page.goto('/');
+  await page.goto('/ragint/');
   await expect(page.locator('.app')).toBeVisible();
 
   await submitText(page, 'disconnect once');

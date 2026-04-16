@@ -1,0 +1,1430 @@
+const { test, expect } = require('@playwright/test');
+const fs = require('fs');
+const path = require('path');
+
+test.describe.configure({ mode: 'serial' });
+
+const CORS_HEADERS = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
+  'access-control-allow-headers': '*',
+};
+
+const MOCK_AUDIO_PATH = path.join(__dirname, 'fixtures', 'tone.wav');
+const MOCK_AUDIO_BYTES = fs.readFileSync(MOCK_AUDIO_PATH);
+
+const MOCK_IMAGE_BYTES = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+b3X8AAAAASUVORK5CYII=',
+  'base64'
+);
+
+const DEFAULT_DISPLAY = Object.freeze({
+  display_id: 'display_pad_a',
+  display_name: 'Display A',
+  slot_station_ids: ['station_entrance', 'station_second'],
+});
+
+function analyzeMockAudio(bytes) {
+  const payload = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes || []);
+  let nonZeroCount = 0;
+  for (let index = 44; index < payload.length; index += 2) {
+    if (payload[index] !== 0 || payload[index + 1] !== 0) {
+      nonZeroCount += 1;
+      if (nonZeroCount > 32) break;
+    }
+  }
+  return {
+    byteLength: payload.length,
+    nonZeroCount,
+  };
+}
+
+function createBaseFixture() {
+  return {
+    display: {
+      ...DEFAULT_DISPLAY,
+      updated_at_ms: 1710000000000,
+    },
+    hall: {
+      hall_id: 'hall_01',
+      hall_name: '心内介植入展厅',
+      updated_at_ms: 1710000000000,
+    },
+    products: [
+      {
+        product_id: 'product_001',
+        hall_id: 'hall_01',
+        sort_order: 1,
+        product_name: '造影导管',
+        product_name_en: 'Angiography Catheter',
+        intro_text: '造影导管介绍',
+        registration_name: '造影导管注册证',
+        registration_number: 'REG-001',
+        effective_date: '2026-01-01',
+        company: '瑛泰',
+        current_audio: {
+          audio_asset_id: 'audio_001',
+          source_type: 'recorded',
+          text_snapshot: '造影导管默认讲解',
+          updated_at_ms: 1710000000100,
+        },
+        images: [{ image_asset_id: 'image_001', mimetype: 'image/png', updated_at_ms: 1710000000150 }],
+      },
+      {
+        product_id: 'product_002',
+        hall_id: 'hall_01',
+        sort_order: 2,
+        product_name: '亲水涂层造影导管',
+        product_name_en: 'Hydrophilic Angiography Catheter',
+        intro_text: '亲水涂层造影导管介绍',
+        registration_name: '亲水涂层造影导管注册证',
+        registration_number: 'REG-002',
+        effective_date: '2026-01-02',
+        company: '瑛泰',
+        current_audio: {
+          audio_asset_id: 'audio_002',
+          source_type: 'tts',
+          text_snapshot: '亲水涂层造影导管默认 TTS 讲解',
+          updated_at_ms: 1710000000200,
+        },
+        images: [{ image_asset_id: 'image_002', mimetype: 'image/png', updated_at_ms: 1710000000250 }],
+      },
+      {
+        product_id: 'product_003',
+        hall_id: 'hall_01',
+        sort_order: 3,
+        product_name: '压力传感器',
+        product_name_en: 'Pressure Transducer',
+        intro_text: '压力传感器介绍',
+        registration_name: '压力传感器注册证',
+        registration_number: 'REG-003',
+        effective_date: '2026-01-03',
+        company: '瑛泰',
+        current_audio: null,
+        images: [],
+      },
+    ],
+    recordings: {
+      recording_station_a: {
+        recording_id: 'recording_station_a',
+        display_name: '站点 A 讲解',
+        created_at_ms: 1710000001000,
+        finished_at_ms: 1710000002000,
+        stops: ['入口介绍', '器械说明'],
+        metadata: {},
+      },
+      recording_station_b: {
+        recording_id: 'recording_station_b',
+        display_name: '站点 B 讲解',
+        created_at_ms: 1710000003000,
+        finished_at_ms: 1710000004000,
+        stops: ['第二站介绍'],
+        metadata: {},
+      },
+    },
+    stations: {
+      station_a: {
+        station_id: 'station_entrance',
+        slot_key: 'display_slot_1',
+        station_key: 'station_a',
+        label: '入口站点',
+        recording_id: 'recording_station_a',
+        stop_index: 0,
+        stop_name: '入口介绍',
+        background_enabled: true,
+        wireframe_enabled: true,
+        background_updated_at_ms: 1710000010000,
+        wireframe_updated_at_ms: 1710000010000,
+        base_width: 1024,
+        base_height: 768,
+        hotspots: [
+          {
+            hotspot_id: 'station_hotspot_a_1',
+            product_id: 'product_001',
+            sort_order: 1,
+            x_pct: 0.1,
+            y_pct: 0.15,
+            width_pct: 0.2,
+            height_pct: 0.2,
+            updated_at_ms: 1710000010100,
+          },
+        ],
+        timeline_events: [
+          {
+            event_id: 'timeline_station_a_1',
+            sort_order: 0,
+            time_ms: 0,
+            product_id: 'product_001',
+            station_hotspot_id: 'station_hotspot_a_1',
+            event_type: 'focus_switch',
+            updated_at_ms: 1710000010400,
+          },
+        ],
+      },
+      station_b: {
+        station_id: 'station_second',
+        slot_key: 'display_slot_2',
+        station_key: 'station_b',
+        label: '第二站点',
+        recording_id: 'recording_station_b',
+        stop_index: 0,
+        stop_name: '第二站介绍',
+        background_enabled: true,
+        wireframe_enabled: true,
+        background_updated_at_ms: 1710000010200,
+        wireframe_updated_at_ms: 1710000010200,
+        base_width: 1024,
+        base_height: 768,
+        hotspots: [
+          {
+            hotspot_id: 'station_hotspot_b_1',
+            product_id: 'product_003',
+            sort_order: 1,
+            x_pct: 0.45,
+            y_pct: 0.22,
+            width_pct: 0.18,
+            height_pct: 0.18,
+            updated_at_ms: 1710000010300,
+          },
+        ],
+        timeline_events: [],
+      },
+    },
+  };
+}
+
+function createFixture(overrides = {}) {
+  const base = JSON.parse(JSON.stringify(createBaseFixture()));
+  if (overrides && typeof overrides === 'object') {
+    if (overrides.display) base.display = { ...base.display, ...overrides.display };
+    if (overrides.hall) base.hall = { ...base.hall, ...overrides.hall };
+    if (Array.isArray(overrides.products)) base.products = overrides.products;
+    if (overrides.recordings && typeof overrides.recordings === 'object') {
+      base.recordings = { ...base.recordings, ...overrides.recordings };
+    }
+    if (overrides.stations && typeof overrides.stations === 'object') {
+      Object.keys(overrides.stations).forEach((key) => {
+        base.stations[key] = { ...(base.stations[key] || {}), ...overrides.stations[key] };
+      });
+    }
+  }
+  return base;
+}
+
+function createTwoTimelineEventsFixture() {
+  return {
+    stations: {
+      station_a: {
+        hotspots: [
+          {
+            hotspot_id: 'station_hotspot_a_1',
+            product_id: 'product_001',
+            sort_order: 1,
+            x_pct: 0.1,
+            y_pct: 0.15,
+            width_pct: 0.2,
+            height_pct: 0.2,
+            updated_at_ms: 1710000010100,
+          },
+          {
+            hotspot_id: 'station_hotspot_a_2',
+            product_id: 'product_002',
+            sort_order: 2,
+            x_pct: 0.45,
+            y_pct: 0.15,
+            width_pct: 0.2,
+            height_pct: 0.2,
+            updated_at_ms: 1710000010110,
+          },
+        ],
+        timeline_events: [
+          {
+            event_id: 'timeline_station_a_1',
+            sort_order: 0,
+            time_ms: 0,
+            product_id: 'product_001',
+            station_hotspot_id: 'station_hotspot_a_1',
+            event_type: 'focus_switch',
+            updated_at_ms: 1710000010400,
+          },
+          {
+            event_id: 'timeline_station_a_2',
+            sort_order: 1,
+            time_ms: 650,
+            product_id: 'product_002',
+            station_hotspot_id: 'station_hotspot_a_2',
+            event_type: 'focus_switch',
+            updated_at_ms: 1710000010500,
+          },
+        ],
+      },
+    },
+  };
+}
+
+function createRemappedDisplayFixture() {
+  return {
+    display: {
+      slot_station_ids: ['station_second', 'station_third'],
+    },
+    stations: {
+      station_c: {
+        station_id: 'station_third',
+        slot_key: 'display_slot_2',
+        station_key: 'station_c',
+        label: '第三站介绍',
+        recording_id: 'recording_station_b',
+        stop_index: 0,
+        stop_name: '第三站介绍',
+        background_enabled: true,
+        wireframe_enabled: true,
+        background_updated_at_ms: 1710000010600,
+        wireframe_updated_at_ms: 1710000010600,
+        base_width: 1024,
+        base_height: 768,
+        hotspots: [
+          {
+            hotspot_id: 'station_hotspot_c_1',
+            product_id: 'product_002',
+            sort_order: 1,
+            x_pct: 0.2,
+            y_pct: 0.22,
+            width_pct: 0.18,
+            height_pct: 0.18,
+            updated_at_ms: 1710000010610,
+          },
+        ],
+        timeline_events: [],
+      },
+    },
+  };
+}
+
+function productImagePayload(product, offline) {
+  return (product.images || []).map((image) => ({
+    image_asset_id: image.image_asset_id,
+    mimetype: image.mimetype || 'image/png',
+    created_at_ms: Number(image.updated_at_ms || 0),
+    updated_at_ms: Number(image.updated_at_ms || 0),
+    image_url: offline
+      ? `/api/pad/offline/images/${image.image_asset_id}`
+      : `/api/pad/products/${product.product_id}/images/${image.image_asset_id}`,
+    offline_image_url: `/api/pad/offline/images/${image.image_asset_id}`,
+  }));
+}
+
+function stationAssetPayload(station, assetKind, offline) {
+  if (!station || !station[`${assetKind}_enabled`]) return null;
+  const updatedAtMs = Number(station[`${assetKind}_updated_at_ms`] || 0);
+  return {
+    image_url: offline
+      ? `/api/pad/offline/stations/${station.station_key}/${assetKind}`
+      : `/api/pad/halls/current/stations/${station.station_key}/${assetKind}`,
+    offline_image_url: `/api/pad/offline/stations/${station.station_key}/${assetKind}`,
+    mimetype: 'image/png',
+    width: Number(station.base_width || 0),
+    height: Number(station.base_height || 0),
+    updated_at_ms: updatedAtMs,
+  };
+}
+
+function buildFixturePayloads(state) {
+  const getStationById = (stationId) =>
+    Object.values(state.stations).find((station) => String(station.station_id || '') === String(stationId || '').trim()) || null;
+  const productItems = state.products.map((product) => {
+    const currentAudio = product.current_audio
+      ? {
+          audio_asset_id: product.current_audio.audio_asset_id,
+          source_type: product.current_audio.source_type,
+          text_snapshot: product.current_audio.text_snapshot,
+          updated_at_ms: product.current_audio.updated_at_ms,
+          audio_url: `/api/pad/products/${product.product_id}/audio/current`,
+        }
+      : null;
+    const images = productImagePayload(product, false);
+    return {
+      product_id: product.product_id,
+      hall_id: product.hall_id,
+      sort_order: product.sort_order,
+      product_name: product.product_name,
+      product_name_en: product.product_name_en,
+      intro_text: product.intro_text,
+      registration_name: product.registration_name,
+      registration_number: product.registration_number,
+      effective_date: product.effective_date,
+      company: product.company,
+      updated_at_ms: Number(product.current_audio ? product.current_audio.updated_at_ms : 1710000000000),
+      current_audio: currentAudio,
+      images,
+      primary_image: images[0] || null,
+    };
+  });
+  const stationItems = (state.display && Array.isArray(state.display.slot_station_ids) ? state.display.slot_station_ids : [])
+    .map((stationId, index) => {
+      const station = getStationById(stationId);
+      const slotKey = index === 0 ? 'display_slot_1' : 'display_slot_2';
+      if (!station) return null;
+      return {
+        station_id: station.station_id,
+        slot_key: slotKey,
+        station_key: station.station_key,
+        label: station.label,
+        recording_id: station.recording_id,
+        stop_index: station.stop_index,
+        stop_name: station.stop_name,
+        background: stationAssetPayload(station, 'background', false),
+        wireframe: stationAssetPayload(station, 'wireframe', false),
+        hotspots: (station.hotspots || []).map((hotspot) => ({
+          hotspot_id: hotspot.hotspot_id,
+          station_id: station.station_id,
+          slot_key: slotKey,
+          station_key: station.station_key,
+          product_id: hotspot.product_id,
+          sort_order: hotspot.sort_order,
+          x_pct: hotspot.x_pct,
+          y_pct: hotspot.y_pct,
+          width_pct: hotspot.width_pct,
+          height_pct: hotspot.height_pct,
+          updated_at_ms: hotspot.updated_at_ms,
+        })),
+        updated_at_ms: Math.max(
+          Number(station.background_updated_at_ms || 0),
+          Number(station.wireframe_updated_at_ms || 0),
+          ...(station.hotspots || []).map((hotspot) => Number(hotspot.updated_at_ms || 0)),
+          1710000000000
+        ),
+        timeline_events: Array.isArray(station.timeline_events) ? station.timeline_events : [],
+      };
+    })
+    .filter(Boolean);
+  const manifestItems = productItems.map((product) => ({
+    product_id: product.product_id,
+    sort_order: product.sort_order,
+    product_name: product.product_name,
+    product_name_en: product.product_name_en,
+    updated_at_ms: Number(product.updated_at_ms || 0),
+    audio: product.current_audio
+      ? {
+          audio_asset_id: product.current_audio.audio_asset_id,
+          source_type: product.current_audio.source_type,
+          text_snapshot: product.current_audio.text_snapshot,
+          updated_at_ms: product.current_audio.updated_at_ms,
+          audio_url: `/api/pad/offline/audio/${product.current_audio.audio_asset_id}`,
+        }
+      : null,
+    images: productImagePayload(
+      {
+        product_id: product.product_id,
+        images: (state.products.find((item) => item.product_id === product.product_id) || {}).images || [],
+      },
+      true
+    ),
+    primary_image: productImagePayload(
+      {
+        product_id: product.product_id,
+        images: (state.products.find((item) => item.product_id === product.product_id) || {}).images || [],
+      },
+      true
+    )[0] || null,
+  }));
+  const manifestStations = stationItems.map((station) => ({
+    ...station,
+    background: stationAssetPayload(state.stations[station.station_key], 'background', true),
+    wireframe: stationAssetPayload(state.stations[station.station_key], 'wireframe', true),
+  }));
+  const activeAudioCount = manifestItems.filter((item) => item.audio).length;
+  const updatedAtMs = Math.max(
+    1710000000000,
+    ...manifestItems.map((item) => Number(item.updated_at_ms || 0)),
+    ...manifestStations.map((item) => Number(item.updated_at_ms || 0))
+  );
+  const hall = {
+    hall_id: state.hall.hall_id,
+    hall_name: state.hall.hall_name,
+    product_count: productItems.length,
+    active_audio_count: activeAudioCount,
+    updated_at_ms: updatedAtMs,
+  };
+  return {
+    bootstrap: {
+      ok: true,
+      client_id: '',
+      display: {
+        display_id: state.display.display_id,
+        display_name: state.display.display_name,
+        slot_station_ids: state.display.slot_station_ids,
+        updated_at_ms: updatedAtMs,
+      },
+      hall,
+      navigation: {
+        home_url: '/',
+        ragint_tour_url: '/ragint/?entry=tour',
+      },
+      offline: {
+        manifest_url: '/api/pad/offline/manifest',
+        version: updatedAtMs,
+        product_count: productItems.length,
+        active_audio_count: activeAudioCount,
+      },
+    },
+    products: {
+      ok: true,
+      client_id: '',
+      hall,
+      items: productItems,
+    },
+    stations: {
+      ok: true,
+      client_id: '',
+      display: {
+        display_id: state.display.display_id,
+        display_name: state.display.display_name,
+        slot_station_ids: state.display.slot_station_ids,
+        updated_at_ms: updatedAtMs,
+      },
+      hall,
+      items: stationItems,
+    },
+    display: {
+      ok: true,
+      client_id: '',
+      display: {
+        display_id: state.display.display_id,
+        display_name: state.display.display_name,
+        slot_station_ids: state.display.slot_station_ids,
+        updated_at_ms: updatedAtMs,
+      },
+      hall,
+      station_catalog: [
+        { hall_id: state.hall.hall_id, station_id: 'station_entrance', label: '入口介绍', sort_order: 0, updated_at_ms: updatedAtMs },
+        { hall_id: state.hall.hall_id, station_id: 'station_second', label: '第二站介绍', sort_order: 1, updated_at_ms: updatedAtMs },
+      ],
+      stations: stationItems,
+    },
+    manifest: {
+      ok: true,
+      client_id: '',
+      display: {
+        display_id: state.display.display_id,
+        display_name: state.display.display_name,
+        slot_station_ids: state.display.slot_station_ids,
+        updated_at_ms: updatedAtMs,
+      },
+      hall,
+      version: updatedAtMs,
+      items: manifestItems,
+      stations: manifestStations,
+    },
+  };
+}
+
+async function fulfillJson(route, payload, status = 200) {
+  await route.fulfill({
+    status,
+    headers: {
+      ...CORS_HEADERS,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+async function installPadApiMocks(page, options = {}) {
+  const state = createFixture(options.fixtureOverrides || {});
+  const getFixtureStation = (stationKey) => {
+    const key = String(stationKey || '').trim();
+    if (key === 'display_slot_1' || key === 'display_slot_2') {
+      const slotIndex = key === 'display_slot_1' ? 0 : 1;
+      const mappedStationId =
+        state.display && Array.isArray(state.display.slot_station_ids) ? state.display.slot_station_ids[slotIndex] : '';
+      const mapped =
+        Object.values(state.stations).find((item) => item && String(item.station_id || '') === String(mappedStationId || '').trim()) ||
+        null;
+      if (mapped) return mapped;
+    }
+    return (
+      Object.values(state.stations).find(
+        (item) => item && (item.slot_key === key || item.station_key === key || item.station_id === key)
+      ) || null
+    );
+  };
+
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const method = String(request.method() || '').toUpperCase();
+    const url = new URL(request.url());
+    const path = url.pathname;
+    const payloads = buildFixturePayloads(state);
+
+    if (method === 'OPTIONS') {
+      await route.fulfill({ status: 204, headers: CORS_HEADERS });
+      return;
+    }
+
+    if (path === '/api/pad/bootstrap' && method === 'GET') {
+      await fulfillJson(route, payloads.bootstrap);
+      return;
+    }
+
+    if (path === '/api/pad/halls/current/products' && method === 'GET') {
+      await fulfillJson(route, payloads.products);
+      return;
+    }
+
+    if (path === '/api/pad/display/current' && method === 'GET') {
+      await fulfillJson(route, payloads.display);
+      return;
+    }
+
+    if (path === '/api/pad/halls/current/stations' && method === 'GET') {
+      await fulfillJson(route, payloads.stations);
+      return;
+    }
+
+    if (path === '/api/pad/display/current/config' && method === 'PUT') {
+      const body = request.postDataJSON ? request.postDataJSON() : {};
+      if (Array.isArray(body.slot_station_ids) && body.slot_station_ids.length === 2) {
+        const nextIds = body.slot_station_ids.map((item) => String(item || '').trim());
+        if (!nextIds[0] || !nextIds[1] || nextIds[0] === nextIds[1]) {
+          await fulfillJson(route, { ok: false, error: 'display_station_ids_must_be_distinct' }, 400);
+          return;
+        }
+        state.display.slot_station_ids = nextIds;
+      }
+      if (body.display_id) state.display.display_id = String(body.display_id).trim();
+      if (body.display_name) state.display.display_name = String(body.display_name).trim();
+      await fulfillJson(route, { ok: true, display: buildFixturePayloads(state).display.display });
+      return;
+    }
+
+    if (path === '/api/pad/offline/manifest' && method === 'GET') {
+      await fulfillJson(route, payloads.manifest);
+      return;
+    }
+
+    if (/^\/api\/pad\/offline\/audio\//.test(path) && method === 'GET') {
+      await route.fulfill({
+        status: 200,
+        headers: { ...CORS_HEADERS, 'content-type': 'audio/wav' },
+        path: MOCK_AUDIO_PATH,
+      });
+      return;
+    }
+
+    if (
+      (/^\/api\/pad\/offline\/images\//.test(path) ||
+        /^\/api\/pad\/offline\/stations\/[^/]+\/background$/.test(path) ||
+        /^\/api\/pad\/offline\/stations\/[^/]+\/wireframe$/.test(path) ||
+        /^\/api\/pad\/halls\/current\/stations\/[^/]+\/background$/.test(path) ||
+        /^\/api\/pad\/halls\/current\/stations\/[^/]+\/wireframe$/.test(path) ||
+        /^\/api\/pad\/products\/[^/]+\/images\/[^/]+$/.test(path)) &&
+      method === 'GET'
+    ) {
+      await route.fulfill({
+        status: 200,
+        headers: { ...CORS_HEADERS, 'content-type': 'image/png' },
+        body: MOCK_IMAGE_BYTES,
+      });
+      return;
+    }
+
+    if (/^\/api\/pad\/products\/[^/]+\/audio\/current$/.test(path) && method === 'GET') {
+      await route.fulfill({
+        status: 200,
+        headers: { ...CORS_HEADERS, 'content-type': 'audio/wav' },
+        path: MOCK_AUDIO_PATH,
+      });
+      return;
+    }
+
+    const productRegenerateMatch = path.match(/^\/api\/pad\/products\/([^/]+)\/audio\/regenerate$/);
+    if (productRegenerateMatch && method === 'POST') {
+      const productId = decodeURIComponent(productRegenerateMatch[1]);
+      const body = request.postDataJSON ? request.postDataJSON() : {};
+      const target = state.products.find((item) => item.product_id === productId);
+      if (!target) {
+        await fulfillJson(route, { ok: false, error: 'product_not_found' }, 404);
+        return;
+      }
+      const updatedAtMs = Date.now();
+      target.current_audio = {
+        audio_asset_id: `audio_tts_${productId}_${updatedAtMs}`,
+        source_type: 'tts',
+        text_snapshot: String((body && body.text) || '').trim(),
+        updated_at_ms: updatedAtMs,
+      };
+      await fulfillJson(route, {
+        ok: true,
+        product: { product_id: productId },
+        audio: {
+          product_id: productId,
+          audio_asset_id: target.current_audio.audio_asset_id,
+          source_type: 'tts',
+          text_snapshot: target.current_audio.text_snapshot,
+          mimetype: 'audio/wav',
+          is_active: true,
+          created_at_ms: updatedAtMs,
+          updated_at_ms: updatedAtMs,
+          audio_url: `/api/pad/products/${productId}/audio/current`,
+          offline_audio_url: `/api/pad/offline/audio/${target.current_audio.audio_asset_id}`,
+        },
+      });
+      return;
+    }
+
+    const productImageUploadMatch = path.match(/^\/api\/pad\/products\/([^/]+)\/images\/upload$/);
+    if (productImageUploadMatch && method === 'POST') {
+      const productId = decodeURIComponent(productImageUploadMatch[1]);
+      const target = state.products.find((item) => item.product_id === productId);
+      if (!target) {
+        await fulfillJson(route, { ok: false, error: 'product_not_found' }, 404);
+        return;
+      }
+      const updatedAtMs = Date.now();
+      target.images = [
+        { image_asset_id: `image_${productId}_${updatedAtMs}`, mimetype: 'image/png', updated_at_ms: updatedAtMs },
+      ].concat(target.images || []);
+      await fulfillJson(route, {
+        ok: true,
+        product: { product_id: productId },
+        image: {
+          product_id: productId,
+          image_asset_id: target.images[0].image_asset_id,
+          mimetype: 'image/png',
+          created_at_ms: updatedAtMs,
+          updated_at_ms: updatedAtMs,
+          image_url: `/api/pad/products/${productId}/images/${target.images[0].image_asset_id}`,
+          offline_image_url: `/api/pad/offline/images/${target.images[0].image_asset_id}`,
+        },
+      });
+      return;
+    }
+
+    const stationUpdateMatch = path.match(/^\/api\/pad\/halls\/current\/stations\/([^/]+)$/);
+    if (stationUpdateMatch && method === 'PUT') {
+      const stationKey = decodeURIComponent(stationUpdateMatch[1]);
+      const body = request.postDataJSON ? request.postDataJSON() : {};
+      const target = getFixtureStation(stationKey);
+      if (!target) {
+        await fulfillJson(route, { ok: false, error: 'station_id_invalid' }, 400);
+        return;
+      }
+      target.label = String((body && body.label) || '').trim();
+      target.recording_id = String((body && body.recording_id) || '').trim();
+      target.stop_index = body && Object.prototype.hasOwnProperty.call(body, 'stop_index') ? body.stop_index : null;
+      target.stop_name = String((body && body.stop_name) || '').trim();
+      await fulfillJson(route, {
+        ok: true,
+        station: buildFixturePayloads(state).stations.items.find((item) => item.slot_key === stationKey || item.station_key === stationKey || item.station_id === stationKey),
+      });
+      return;
+    }
+
+    const stationBackgroundMatch = path.match(/^\/api\/pad\/halls\/current\/stations\/([^/]+)\/background$/);
+    if (stationBackgroundMatch && method === 'POST') {
+      const stationKey = decodeURIComponent(stationBackgroundMatch[1]);
+      const target = getFixtureStation(stationKey);
+      if (!target) {
+        await fulfillJson(route, { ok: false, error: 'station_id_invalid' }, 400);
+        return;
+      }
+      target.background_enabled = true;
+      target.background_updated_at_ms = Date.now();
+      target.base_width = 1024;
+      target.base_height = 768;
+      await fulfillJson(route, {
+        ok: true,
+        station: buildFixturePayloads(state).stations.items.find((item) => item.slot_key === stationKey || item.station_key === stationKey || item.station_id === stationKey),
+      });
+      return;
+    }
+
+    const stationWireframeMatch = path.match(/^\/api\/pad\/halls\/current\/stations\/([^/]+)\/wireframe$/);
+    if (stationWireframeMatch && method === 'POST') {
+      const stationKey = decodeURIComponent(stationWireframeMatch[1]);
+      const target = getFixtureStation(stationKey);
+      if (!target) {
+        await fulfillJson(route, { ok: false, error: 'station_id_invalid' }, 400);
+        return;
+      }
+      target.wireframe_enabled = true;
+      target.wireframe_updated_at_ms = Date.now();
+      await fulfillJson(route, {
+        ok: true,
+        station: buildFixturePayloads(state).stations.items.find((item) => item.slot_key === stationKey || item.station_key === stationKey || item.station_id === stationKey),
+      });
+      return;
+    }
+
+    const stationHotspotsMatch = path.match(/^\/api\/pad\/halls\/current\/stations\/([^/]+)\/hotspots$/);
+    if (stationHotspotsMatch && method === 'POST') {
+      const stationKey = decodeURIComponent(stationHotspotsMatch[1]);
+      const body = request.postDataJSON ? request.postDataJSON() : {};
+      const target = getFixtureStation(stationKey);
+      if (!target) {
+        await fulfillJson(route, { ok: false, error: 'station_id_invalid' }, 400);
+        return;
+      }
+      const updatedAtMs = Date.now();
+      const hotspot = {
+        hotspot_id: `station_hotspot_${stationKey}_${updatedAtMs}`,
+        product_id: String((body && body.product_id) || '').trim(),
+        sort_order: Number((body && body.sort_order) || 0),
+        x_pct: Number((body && body.x_pct) || 0),
+        y_pct: Number((body && body.y_pct) || 0),
+        width_pct: Number((body && body.width_pct) || 0),
+        height_pct: Number((body && body.height_pct) || 0),
+        updated_at_ms: updatedAtMs,
+      };
+      target.hotspots = [hotspot].concat(target.hotspots || []);
+      await fulfillJson(route, {
+        ok: true,
+        hotspot: {
+          hotspot_id: hotspot.hotspot_id,
+          station_key: stationKey,
+          product_id: hotspot.product_id,
+          sort_order: hotspot.sort_order,
+          x_pct: hotspot.x_pct,
+          y_pct: hotspot.y_pct,
+          width_pct: hotspot.width_pct,
+          height_pct: hotspot.height_pct,
+          updated_at_ms: hotspot.updated_at_ms,
+        },
+      });
+      return;
+    }
+
+    const stationTimelineMatch = path.match(/^\/api\/pad\/halls\/current\/stations\/([^/]+)\/timeline$/);
+    if (stationTimelineMatch && method === 'PUT') {
+      const stationKey = decodeURIComponent(stationTimelineMatch[1]);
+      const target = getFixtureStation(stationKey);
+      const body = request.postDataJSON ? request.postDataJSON() : {};
+      const rawEvents = Array.isArray(body.timeline_events) ? body.timeline_events : [];
+      if (target) {
+        target.timeline_events = rawEvents.map((event, index) => ({
+          event_id: `timeline_${stationKey}_${index}_${Date.now()}`,
+          sort_order: Number(event && event.sort_order != null ? event.sort_order : index),
+          time_ms: Number(event && event.time_ms ? event.time_ms : 0),
+          product_id: String((event && event.product_id) || '').trim(),
+          station_hotspot_id: String((event && event.station_hotspot_id) || '').trim(),
+          event_type: String((event && event.event_type) || 'focus_switch').trim() || 'focus_switch',
+          updated_at_ms: Date.now(),
+        }));
+      }
+      await fulfillJson(route, { ok: true, timeline_events: target ? target.timeline_events : rawEvents });
+      return;
+    }
+
+    const stationHotspotMatch = path.match(/^\/api\/pad\/halls\/current\/stations\/([^/]+)\/hotspots\/([^/]+)$/);
+    if (stationHotspotMatch && method === 'PUT') {
+      const stationKey = decodeURIComponent(stationHotspotMatch[1]);
+      const hotspotId = decodeURIComponent(stationHotspotMatch[2]);
+      const body = request.postDataJSON ? request.postDataJSON() : {};
+      const target = getFixtureStation(stationKey);
+      const hotspot = target && (target.hotspots || []).find((item) => item.hotspot_id === hotspotId);
+      if (!target || !hotspot) {
+        await fulfillJson(route, { ok: false, error: 'hotspot_not_found' }, 404);
+        return;
+      }
+      hotspot.product_id = String((body && body.product_id) || '').trim();
+      hotspot.sort_order = Number((body && body.sort_order) || 0);
+      hotspot.x_pct = Number((body && body.x_pct) || 0);
+      hotspot.y_pct = Number((body && body.y_pct) || 0);
+      hotspot.width_pct = Number((body && body.width_pct) || 0);
+      hotspot.height_pct = Number((body && body.height_pct) || 0);
+      hotspot.updated_at_ms = Date.now();
+      await fulfillJson(route, {
+        ok: true,
+        hotspot: {
+          hotspot_id: hotspot.hotspot_id,
+          station_key: stationKey,
+          product_id: hotspot.product_id,
+          sort_order: hotspot.sort_order,
+          x_pct: hotspot.x_pct,
+          y_pct: hotspot.y_pct,
+          width_pct: hotspot.width_pct,
+          height_pct: hotspot.height_pct,
+          updated_at_ms: hotspot.updated_at_ms,
+        },
+      });
+      return;
+    }
+
+    if (stationHotspotMatch && method === 'DELETE') {
+      const stationKey = decodeURIComponent(stationHotspotMatch[1]);
+      const hotspotId = decodeURIComponent(stationHotspotMatch[2]);
+      const target = getFixtureStation(stationKey);
+      if (!target) {
+        await fulfillJson(route, { ok: false, error: 'hotspot_not_found' }, 404);
+        return;
+      }
+      target.hotspots = (target.hotspots || []).filter((item) => item.hotspot_id !== hotspotId);
+      await fulfillJson(route, { ok: true, deleted: true, hotspot_id: hotspotId });
+      return;
+    }
+
+    if (path === '/api/recordings' && method === 'GET') {
+      await fulfillJson(route, {
+        items: Object.values(state.recordings).map((recording) => ({
+          recording_id: recording.recording_id,
+          display_name: recording.display_name,
+          created_at_ms: recording.created_at_ms,
+          finished_at_ms: recording.finished_at_ms,
+          stop_count: recording.stops.length,
+          metadata: recording.metadata,
+        })),
+      });
+      return;
+    }
+
+    const recordingMetaMatch = path.match(/^\/api\/recordings\/([^/]+)$/);
+    if (recordingMetaMatch && method === 'GET') {
+      const recordingId = decodeURIComponent(recordingMetaMatch[1]);
+      const recording = state.recordings[recordingId];
+      if (!recording) {
+        await fulfillJson(route, { error: 'not_found' }, 404);
+        return;
+      }
+      await fulfillJson(route, recording);
+      return;
+    }
+
+    const recordingStopMatch = path.match(/^\/api\/recordings\/([^/]+)\/stop\/([^/]+)$/);
+    if (recordingStopMatch && method === 'GET') {
+      const recordingId = decodeURIComponent(recordingStopMatch[1]);
+      const stopIndex = Number(decodeURIComponent(recordingStopMatch[2]));
+      const recording = state.recordings[recordingId];
+      if (!recording || stopIndex < 0 || stopIndex >= recording.stops.length) {
+        await fulfillJson(route, { error: 'not_found' }, 404);
+        return;
+      }
+      await fulfillJson(route, {
+        stop_name: recording.stops[stopIndex],
+        answer_text: `${recording.display_name}-${recording.stops[stopIndex]}`,
+        segments: [
+          {
+            segment_id: 1,
+            text: `${recording.display_name}-${recording.stops[stopIndex]}`,
+            audio_url: `/api/pad/offline/audio/${recording.recording_id}_stop_${stopIndex}`,
+            updated_at_ms: Date.now(),
+          },
+        ],
+      });
+      return;
+    }
+
+    if (path === '/api/app_settings' && method === 'GET') {
+      await fulfillJson(route, { settings: {} });
+      return;
+    }
+
+    if (path === '/api/app_settings' && method === 'PUT') {
+      await fulfillJson(route, { ok: true });
+      return;
+    }
+
+    if (path === '/api/breakpoint' && method === 'GET') {
+      await fulfillJson(route, { ok: true, state: {} });
+      return;
+    }
+
+    if (path === '/api/breakpoint' && method === 'POST') {
+      await fulfillJson(route, { ok: true });
+      return;
+    }
+
+    if (path === '/api/ragflow/chats' && method === 'GET') {
+      await fulfillJson(route, { chats: [{ name: 'Exhibit Chat' }], default: 'Exhibit Chat' });
+      return;
+    }
+
+    if (path === '/api/ragflow/agents' && method === 'GET') {
+      await fulfillJson(route, { agents: [], default: '' });
+      return;
+    }
+
+    if (path === '/api/history' && method === 'GET') {
+      await fulfillJson(route, { items: [] });
+      return;
+    }
+
+    await fulfillJson(route, {});
+  });
+
+  return { state, getFixtureStation };
+}
+
+async function installClientIdAndAudioStub(page, clientId) {
+  await page.addInitScript((value) => {
+    window.localStorage.setItem('clientId', value);
+    window.localStorage.removeItem('ragint-pad-demo-play-counts-v1');
+    window.localStorage.removeItem('ragint-pad-demo-columns-v1');
+    window.HTMLMediaElement.prototype.play = function playStub() {
+      try {
+        this.dispatchEvent(new Event('play'));
+      } catch (_) {}
+      return Promise.resolve();
+    };
+    window.HTMLMediaElement.prototype.pause = function pauseStub() {
+      try {
+        this.dispatchEvent(new Event('pause'));
+      } catch (_) {}
+    };
+    window.HTMLMediaElement.prototype.load = function loadStub() {
+      return undefined;
+    };
+  }, clientId);
+}
+
+async function installClientIdOnly(page, clientId) {
+  await page.addInitScript((value) => {
+    window.localStorage.setItem('clientId', value);
+    window.localStorage.removeItem('ragint-pad-demo-play-counts-v1');
+    window.localStorage.removeItem('ragint-pad-demo-columns-v1');
+    window.HTMLMediaElement.prototype.play = async function playWithValidation() {
+      const src = String(this.currentSrc || this.src || '');
+      if (!src) throw new Error('audio_src_missing');
+      const response = await fetch(src);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const hasWavHeader =
+        bytes.length > 44 &&
+        String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' &&
+        String.fromCharCode(...bytes.slice(8, 12)) === 'WAVE';
+      let nonZeroCount = 0;
+      for (let index = 44; index < bytes.length; index += 2) {
+        if (bytes[index] !== 0 || bytes[index + 1] !== 0) {
+          nonZeroCount += 1;
+          if (nonZeroCount > 32) break;
+        }
+      }
+      if (!hasWavHeader || nonZeroCount <= 32) {
+        throw new Error('audio_payload_invalid');
+      }
+      this.__ragint_test_playing = true;
+      this.__ragint_test_duration = Math.max(1, Math.floor((bytes.length - 44) / 32000));
+      this.__ragint_test_current_src = src;
+      this.dispatchEvent(new Event('play'));
+      window.setTimeout(() => {
+        this.__ragint_test_playing = false;
+        this.dispatchEvent(new Event('ended'));
+      }, 1000);
+      return Promise.resolve();
+    };
+    window.HTMLMediaElement.prototype.pause = function pauseWithValidation() {
+      this.__ragint_test_playing = false;
+      this.dispatchEvent(new Event('pause'));
+    };
+    window.HTMLMediaElement.prototype.load = function loadWithValidation() {
+      return undefined;
+    };
+  }, clientId);
+}
+
+async function captureEvidence(page, testInfo, name) {
+  const screenshotPath = testInfo.outputPath(`${name}.png`);
+  await page.screenshot({ path: screenshotPath, fullPage: true });
+  await testInfo.attach(name, { path: screenshotPath, contentType: 'image/png' });
+}
+
+async function waitForOfflineReady(page) {
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().offlineReady || false), { timeout: 7000 })
+    .toBe(true);
+}
+
+async function switchToOpsMode(page) {
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.setMode?.('ops'));
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().mode || ''), { timeout: 3000 })
+    .toBe('ops');
+}
+
+test('demo defaults to station-integrated scene view without product list', async ({ page }, testInfo) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+
+  await expect(page.locator('.pad-scene-stage')).toBeVisible();
+  await expect(page.locator('[data-action="set-demo-left-tab"]')).toHaveCount(2);
+  await expect(page.locator('[data-action="set-demo-right-tab"]')).toHaveCount(2);
+  await expect(page.locator('[data-action="set-demo-right-tab"][data-tab-key="product"]')).toContainText('单品讲解');
+  await expect(page.locator('[data-action="set-demo-right-tab"][data-tab-key="station"]')).toContainText('站台讲解');
+  await expect(page.getByTestId('mode-enter-ops')).toBeVisible();
+  await expect(page.getByTestId('demo-item-list')).toHaveCount(0);
+  await captureEvidence(page, testInfo, 'demo-station-default');
+});
+
+test('demo switches stations and plays station narration or product narration from hotspots', async ({ page }, testInfo) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+
+  await page.locator('[data-action="play-product-hotspot"]').first().click();
+  await expect.poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().selectedProductId || ''), { timeout: 3000 }).toBe('product_001');
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().lastPlaybackRequestedUrl || ''), { timeout: 5000 })
+    .toContain('/api/pad/offline/audio/audio_001');
+
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.toggleStationPlayback?.('display_slot_1'));
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().lastPlaybackRequestedUrl || ''), { timeout: 5000 })
+    .toContain('/api/pad/offline/audio/recording_station_a_stop_0');
+
+  await page.locator('[data-action="set-demo-left-tab"][data-tab-key="display_slot_2"]').click();
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().demoLeftTabKey || ''), { timeout: 3000 })
+    .toBe('display_slot_2');
+  await captureEvidence(page, testInfo, 'demo-station-switch');
+});
+
+test('station narration uses a real non-silent audio response and starts media playback', async ({ page }, testInfo) => {
+  await installClientIdOnly(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  const stationAudioResponses = [];
+  page.on('response', (response) => {
+    const url = response.url();
+    if (url.includes('/api/pad/offline/audio/recording_station_a_stop_0')) {
+      stationAudioResponses.push({
+        url,
+        status: response.status(),
+        contentType: response.headers()['content-type'] || '',
+      });
+    }
+  });
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+
+  await page.locator('[data-action="set-demo-right-tab"][data-tab-key="station"]').click();
+  await page.locator('[data-action="play-station-slot"][data-slot-key="display_slot_1"]').click();
+
+  await expect
+    .poll(() => stationAudioResponses.length, { timeout: 5000 })
+    .toBeGreaterThan(0);
+
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const audio = document.getElementById('product-audio');
+          if (!audio) return false;
+          return (
+            String(audio.__ragint_test_current_src || audio.currentSrc || '').includes('/api/pad/offline/audio/recording_station_a_stop_0')
+          );
+        }),
+      { timeout: 5000 }
+    )
+    .toBe(true);
+
+  const mediaState = await page.evaluate(() => {
+    const audio = document.getElementById('product-audio');
+    if (!audio) return null;
+    return {
+      currentSrc: String(audio.__ragint_test_current_src || audio.currentSrc || ''),
+      paused: !!audio.paused,
+      mockedPlaying: audio.__ragint_test_playing === true,
+      mockedDuration: Number(audio.__ragint_test_duration || 0),
+    };
+  });
+  const playbackState = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+
+  const audioAnalysis = analyzeMockAudio(MOCK_AUDIO_BYTES);
+
+  expect(audioAnalysis.byteLength).toBeGreaterThan(44);
+  expect(audioAnalysis.nonZeroCount).toBeGreaterThan(32);
+  expect(mediaState).toBeTruthy();
+  expect(mediaState.currentSrc).toContain('/api/pad/offline/audio/recording_station_a_stop_0');
+  await captureEvidence(page, testInfo, 'station-real-audio-playback');
+});
+
+test('display bootstrap shape exposes display and exactly two stations', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+
+  const state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(state.displayId).toBe('display_pad_a');
+  expect(state.displayName).toBe('Display A');
+  expect(state.stationCount).toBe(2);
+  expect(state.stationIds).toEqual(['station_entrance', 'station_second']);
+  expect(state.activeStationId).toBe('station_entrance');
+  expect(state.activeStationSlotKey).toBe('display_slot_1');
+});
+
+test('single-screen guide page has no main scroll overflow', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+
+  const geometry = await page.evaluate(() => ({
+    scrollHeight: document.documentElement.scrollHeight,
+    scrollWidth: document.documentElement.scrollWidth,
+    innerHeight: window.innerHeight,
+    innerWidth: window.innerWidth,
+  }));
+  expect(geometry.scrollHeight).toBeLessThanOrEqual(geometry.innerHeight + 4);
+  expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.innerWidth + 4);
+});
+
+test('background fully stretched with hotspot alignment stays inside stage', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+
+  const readGeometry = async () =>
+    page.evaluate(() => {
+      const stage = document.querySelector('.pad-scene-stage');
+      const hotspot = document.querySelector('[data-action="play-product-hotspot"]');
+      if (!stage || !hotspot) return null;
+      const stageRect = stage.getBoundingClientRect();
+      const hotspotRect = hotspot.getBoundingClientRect();
+      return {
+        stageWidth: stageRect.width,
+        stageHeight: stageRect.height,
+        hotspotInside:
+          hotspotRect.left >= stageRect.left &&
+          hotspotRect.top >= stageRect.top &&
+          hotspotRect.right <= stageRect.right &&
+          hotspotRect.bottom <= stageRect.bottom,
+      };
+    });
+
+  let geometry = await readGeometry();
+  expect(geometry.stageWidth).toBeGreaterThan(0);
+  expect(geometry.stageHeight).toBeGreaterThan(0);
+  expect(geometry.hotspotInside).toBe(true);
+
+  await page.locator('[data-action="set-demo-left-tab"][data-tab-key="display_slot_2"]').click();
+  geometry = await readGeometry();
+  expect(geometry.stageWidth).toBeGreaterThan(0);
+  expect(geometry.stageHeight).toBeGreaterThan(0);
+  expect(geometry.hotspotInside).toBe(true);
+});
+
+test('timeline events are exposed on bound station state', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page, { fixtureOverrides: createTwoTimelineEventsFixture() });
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+
+  const state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(state.stationSlots[0].timelineEvents).toHaveLength(2);
+  expect(state.stationSlots[0].timelineEvents[0].hotspotId).toBe('station_hotspot_a_1');
+  expect(state.stationSlots[0].timelineEvents[1].hotspotId).toBe('station_hotspot_a_2');
+  expect(state.stationSlots[0].timelineEvents[1].productId).toBe('product_002');
+});
+
+test('display config remap updates bound station and guide state', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page, { fixtureOverrides: createRemappedDisplayFixture() });
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+
+  let state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(state.activeStationId).toBe('station_second');
+
+  await switchToOpsMode(page);
+  await page.locator('[data-action="station-slot-id"][data-slot-key="display_slot_1"]').selectOption('station_entrance');
+  await page.locator('[data-action="save-station-config"]').click();
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.setMode?.('demo'));
+  await page.locator('[data-action="set-demo-left-tab"][data-tab-key="display_slot_1"]').click();
+
+  state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(state.stationSlots[0].stationId).toBe('station_entrance');
+  expect(state.activeStationId).toBe('station_entrance');
+  expect(state.productHotspots.every((item) => item.stationId === 'station_entrance')).toBe(true);
+});
+
+test('timeline config save and reread survives reload and is visible in guide state', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page, { fixtureOverrides: createTwoTimelineEventsFixture() });
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+
+  await page.locator('[data-action="station-timeline-events"]').fill(
+    JSON.stringify(
+      [
+        {
+          sort_order: 0,
+          time_ms: 0,
+          product_id: 'product_001',
+          station_hotspot_id: 'station_hotspot_a_1',
+          event_type: 'focus_switch',
+        },
+        {
+          sort_order: 1,
+          time_ms: 400,
+          product_id: 'product_002',
+          station_hotspot_id: 'station_hotspot_a_2',
+          event_type: 'focus_switch',
+        },
+      ],
+      null,
+      2,
+    ),
+  );
+  await page.locator('[data-action="save-station-config"]').click();
+  await page.reload();
+  await waitForOfflineReady(page);
+
+  const state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(state.stationSlots[0].timelineEvents).toHaveLength(2);
+});
+
+test('invalid timeline json fails fast without success state', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+
+  await page.locator('[data-action="station-timeline-events"]').fill('{not-valid-json');
+  await page.locator('[data-action="save-station-config"]').click();
+
+  await expect(page.locator('.pad-banner--danger')).toContainText('Timeline events JSON is invalid.');
+});
+
+test('station config save updates display binding and station config together', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page, { fixtureOverrides: createRemappedDisplayFixture() });
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+
+  await page.locator('[data-action="station-slot-id"][data-slot-key="display_slot_1"]').selectOption('station_entrance');
+  await page.locator('[data-action="station-slot-label"]').fill('入口站重新映射');
+  await page.locator('[data-action="save-station-config"]').click();
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.setMode?.('demo'));
+  await page.locator('[data-action="set-demo-left-tab"][data-tab-key="display_slot_1"]').click();
+
+  const state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(state.stationSlots[0].stationId).toBe('station_entrance');
+  expect(state.stationSlots[0].label).toBe('入口站重新映射');
+});
+
+test('hotspot bound to a no-audio product fails fast with explicit error', async ({ page }, testInfo) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+
+  await page.locator('[data-action="set-demo-left-tab"][data-tab-key="display_slot_2"]').click();
+  await page.locator('[data-action="play-product-hotspot"]').first().click();
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().audioError || ''), { timeout: 3000 })
+    .toBe('This product has no active narration audio.');
+  await captureEvidence(page, testInfo, 'demo-no-audio-hotspot');
+});
+
+test('ops can update station config, upload background, and create a product hotspot', async ({ page }, testInfo) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+
+  await page.locator('[data-action="set-demo-left-tab"][data-tab-key="display_slot_2"]').click();
+  await page.locator('[data-action="station-slot-label"]').fill('第二站入口');
+  await page.locator('[data-action="save-station-config"]').click();
+
+  await page.locator('[data-action="station-background-input"]').setInputFiles({
+    name: 'station-b-bg.png',
+    mimeType: 'image/png',
+    buffer: MOCK_IMAGE_BYTES,
+  });
+
+  const stage = page.locator('[data-scene-stage-role="editor"]');
+  await expect(stage).toBeVisible();
+  await page.evaluate(
+    () => {
+      const el = document.querySelector('[data-scene-stage-role="editor"]');
+      if (!el) throw new Error('editor_stage_missing');
+      const rect = el.getBoundingClientRect();
+      const startX = rect.left + rect.width * 0.18;
+      const startY = rect.top + rect.height * 0.2;
+      const moveX = rect.left + rect.width * 0.38;
+      const moveY = rect.top + rect.height * 0.42;
+      el.dispatchEvent(new PointerEvent('pointerdown', { clientX: startX, clientY: startY, bubbles: true }));
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: moveX, clientY: moveY, bubbles: true }));
+      window.dispatchEvent(new PointerEvent('pointerup', { clientX: moveX, clientY: moveY, bubbles: true }));
+    },
+  );
+  await page.locator('[data-action="station-hotspot-product"]').selectOption('product_002');
+  await page.locator('[data-action="save-station-hotspot"]').click();
+
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.setMode?.('demo'));
+  await page.locator('[data-action="set-demo-left-tab"][data-tab-key="display_slot_2"]').click();
+  await page.locator('[data-action="play-product-hotspot"][data-product-id="product_002"]').click();
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().selectedProductId || ''), { timeout: 5000 })
+    .toBe('product_002');
+  await captureEvidence(page, testInfo, 'ops-station-hotspot');
+});
+
+test('ops product management still supports TTS regeneration and image upload', async ({ page }, testInfo) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+
+  await page.locator('[data-product-id="product_002"]').click();
+  await expect(page.getByTestId('audio-text-editor')).toHaveValue('亲水涂层造影导管默认 TTS 讲解');
+  await page.getByTestId('audio-text-editor').fill('更新后的亲水涂层造影导管讲解');
+  await page.locator('[data-action="regenerate-audio"]').click();
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().currentAudioText || ''), { timeout: 8000 })
+    .toBe('更新后的亲水涂层造影导管讲解');
+
+  await page.locator('[data-action="upload-image-input"]').setInputFiles({
+    name: 'product-image.png',
+    mimeType: 'image/png',
+    buffer: MOCK_IMAGE_BYTES,
+  });
+  await expect
+    .poll(() => page.evaluate(() => (window.__RAGINT_PAD_E2E__?.getState?.().currentImageAssetIds || []).length), { timeout: 8000 })
+    .toBeGreaterThan(0);
+  await captureEvidence(page, testInfo, 'ops-product-regression');
+});
+
+test('offline snapshot preserves station visuals and hotspot playback', async ({ page }, testInfo) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await page.reload();
+  await page.context().setOffline(true);
+  await page.goto('/');
+
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().usingOfflineSnapshot || false), { timeout: 7000 })
+    .toBe(true);
+  await expect(page.locator('.pad-scene-stage')).toBeVisible();
+
+  await page.locator('[data-action="play-product-hotspot"]').first().click();
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().lastPlaybackRequestedUrl || ''), { timeout: 5000 })
+    .toContain('/api/pad/offline/audio/audio_001');
+  await captureEvidence(page, testInfo, 'offline-station-playback');
+});
