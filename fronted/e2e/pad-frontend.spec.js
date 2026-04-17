@@ -2043,6 +2043,53 @@ test('timeline editor can play station narration and insert highlight range even
   await expect(page.locator('[data-action="station-timeline-event-type"][data-index="2"]')).toHaveValue('highlight_off');
 });
 
+test('timeline preview controls can start playback and resume from dragged playhead', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+
+  await page.locator('[data-action="play-station-slot-from-start"][data-slot-key="display_slot_1"]').first().click();
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().playingStationSlotKey || ''), { timeout: 5000 })
+    .toBe('display_slot_1');
+
+  await page.locator('[data-action="pause-station-playback"][data-slot-key="display_slot_1"]').first().click();
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().playingStationSlotKey || ''), { timeout: 3000 })
+    .toBe('');
+
+  await page.evaluate(() => {
+    const playhead = document.querySelector('[data-action="station-timeline-drag-playhead"][data-slot-key="display_slot_1"]');
+    const track = document.querySelector('[data-role="station-timeline-track"][data-slot-key="display_slot_1"]');
+    if (!playhead || !track) throw new Error('timeline_playhead_missing');
+    const playheadRect = playhead.getBoundingClientRect();
+    const trackRect = track.getBoundingClientRect();
+    const startX = playheadRect.left + playheadRect.width / 2;
+    const y = trackRect.top + trackRect.height / 2;
+    const targetX = trackRect.left + trackRect.width * 0.62;
+    playhead.dispatchEvent(new PointerEvent('pointerdown', { clientX: startX, clientY: y, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: targetX, clientY: y, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: targetX, clientY: y, bubbles: true }));
+  });
+
+  await expect
+    .poll(() => page.evaluate(() => Number(window.__RAGINT_PAD_E2E__?.getState?.().audioCurrentTimeMs || 0)), { timeout: 3000 })
+    .toBeGreaterThan(0);
+  await expect(page.locator('[data-action="resume-station-playback"][data-slot-key="display_slot_1"]').first()).toBeEnabled();
+
+  await page.locator('[data-action="resume-station-playback"][data-slot-key="display_slot_1"]').first().click();
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().playingStationSlotKey || ''), { timeout: 5000 })
+    .toBe('display_slot_1');
+  await expect
+    .poll(() => page.evaluate(() => Number(window.__RAGINT_PAD_E2E__?.getState?.().audioCurrentTimeMs || 0)), { timeout: 3000 })
+    .toBeGreaterThan(0);
+});
+
 test('draft hotspot can be resized before it is saved', async ({ page }) => {
   await installClientIdAndAudioStub(page, 'pad-a');
   await installPadApiMocks(page);

@@ -1,4 +1,4 @@
-const SHELL_CACHE = "ragint-pad-shell-v4";
+const SHELL_CACHE = "ragint-pad-shell-v5";
 const AUDIO_CACHE = "ragint-pad-audio-v1";
 const IMAGE_CACHE = "ragint-pad-image-v1";
 const SHELL_ASSETS = ["/", "/index.html", "/app.css", "/app.js"];

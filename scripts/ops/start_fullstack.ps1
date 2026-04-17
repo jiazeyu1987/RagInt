@@ -259,31 +259,18 @@ Write-Step "PythonCommand: $pythonCommand"
 Write-Step "NpmCommand: $npmCommand"
 Ensure-RagflowConfigDbSeed -RepoRoot $RepoRoot -PythonCommand $pythonCommand
 
+Write-Step "Restart mode: stop backend and frontend first"
 Stop-PortProcesses -Port $BackendPort -Name "backend"
+Stop-PortProcesses -Port $FrontendPort -Name "frontend"
 
 $backendCommand = "Set-Location '$RepoRoot'; `$env:RAGINT_PORT='$BackendPort'; $pythonCommand -m backend"
 Write-Step "Starting backend"
 Start-Process powershell -WorkingDirectory $RepoRoot -ArgumentList "-NoExit", "-Command", $backendCommand | Out-Null
 Wait-UrlReady -Url $backendHealthUrl -TimeoutSec $BackendTimeoutSec -Name "backend"
 
-if (Test-UrlReady -Url $frontendRootUrl) {
-  if (Test-UrlReady -Url $dualFrontendProbeUrl) {
-    Write-Step "Dual frontend is already running, reusing it"
-  } else {
-    Write-Step "Existing frontend on $FrontendPort is not dual-frontend mode, restarting"
-    Stop-PortProcesses -Port $FrontendPort -Name "frontend"
-  }
-}
-
-if (-not (Test-UrlReady -Url $frontendRootUrl) -or -not (Test-UrlReady -Url $dualFrontendProbeUrl)) {
-  $frontendPids = @(Get-PortProcessIds -Port $FrontendPort)
-  if ($frontendPids.Count -gt 0) {
-    Stop-PortProcesses -Port $FrontendPort -Name "frontend"
-  }
-  $frontendCommand = "Set-Location '$RepoRoot\\fronted'; `$env:DUAL_FRONTEND_BACKEND_URL='http://127.0.0.1:$BackendPort'; & '$npmCommand' run serve:dual:e2e"
-  Write-Step "Starting dual frontend"
-  Start-Process powershell -WorkingDirectory (Join-Path $RepoRoot "fronted") -ArgumentList "-NoExit", "-Command", $frontendCommand | Out-Null
-}
+$frontendCommand = "Set-Location '$RepoRoot\\fronted'; `$env:DUAL_FRONTEND_BACKEND_URL='http://127.0.0.1:$BackendPort'; & '$npmCommand' run serve:dual:e2e"
+Write-Step "Starting dual frontend"
+Start-Process powershell -WorkingDirectory (Join-Path $RepoRoot "fronted") -ArgumentList "-NoExit", "-Command", $frontendCommand | Out-Null
 
 Wait-UrlReady -Url $frontendRootUrl -TimeoutSec $FrontendTimeoutSec -Name "frontend"
 Wait-UrlReady -Url $dualFrontendProbeUrl -TimeoutSec $FrontendTimeoutSec -Name "dual frontend /ragint route"

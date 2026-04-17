@@ -172,10 +172,14 @@
     stationPlaybackStopName: "",
     stationPlaybackQueue: [],
     stationPlaybackSegmentIndex: -1,
+    stationPlaybackState: "idle",
+    stationPlaybackCursorMs: 0,
+    stationPlaybackTotalDurationMs: 0,
     stationPlaybackAnswerText: "",
     stationPlaybackTimelineEvents: [],
     highlightedHotspotId: "",
     highlightedProductId: "",
+    stationTimelineSelections: Object.create(null),
     lastPlaybackRequestedUrl: "",
     assetBusy: false,
     assetAction: "",
@@ -221,10 +225,10 @@
   let latestHotspotSearchSeq = 0;
   let latestStationPlaybackSeq = 0;
   let sceneEditorInteraction = null;
+  let stationTimelineInteraction = null;
   let hotspotSearchComposing = false;
   const recordingMetaRequestMap = Object.create(null);
-  let stationTimelineTimer = null;
-  let stationTimelineStartedAtMs = 0;
+  const stationSegmentDurationCache = Object.create(null);
 
   function escapeHtml(value) {
     return String(value == null ? "" : value)
@@ -703,6 +707,316 @@
     );
   }
 
+  function getStationPlaybackDurationMs() {
+    if (Number(state.stationPlaybackTotalDurationMs || 0) > 0) {
+      return Math.max(0, normalizeTimelineEventTimeMs(state.stationPlaybackTotalDurationMs));
+    }
+    const audio = refs.audio;
+    if (!audio) return 0;
+    const seconds = Number(audio.duration || 0);
+    if (!Number.isFinite(seconds) || seconds <= 0) return 0;
+    return Math.max(0, Math.round(seconds * 1000));
+  }
+
+  function getStationPlaybackStateForSlot(slotKey) {
+    const key = String(slotKey || "").trim();
+    if (!key) return "idle";
+    if (
+      key === String(state.stationPlaybackSlotKey || "").trim() ||
+      key === String(state.pendingStationSlotKey || "").trim() ||
+      key === String(state.playingStationSlotKey || "").trim()
+    ) {
+      return String(state.stationPlaybackState || "idle");
+    }
+    return "idle";
+  }
+
+  function getStationPlaybackQueueSegment(index) {
+    const queue = Array.isArray(state.stationPlaybackQueue) ? state.stationPlaybackQueue : [];
+    const normalizedIndex = Number(index);
+    if (!Number.isFinite(normalizedIndex) || normalizedIndex < 0 || normalizedIndex >= queue.length) {
+      return null;
+    }
+    return queue[normalizedIndex] || null;
+  }
+
+  function clampStationPlaybackCursorMs(timeMs) {
+    const normalized = normalizeTimelineEventTimeMs(timeMs);
+    const totalMs = getStationPlaybackDurationMs();
+    if (totalMs > 0) {
+      return Math.min(normalized, totalMs);
+    }
+    return normalized;
+  }
+
+  function getStationPlaybackCurrentGlobalMs() {
+    const audio = refs.audio;
+    const currentSegment = getStationPlaybackQueueSegment(state.stationPlaybackSegmentIndex);
+    if (
+      currentSegment &&
+      String(state.stationPlaybackState || "") === "playing" &&
+      String(state.stationPlaybackSlotKey || "").trim() &&
+      audio
+    ) {
+      const segmentStartMs = normalizeTimelineEventTimeMs(currentSegment.startMs);
+      const localSeconds = Number(audio.currentTime || 0);
+      const localMs = Number.isFinite(localSeconds) && localSeconds > 0 ? Math.round(localSeconds * 1000) : 0;
+      const segmentDurationMs = normalizeTimelineEventTimeMs(currentSegment.durationMs);
+      return clampStationPlaybackCursorMs(segmentStartMs + Math.min(localMs, segmentDurationMs || localMs));
+    }
+    return clampStationPlaybackCursorMs(state.stationPlaybackCursorMs || 0);
+  }
+
+  function syncStationPlaybackCursorFromAudio() {
+    const currentMs = getStationPlaybackCurrentGlobalMs();
+    state.stationPlaybackCursorMs = currentMs;
+    if (String(state.stationPlaybackSlotKey || "").trim()) {
+      applyStationTimelineHighlight(currentMs);
+    }
+    return currentMs;
+  }
+
+  function setStationPlaybackCursor(slotKey, timeMs, options) {
+    const key = String(slotKey || "").trim();
+    const opts = options && typeof options === "object" ? options : {};
+    const currentSlotKey = String(state.stationPlaybackSlotKey || "").trim();
+    if (
+      opts.pauseIfPlaying &&
+      key &&
+      key === currentSlotKey &&
+      String(state.stationPlaybackState || "") === "playing"
+    ) {
+      try {
+        refs.audio.pause();
+      } catch (_) {}
+      state.stationPlaybackState = "paused";
+      state.playingStationSlotKey = "";
+      state.pendingStationSlotKey = "";
+      state.audioBusy = false;
+      state.stationPlaybackBusy = false;
+    }
+    const nextMs = clampStationPlaybackCursorMs(timeMs);
+    state.stationPlaybackCursorMs = nextMs;
+    if (key && (!currentSlotKey || key === currentSlotKey)) {
+      applyStationTimelineHighlight(nextMs);
+    }
+    if (opts.render !== false) {
+      render();
+    }
+    return nextMs;
+  }
+
+  function findStationSegmentIndexForGlobalMs(timeMs) {
+    const queue = Array.isArray(state.stationPlaybackQueue) ? state.stationPlaybackQueue : [];
+    if (!queue.length) return -1;
+    const normalizedMs = clampStationPlaybackCursorMs(timeMs);
+    for (let index = 0; index < queue.length; index += 1) {
+      const segment = queue[index];
+      const startMs = normalizeTimelineEventTimeMs(segment && segment.startMs);
+      const endMs = normalizeTimelineEventTimeMs(segment && segment.endMs);
+      if (normalizedMs < endMs || index === queue.length - 1) {
+        return normalizedMs === endMs && index < queue.length - 1 ? index + 1 : index;
+      }
+      if (normalizedMs >= startMs && normalizedMs < endMs) {
+        return index;
+      }
+    }
+    return queue.length - 1;
+  }
+
+  function getStationTimelineSelection(slotKey) {
+    const key = String(slotKey || "").trim();
+    if (!key || !state.stationTimelineSelections || !state.stationTimelineSelections[key]) return null;
+    const raw = state.stationTimelineSelections[key];
+    const startMs = normalizeTimelineEventTimeMs(raw.startMs);
+    const endMs = normalizeTimelineEventTimeMs(raw.endMs);
+    return {
+      startMs: Math.min(startMs, endMs),
+      endMs: Math.max(startMs, endMs),
+    };
+  }
+
+  function setStationTimelineSelection(slotKey, startMs, endMs) {
+    const key = String(slotKey || "").trim();
+    if (!key) return;
+    const startValue = normalizeTimelineEventTimeMs(startMs);
+    const endValue = normalizeTimelineEventTimeMs(endMs);
+    state.stationTimelineSelections[key] = {
+      startMs: Math.min(startValue, endValue),
+      endMs: Math.max(startValue, endValue),
+    };
+  }
+
+  function clearStationTimelineSelection(slotKey) {
+    const key = String(slotKey || "").trim();
+    if (!key || !state.stationTimelineSelections || !state.stationTimelineSelections[key]) return;
+    delete state.stationTimelineSelections[key];
+  }
+
+  function getStationTimelineVisualMaxMs(slotKey) {
+    const slot = getStationSlotByKey(slotKey);
+    const selection = getStationTimelineSelection(slotKey);
+    const eventMax = (Array.isArray(slot.timelineEvents) ? slot.timelineEvents : []).reduce((maxValue, item) => {
+      return Math.max(maxValue, normalizeTimelineEventTimeMs(item && item.timeMs));
+    }, 0);
+    const selectionMax = selection ? Math.max(selection.startMs, selection.endMs) : 0;
+    return Math.max(getStationPlaybackDurationMs(), eventMax, selectionMax, 1000);
+  }
+
+  function seekStationPlaybackToMs(timeMs) {
+    setStationPlaybackCursor(state.stationPlaybackSlotKey, timeMs, { pauseIfPlaying: true });
+  }
+
+  function getTimelineTimeMsFromPointer(slotKey, clientX) {
+    if (!refs.app) return 0;
+    const track = refs.app.querySelector(
+      '[data-role="station-timeline-track"][data-slot-key="' + String(slotKey || "").trim() + '"]'
+    );
+    if (!track) return 0;
+    const rect = track.getBoundingClientRect();
+    if (!rect || rect.width <= 0) return 0;
+    const ratio = Math.min(1, Math.max(0, (Number(clientX) - rect.left) / rect.width));
+    return Math.round(getStationTimelineVisualMaxMs(slotKey) * ratio);
+  }
+
+  function beginStationTimelineSelection(slotKey, clientX) {
+    const key = String(slotKey || "").trim();
+    if (!key) return;
+    const anchorMs = getTimelineTimeMsFromPointer(key, clientX);
+    stationTimelineInteraction = {
+      mode: "selection",
+      slotKey: key,
+      anchorMs,
+      currentMs: anchorMs,
+      moved: false,
+    };
+    setStationTimelineSelection(key, anchorMs, anchorMs);
+    render();
+  }
+
+  function updateStationTimelineSelection(clientX) {
+    if (!stationTimelineInteraction) return;
+    const nextMs = getTimelineTimeMsFromPointer(stationTimelineInteraction.slotKey, clientX);
+    if (stationTimelineInteraction.mode === "cursor") {
+      stationTimelineInteraction.currentMs = nextMs;
+      setStationPlaybackCursor(stationTimelineInteraction.slotKey, nextMs, {
+        pauseIfPlaying: true,
+        render: false,
+      });
+      render();
+      return;
+    }
+    stationTimelineInteraction.currentMs = nextMs;
+    stationTimelineInteraction.moved =
+      stationTimelineInteraction.moved ||
+      Math.abs(nextMs - stationTimelineInteraction.anchorMs) > 40;
+    setStationTimelineSelection(stationTimelineInteraction.slotKey, stationTimelineInteraction.anchorMs, nextMs);
+    render();
+  }
+
+  function beginStationTimelineCursorDrag(slotKey, clientX) {
+    const key = String(slotKey || "").trim();
+    if (!key) return;
+    const currentMs = getTimelineTimeMsFromPointer(key, clientX);
+    stationTimelineInteraction = {
+      mode: "cursor",
+      slotKey: key,
+      anchorMs: currentMs,
+      currentMs,
+      moved: false,
+    };
+    setStationPlaybackCursor(key, currentMs, {
+      pauseIfPlaying: true,
+      render: false,
+    });
+    render();
+  }
+
+  function endStationTimelineSelection() {
+    if (!stationTimelineInteraction) return;
+    const interaction = stationTimelineInteraction;
+    stationTimelineInteraction = null;
+    if (interaction.mode === "cursor") {
+      render();
+      return;
+    }
+    if (!interaction.moved) {
+      seekStationPlaybackToMs(interaction.currentMs);
+      return;
+    }
+    render();
+  }
+
+  function setStationTimelineSelectionEdge(slotKey, edge) {
+    const key = String(slotKey || "").trim();
+    if (!key) return;
+    const selection = getStationTimelineSelection(key);
+    const currentMs = getStationPlaybackCurrentTimeMs();
+    const nextSelection = selection || { startMs: currentMs, endMs: currentMs };
+    if (edge === "start") {
+      setStationTimelineSelection(key, currentMs, nextSelection.endMs);
+    } else {
+      setStationTimelineSelection(key, nextSelection.startMs, currentMs);
+    }
+    render();
+  }
+
+  function applyStationTimelineSelection(slotKey) {
+    const key = String(slotKey || "").trim();
+    const scene = findSceneById(key) || getSelectedScene();
+    const selection = getStationTimelineSelection(key);
+    const targetHotspot = getTimelineSelectedTargetHotspot(scene);
+    if (!selection) {
+      setAssetState("Select a range on the timeline first.", "warning", false, "station-timeline");
+      render();
+      return;
+    }
+    if (!targetHotspot) {
+      setAssetState("Select a product hotspot before creating a highlight range.", "warning", false, "station-timeline");
+      render();
+      return;
+    }
+    updateStationTimelineEvents(key, (events) => {
+      const baseEvents = events.filter((event) => {
+        const eventType = normalizeTimelineEventType(event && event.eventType);
+        const sameHotspot =
+          String(event && event.hotspotId ? event.hotspotId : "").trim() ===
+          String(targetHotspot.hotspot_id || "").trim();
+        const eventTime = normalizeTimelineEventTimeMs(event && event.timeMs);
+        if (!sameHotspot) return true;
+        if (eventTime !== selection.startMs && eventTime !== selection.endMs) return true;
+        return eventType !== "highlight_on" && eventType !== "highlight_off";
+      });
+      baseEvents.push(
+        {
+          eventId: "",
+          sortOrder: baseEvents.length,
+          timeMs: selection.startMs,
+          productId: String(targetHotspot.product_id || "").trim(),
+          hotspotId: String(targetHotspot.hotspot_id || "").trim(),
+          eventType: "highlight_on",
+          updatedAtMs: 0,
+        },
+        {
+          eventId: "",
+          sortOrder: baseEvents.length + 1,
+          timeMs: selection.endMs,
+          productId: String(targetHotspot.product_id || "").trim(),
+          hotspotId: String(targetHotspot.hotspot_id || "").trim(),
+          eventType: "highlight_off",
+          updatedAtMs: 0,
+        }
+      );
+      return baseEvents.sort((left, right) => {
+        const timeDiff = normalizeTimelineEventTimeMs(left.timeMs) - normalizeTimelineEventTimeMs(right.timeMs);
+        if (timeDiff !== 0) return timeDiff;
+        return String(left.hotspotId || "").localeCompare(String(right.hotspotId || ""));
+      });
+    });
+    setAssetState("Created highlight_on and highlight_off from the selected range.", "success", false, "station-timeline");
+    render();
+  }
+
   function normalizeStationTimelineEditorEvents(rawEvents, scene) {
     return (Array.isArray(rawEvents) ? rawEvents : [])
       .map((raw, index) => {
@@ -812,6 +1126,9 @@
   }
 
   function getStationPlaybackCurrentTimeMs() {
+    if (String(state.stationPlaybackSlotKey || "").trim()) {
+      return getStationPlaybackCurrentGlobalMs();
+    }
     const audio = refs.audio;
     if (!audio) return 0;
     const seconds = Number(audio.currentTime || 0);
@@ -1790,6 +2107,9 @@
     state.pendingPlaybackProductId = "";
     state.stationPlaybackBusy = false;
     state.stationPlaybackError = opts.preserveStationError ? state.stationPlaybackError : "";
+    state.stationPlaybackState = "idle";
+    state.stationPlaybackCursorMs = 0;
+    state.stationPlaybackTotalDurationMs = 0;
     state.playingStationSlotKey = "";
     state.pendingStationSlotKey = "";
     state.stationPlaybackSlotKey = "";
@@ -2310,6 +2630,45 @@
     );
   }
 
+  function renderStationTimelinePlaybackControls(slot) {
+    const slotKey = String(slot && slot.slotKey ? slot.slotKey : "").trim();
+    const currentTimeText = formatTimelineOffset(getStationPlaybackCurrentTimeMs());
+    const playbackState = getStationPlaybackStateForSlot(slotKey);
+    const totalDurationMs = getStationPlaybackDurationMs();
+    const continueDisabled =
+      playbackState !== "paused" ||
+      (totalDurationMs > 0 && getStationPlaybackCurrentTimeMs() >= totalDurationMs);
+    return (
+      '<div class="pad-station-timeline__preview-tools" data-role="station-timeline-preview-tools">' +
+      '<button type="button" class="pad-station-timeline__action" data-action="play-station-slot-from-start" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '"' +
+      (playbackState === "playing" ? " disabled" : "") +
+      ">播放</button>" +
+      '<button type="button" class="pad-station-timeline__action" data-action="pause-station-playback" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '"' +
+      (playbackState === "playing" ? "" : " disabled") +
+      ">暂停</button>" +
+      '<button type="button" class="pad-station-timeline__action" data-action="resume-station-playback" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '"' +
+      (continueDisabled ? " disabled" : "") +
+      '">' +
+      "继续</button>" +
+      '<span class="pad-station-timeline__preview-time">当前播放 ' +
+      escapeHtml(currentTimeText) +
+      "</span>" +
+      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-add-highlight-on" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '">插入高亮开始</button>' +
+      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-add-highlight-off" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '">插入高亮结束</button>' +
+      "</div>"
+    );
+  }
+
   function renderOpsStationTimeline(slot, scene) {
     const slotKey = String(slot && slot.slotKey ? slot.slotKey : "").trim();
     const timelineEvents = normalizeStationTimelineEditorEvents(slot && slot.timelineEvents, scene);
@@ -2327,6 +2686,8 @@
       (!hotspotOptions.length
         ? '<div class="pad-banner pad-banner--warning" style="margin-top:12px;">\u5f53\u524d\u7ad9\u53f0\u8fd8\u6ca1\u6709\u53ef\u7528\u70ed\u533a\uff0c\u8bf7\u5148\u5728\u753b\u5e03\u4e0a\u65b0\u5efa\u4ea7\u54c1\u70ed\u533a\u3002</div>'
         : "") +
+      renderStationTimelinePlaybackControls(slot) +
+      renderStationTimelineScrubber(slot, scene, timelineEvents) +
       (timelineEvents.length
         ? '<div class="pad-ops-timeline-list">' +
           timelineEvents.map((event, index) => renderOpsTimelineEventRow(slot, scene, event, index, timelineEvents.length)).join("") +
@@ -2908,8 +3269,11 @@
 
     let headerTools = timelineRoot.querySelector('[data-role="station-timeline-preview-tools"]');
     const currentTimeText = formatTimelineOffset(getStationPlaybackCurrentTimeMs());
-    const playLabel =
-      isStationSlotPlaying(slot) || isStationSlotPending(slot) ? "停止播放" : "播放讲解";
+    const playbackState = getStationPlaybackStateForSlot(slot.slotKey);
+    const totalDurationMs = getStationPlaybackDurationMs();
+    const continueDisabled =
+      playbackState !== "paused" ||
+      (totalDurationMs > 0 && getStationPlaybackCurrentTimeMs() >= totalDurationMs);
     if (!headerTools) {
       headerTools = document.createElement("div");
       headerTools.setAttribute("data-role", "station-timeline-preview-tools");
@@ -2917,11 +3281,22 @@
       timelineHeader.appendChild(headerTools);
     }
     headerTools.innerHTML =
-      '<button type="button" class="pad-station-timeline__action" data-action="play-station-slot" data-slot-key="' +
+      '<button type="button" class="pad-station-timeline__action" data-action="play-station-slot-from-start" data-slot-key="' +
       escapeHtml(String(slot.slotKey || "")) +
+      '"' +
+      (playbackState === "playing" ? " disabled" : "") +
+      '>播放</button>' +
+      '<button type="button" class="pad-station-timeline__action" data-action="pause-station-playback" data-slot-key="' +
+      escapeHtml(String(slot.slotKey || "")) +
+      '"' +
+      (playbackState === "playing" ? "" : " disabled") +
+      '>暂停</button>' +
+      '<button type="button" class="pad-station-timeline__action" data-action="resume-station-playback" data-slot-key="' +
+      escapeHtml(String(slot.slotKey || "")) +
+      '"' +
+      (continueDisabled ? " disabled" : "") +
       '">' +
-      escapeHtml(playLabel) +
-      "</button>" +
+      '继续</button>' +
       '<span class="pad-station-timeline__preview-time">当前播放 ' +
       escapeHtml(currentTimeText) +
       "</span>" +
@@ -4833,6 +5208,87 @@
     );
   }
 
+  function renderStationTimelineScrubber(slot, scene, timelineEvents) {
+    const slotKey = String(slot && slot.slotKey ? slot.slotKey : "").trim();
+    const currentMs = getStationPlaybackCurrentTimeMs();
+    const durationMs = getStationPlaybackDurationMs();
+    const selection = getStationTimelineSelection(slotKey);
+    const totalMs = Math.max(getStationTimelineVisualMaxMs(slotKey), 1);
+    const selectionStartPct = selection ? (selection.startMs / totalMs) * 100 : 0;
+    const selectionWidthPct = selection ? Math.max(0, ((selection.endMs - selection.startMs) / totalMs) * 100) : 0;
+    const playheadPct = Math.min(100, Math.max(0, (currentMs / totalMs) * 100));
+    const targetHotspot = getTimelineSelectedTargetHotspot(scene);
+    const rangeLabel = selection
+      ? formatTimelineOffset(selection.startMs) + " - " + formatTimelineOffset(selection.endMs)
+      : "No range selected";
+    return (
+      '<div class="pad-station-timeline__scrubber">' +
+      '<div class="pad-station-timeline__scrubber-meta">' +
+      '<span>Timeline</span>' +
+      '<span>Length ' + escapeHtml(formatTimelineOffset(durationMs || totalMs)) + '</span>' +
+      '<span>Range ' + escapeHtml(rangeLabel) + '</span>' +
+      "</div>" +
+      '<div class="pad-station-timeline__track" data-role="station-timeline-track" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '">' +
+      (selection
+        ? '<div class="pad-station-timeline__selection" style="left:' +
+          escapeHtml(String(selectionStartPct)) +
+          "%;width:" +
+          escapeHtml(String(selectionWidthPct)) +
+          '%;"></div>'
+        : "") +
+      timelineEvents
+        .map((event) => {
+          const eventPct = Math.min(100, Math.max(0, (normalizeTimelineEventTimeMs(event.timeMs) / totalMs) * 100));
+          return (
+            '<button type="button" class="pad-station-timeline__marker" data-action="station-timeline-seek-marker" data-slot-key="' +
+            escapeHtml(slotKey) +
+            '" data-time-ms="' +
+            escapeHtml(String(normalizeTimelineEventTimeMs(event.timeMs))) +
+            '" style="left:' +
+            escapeHtml(String(eventPct)) +
+            '%;" title="' +
+            escapeHtml(getStationTimelineEventSummary(scene, event)) +
+            '"></button>'
+          );
+        })
+        .join("") +
+      '<button type="button" class="pad-station-timeline__playhead" data-action="station-timeline-drag-playhead" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" style="left:' +
+      escapeHtml(String(playheadPct)) +
+      '%;" aria-label="拖动播放位置"></button>' +
+      "</div>" +
+      '<div class="pad-station-timeline__selection-tools">' +
+      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-set-selection-start" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '">Set start</button>' +
+      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-set-selection-end" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '">Set end</button>' +
+      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-apply-selection" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '"' +
+      (selection ? "" : " disabled") +
+      '>Create highlight range</button>' +
+      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-clear-selection" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '"' +
+      (selection ? "" : " disabled") +
+      '>Clear range</button>' +
+      '<div class="pad-station-timeline__selection-hint">' +
+      escapeHtml(
+        targetHotspot
+          ? "Current target: " + getStationTimelineHotspotLabel(scene, targetHotspot.hotspot_id) + ". Drag on the timeline to select a range."
+          : "Select a product hotspot before creating a highlight range."
+      ) +
+      "</div>" +
+      "</div>" +
+      "</div>"
+    );
+  }
+
   function renderStationTimelineEditor(slot, scene) {
     const slotKey = String(slot && slot.slotKey ? slot.slotKey : "").trim();
     const timelineEvents = normalizeStationTimelineEditorEvents(slot && slot.timelineEvents, scene);
@@ -4844,15 +5300,19 @@
       '<div class="pad-station-timeline__title">站点讲解时间轴</div>' +
       '<div class="pad-panel__hint">用可视化节点管理讲解过程中的热区切换顺序。</div>' +
       "</div>" +
+      '<div style="display:flex; align-items:flex-start; justify-content:flex-end; gap:12px; flex-wrap:wrap;">' +
+      renderStationTimelinePlaybackControls(slot) +
       '<button type="button" class="pad-btn pad-btn--neutral" data-action="station-timeline-add" data-slot-key="' +
       escapeHtml(slotKey) +
       '"' +
       (hotspotOptions.length ? "" : " disabled") +
       ">新增节点</button>" +
       "</div>" +
+      "</div>" +
       (!hotspotOptions.length
         ? '<div class="pad-banner pad-banner--warning" style="margin-top:14px;">当前站点还没有可用热区，请先在右侧创建产品热区。</div>'
         : "") +
+      renderStationTimelineScrubber(slot, scene, timelineEvents) +
       (timelineEvents.length
         ? '<div class="pad-station-timeline__list">' +
           timelineEvents
@@ -5404,6 +5864,9 @@
     const reloadButton = refs.app.querySelector('[data-action="reload-live"]');
     const playButton = refs.app.querySelector('[data-action="play-selected"]');
     const stationPlayButtons = Array.from(refs.app.querySelectorAll('[data-action="play-station-slot"]'));
+    const stationTimelinePlayButtons = Array.from(refs.app.querySelectorAll('[data-action="play-station-slot-from-start"]'));
+    const stationTimelinePauseButtons = Array.from(refs.app.querySelectorAll('[data-action="pause-station-playback"]'));
+    const stationTimelineResumeButtons = Array.from(refs.app.querySelectorAll('[data-action="resume-station-playback"]'));
     const regenerateButton = refs.app.querySelector('[data-action="regenerate-audio"]');
     const uploadButton = refs.app.querySelector('[data-action="select-upload-audio"]');
     const uploadInput = refs.app.querySelector('[data-action="upload-audio-input"]');
@@ -5501,6 +5964,24 @@
     stationPlayButtons.forEach((button) => {
       button.addEventListener("click", () => {
         void toggleStationPlayback(button.getAttribute("data-slot-key"));
+      });
+    });
+
+    stationTimelinePlayButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        void playStationSlot(button.getAttribute("data-slot-key"), { startAtMs: 0 });
+      });
+    });
+
+    stationTimelinePauseButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        pauseStationPlayback();
+      });
+    });
+
+    stationTimelineResumeButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        void resumeStationPlayback(button.getAttribute("data-slot-key"));
       });
     });
 
@@ -5712,6 +6193,51 @@
           button.getAttribute("data-slot-key"),
           button.getAttribute("data-index")
         );
+      });
+    });
+
+    refs.app.querySelectorAll('[data-role="station-timeline-track"]').forEach((track) => {
+      track.addEventListener("pointerdown", (event) => {
+        beginStationTimelineSelection(track.getAttribute("data-slot-key"), event.clientX);
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="station-timeline-drag-playhead"]').forEach((button) => {
+      button.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        beginStationTimelineCursorDrag(button.getAttribute("data-slot-key"), event.clientX);
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="station-timeline-seek-marker"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        seekStationPlaybackToMs(button.getAttribute("data-time-ms"));
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="station-timeline-set-selection-start"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        setStationTimelineSelectionEdge(button.getAttribute("data-slot-key"), "start");
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="station-timeline-set-selection-end"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        setStationTimelineSelectionEdge(button.getAttribute("data-slot-key"), "end");
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="station-timeline-apply-selection"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        applyStationTimelineSelection(button.getAttribute("data-slot-key"));
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="station-timeline-clear-selection"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        clearStationTimelineSelection(button.getAttribute("data-slot-key"));
+        render();
       });
     });
 
@@ -6056,14 +6582,152 @@
         const item = segment && typeof segment === "object" ? segment : {};
         const audioUrl = String(item.audio_url || "").trim();
         if (!audioUrl) return null;
+        const durationMs = Number(item.duration_ms || 0);
         return {
           segmentId: Number(item.segment_id || 0),
           text: String(item.text || "").trim(),
           audioUrl: buildAbsoluteUrl(audioUrl),
+          durationMs: Number.isFinite(durationMs) && durationMs > 0 ? Math.round(durationMs) : 0,
+          startMs: 0,
+          endMs: 0,
           updatedAtMs: Number(item.updated_at_ms || 0),
         };
       })
       .filter(Boolean);
+  }
+
+  function stopStationTimelineSync() {}
+
+  function waitForAudioMetadata(audio) {
+    return new Promise((resolve, reject) => {
+      if (!audio) {
+        reject(new Error("audio_element_missing"));
+        return;
+      }
+      if (audio && audio.readyState >= 1) {
+        resolve();
+        return;
+      }
+      let settled = false;
+      let timeoutId = null;
+      const cleanup = () => {
+        if (timeoutId != null) {
+          window.clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        audio.removeEventListener("loadedmetadata", handleLoaded);
+        audio.removeEventListener("error", handleError);
+      };
+      const handleLoaded = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve();
+      };
+      const handleError = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error("audio_metadata_unavailable"));
+      };
+      audio.addEventListener("loadedmetadata", handleLoaded, { once: true });
+      audio.addEventListener("error", handleError, { once: true });
+      timeoutId = window.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error("audio_metadata_timeout"));
+      }, 5000);
+      try {
+        if (typeof audio.load === "function") {
+          audio.load();
+        }
+      } catch (_) {}
+    });
+  }
+
+  function loadStationSegmentDurationMs(segment) {
+    const item = segment && typeof segment === "object" ? segment : {};
+    if (Number(item.durationMs || 0) > 0) {
+      return Promise.resolve(Math.round(Number(item.durationMs)));
+    }
+    const cacheKey = String(item.audioUrl || "").trim();
+    if (!cacheKey) {
+      return Promise.reject(new Error("station_segment_audio_missing"));
+    }
+    if (Number(stationSegmentDurationCache[cacheKey] || 0) > 0) {
+      return Promise.resolve(Math.round(Number(stationSegmentDurationCache[cacheKey])));
+    }
+    return new Promise((resolve, reject) => {
+      const probe = new Audio();
+      let settled = false;
+      let timeoutId = null;
+      const cleanup = () => {
+        if (timeoutId != null) {
+          window.clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        probe.removeEventListener("loadedmetadata", handleLoaded);
+        probe.removeEventListener("error", handleError);
+      };
+      const handleLoaded = () => {
+        if (settled) return;
+        const seconds = Number(probe.duration || 0);
+        const durationMs = Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 0;
+        if (durationMs <= 0) {
+          settled = true;
+          cleanup();
+          reject(new Error("station_segment_duration_missing"));
+          return;
+        }
+        settled = true;
+        stationSegmentDurationCache[cacheKey] = durationMs;
+        cleanup();
+        resolve(durationMs);
+      };
+      const handleError = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error("station_segment_duration_missing"));
+      };
+      probe.preload = "metadata";
+      probe.addEventListener("loadedmetadata", handleLoaded, { once: true });
+      probe.addEventListener("error", handleError, { once: true });
+      probe.src = cacheKey;
+      timeoutId = window.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error("station_segment_duration_timeout"));
+      }, 5000);
+      try {
+        if (typeof probe.load === "function") {
+          probe.load();
+        }
+      } catch (_) {}
+    });
+  }
+
+  async function hydrateStationPlaybackQueue(queue, playbackSeq) {
+    const baseQueue = Array.isArray(queue) ? queue : [];
+    const durations = await Promise.all(baseQueue.map((segment) => loadStationSegmentDurationMs(segment)));
+    if (playbackSeq !== latestStationPlaybackSeq) return null;
+    let offsetMs = 0;
+    const hydratedQueue = baseQueue.map((segment, index) => {
+      const durationMs = Math.round(Number(durations[index] || 0));
+      const nextSegment = Object.assign({}, segment, {
+        durationMs,
+        startMs: offsetMs,
+        endMs: offsetMs + durationMs,
+      });
+      offsetMs += durationMs;
+      return nextSegment;
+    });
+    return {
+      queue: hydratedQueue,
+      totalDurationMs: offsetMs,
+    };
   }
 
   function setStationPlaybackFailure(message) {
@@ -6073,6 +6737,9 @@
     state.stationPlaybackError = nextMessage;
     state.audioBusy = false;
     state.stationPlaybackBusy = false;
+    state.stationPlaybackState = "idle";
+    state.stationPlaybackCursorMs = 0;
+    state.stationPlaybackTotalDurationMs = 0;
     state.playingStationSlotKey = '';
     state.pendingStationSlotKey = '';
     state.stationPlaybackSlotKey = '';
@@ -6084,14 +6751,6 @@
     state.highlightedHotspotId = '';
     state.highlightedProductId = '';
     state.lastPlaybackRequestedUrl = '';
-  }
-
-  function stopStationTimelineSync() {
-    if (stationTimelineTimer) {
-      window.clearInterval(stationTimelineTimer);
-      stationTimelineTimer = null;
-    }
-    stationTimelineStartedAtMs = 0;
   }
 
   function applyStationTimelineHighlight(elapsedMs) {
@@ -6118,45 +6777,44 @@
     state.highlightedProductId = String(activeEvent.productId || '');
   }
 
-  function startStationTimelineSync() {
-    stopStationTimelineSync();
-    stationTimelineStartedAtMs = Date.now();
-    applyStationTimelineHighlight(0);
-    if (!Array.isArray(state.stationPlaybackTimelineEvents) || !state.stationPlaybackTimelineEvents.length) {
-      render();
-      return;
-    }
-    stationTimelineTimer = window.setInterval(() => {
-      const elapsedMs = Math.max(0, Date.now() - stationTimelineStartedAtMs);
-      applyStationTimelineHighlight(elapsedMs);
-      render();
-    }, 120);
-  }
-
-  async function startStationSegment(slotKey, segmentIndex, playbackSeq) {
+  async function startStationSegment(slotKey, segmentIndex, playbackSeq, startAtMs) {
     if (playbackSeq !== latestStationPlaybackSeq) return;
-    const queue = Array.isArray(state.stationPlaybackQueue) ? state.stationPlaybackQueue : [];
-    const segment = queue[segmentIndex] || null;
+    const segment = getStationPlaybackQueueSegment(segmentIndex);
     if (!segment || !segment.audioUrl) {
       setStationPlaybackFailure("Current station archive audio is unavailable.");
       setStationPlaybackFailure("Current station archive audio is unavailable.");
       return;
     }
+    const segmentStartMs = normalizeTimelineEventTimeMs(segment.startMs);
+    const segmentEndMs = normalizeTimelineEventTimeMs(segment.endMs);
+    const nextCursorMs = clampStationPlaybackCursorMs(
+      startAtMs == null ? segmentStartMs : Math.max(segmentStartMs, Math.min(normalizeTimelineEventTimeMs(startAtMs), segmentEndMs))
+    );
+    const segmentLocalMs = Math.max(0, nextCursorMs - segmentStartMs);
     state.audioBusy = true;
     state.audioError = "";
     state.stationPlaybackBusy = true;
     state.stationPlaybackError = "";
+    state.stationPlaybackState = "playing";
     state.pendingStationSlotKey = String(slotKey || "");
     state.playingStationSlotKey = "";
     state.stationPlaybackSlotKey = String(slotKey || "");
     state.stationPlaybackSegmentIndex = Number(segmentIndex);
+    state.stationPlaybackCursorMs = nextCursorMs;
     state.lastPlaybackRequestedUrl = segment.audioUrl;
+    applyStationTimelineHighlight(nextCursorMs);
     render();
     try {
-      refs.audio.src = segment.audioUrl;
-      if (Number(segmentIndex) === 0) {
-        startStationTimelineSync();
+      if (String(refs.audio.currentSrc || "").trim() !== String(segment.audioUrl || "").trim()) {
+        refs.audio.src = segment.audioUrl;
       }
+      if (segmentLocalMs > 0 || refs.audio.readyState < 1) {
+        await waitForAudioMetadata(refs.audio);
+      }
+      if (playbackSeq !== latestStationPlaybackSeq) return;
+      try {
+        refs.audio.currentTime = segmentLocalMs / 1000;
+      } catch (_) {}
       const playResult = refs.audio.play();
       if (playResult && typeof playResult.then === "function") {
         await playResult;
@@ -6174,7 +6832,8 @@
     }
   }
 
-  async function playStationSlot(slotKey) {
+  async function playStationSlot(slotKey, options) {
+    const opts = options && typeof options === "object" ? options : {};
     const slot = getStationSlotByKey(slotKey);
     const stationVisual = findSceneById(slotKey);
     const recordingId = String(slot.recordingId || (stationVisual && stationVisual.recording_id) || '').trim();
@@ -6219,6 +6878,9 @@
     state.audioError = '';
     state.stationPlaybackBusy = true;
     state.stationPlaybackError = '';
+    state.stationPlaybackState = "playing";
+    state.stationPlaybackCursorMs = 0;
+    state.stationPlaybackTotalDurationMs = 0;
     state.pendingStationSlotKey = String(slot.slotKey || '');
     state.stationPlaybackSlotKey = String(slot.slotKey || '');
     state.stationPlaybackStopName = resolvedStopName;
@@ -6251,27 +6913,79 @@
     try {
       const payload = await fetchJson('/api/recordings/' + encodeURIComponent(recordingId) + '/stop/' + encodeURIComponent(String(stopIndex)), state.clientId);
       if (playbackSeq != latestStationPlaybackSeq) return;
-      const queue = normalizeStationSegments(payload);
-      if (!queue.length) {
+      const baseQueue = normalizeStationSegments(payload);
+      if (!baseQueue.length) {
         setStationPlaybackFailure("Current station archive audio is unavailable.");
         setStationPlaybackFailure("Current station archive audio is unavailable.");
         return;
       }
-      state.stationPlaybackQueue = queue;
-      state.stationPlaybackSegmentIndex = 0;
+      const hydrated = await hydrateStationPlaybackQueue(baseQueue, playbackSeq);
+      if (!hydrated || !Array.isArray(hydrated.queue) || !hydrated.queue.length || Number(hydrated.totalDurationMs || 0) <= 0) {
+        setStationPlaybackFailure("Current station archive audio duration is unavailable.");
+        setStationPlaybackFailure("Current station archive audio duration is unavailable.");
+        return;
+      }
+      const startCursorMs = clampStationPlaybackCursorMs(
+        opts.startAtMs == null ? 0 : Math.min(normalizeTimelineEventTimeMs(opts.startAtMs), hydrated.totalDurationMs)
+      );
+      state.stationPlaybackQueue = hydrated.queue;
+      state.stationPlaybackTotalDurationMs = Math.round(Number(hydrated.totalDurationMs || 0));
+      state.stationPlaybackCursorMs = startCursorMs;
+      state.stationPlaybackSegmentIndex = findStationSegmentIndexForGlobalMs(startCursorMs);
       state.stationPlaybackAnswerText = String(payload && payload.answer_text ? payload.answer_text : '').trim();
       state.stationPlaybackStopName = String(payload && payload.stop_name ? payload.stop_name : resolvedStopName).trim();
-      await startStationSegment(slot.slotKey, 0, playbackSeq);
+      applyStationTimelineHighlight(startCursorMs);
+      await startStationSegment(
+        slot.slotKey,
+        state.stationPlaybackSegmentIndex < 0 ? 0 : state.stationPlaybackSegmentIndex,
+        playbackSeq,
+        startCursorMs
+      );
     } catch (error) {
       if (playbackSeq != latestStationPlaybackSeq) return;
       const code = String(error && error.code ? error.code : '').trim();
       if (code === 'not_found') {
         setStationPlaybackFailure("Current station archive audio is unavailable.");
         setStationPlaybackFailure("Current station archive audio is unavailable.");
+      } else {
         setStationPlaybackFailure(describeRequestError(error));
       }
       render();
     }
+  }
+
+  function pauseStationPlayback() {
+    if (!String(state.stationPlaybackSlotKey || "").trim()) return;
+    if (String(state.stationPlaybackState || "") !== "playing") return;
+    syncStationPlaybackCursorFromAudio();
+    state.stationPlaybackState = "paused";
+    state.audioBusy = false;
+    state.stationPlaybackBusy = false;
+    state.playingStationSlotKey = "";
+    state.pendingStationSlotKey = "";
+    try {
+      refs.audio.pause();
+    } catch (_) {}
+    render();
+  }
+
+  async function resumeStationPlayback(slotKey) {
+    const key = String(slotKey || state.stationPlaybackSlotKey || "").trim();
+    if (!key) return;
+    if (String(state.stationPlaybackSlotKey || "").trim() !== key || !Array.isArray(state.stationPlaybackQueue) || !state.stationPlaybackQueue.length) {
+      await playStationSlot(key, { startAtMs: 0 });
+      return;
+    }
+    const totalDurationMs = getStationPlaybackDurationMs();
+    const cursorMs = clampStationPlaybackCursorMs(state.stationPlaybackCursorMs || 0);
+    if (totalDurationMs > 0 && cursorMs >= totalDurationMs) {
+      render();
+      return;
+    }
+    latestStationPlaybackSeq += 1;
+    const playbackSeq = latestStationPlaybackSeq;
+    const segmentIndex = findStationSegmentIndexForGlobalMs(cursorMs);
+    await startStationSegment(key, segmentIndex < 0 ? 0 : segmentIndex, playbackSeq, cursorMs);
   }
 
   async function toggleStationPlayback(slotKey) {
@@ -6280,7 +6994,7 @@
       slot &&
       (String(state.stationPlaybackSlotKey || "") === String(slot.slotKey || "") ||
         String(state.pendingStationSlotKey || "") === String(slot.slotKey || ""));
-    if (samePlayingStation) {
+    if (samePlayingStation && String(state.stationPlaybackState || "") === "playing") {
       interruptCurrentPlayback({
         preserveError: false,
         preserveStationError: false,
@@ -6290,7 +7004,11 @@
       render();
       return;
     }
-    await playStationSlot(slotKey);
+    if (samePlayingStation && String(state.stationPlaybackState || "") === "paused") {
+      await resumeStationPlayback(slotKey);
+      return;
+    }
+    await playStationSlot(slotKey, { startAtMs: 0 });
   }
 
   async function finalizeAudioMutation(productId, successMessage, syncFailedMessage) {
@@ -7460,41 +8178,71 @@
       if (String(state.stationPlaybackSlotKey || "").trim()) {
         state.stationPlaybackBusy = false;
         state.stationPlaybackError = "";
+        state.stationPlaybackState = "playing";
         state.playingStationSlotKey = String(state.stationPlaybackSlotKey || "");
         state.pendingStationSlotKey = "";
         state.playingProductId = "";
         state.pendingPlaybackProductId = "";
+        syncStationPlaybackCursorFromAudio();
       } else {
         state.playingProductId = String(state.pendingPlaybackProductId || state.selectedProductId || "");
         state.pendingPlaybackProductId = "";
       }
       render();
     });
+    refs.audio.addEventListener("timeupdate", () => {
+      if (String(state.stationPlaybackSlotKey || "").trim()) {
+        syncStationPlaybackCursorFromAudio();
+      }
+      render();
+    });
+    refs.audio.addEventListener("loadedmetadata", () => {
+      if (String(state.stationPlaybackSlotKey || "").trim()) {
+        syncStationPlaybackCursorFromAudio();
+      }
+      render();
+    });
+    refs.audio.addEventListener("durationchange", () => {
+      render();
+    });
+    refs.audio.addEventListener("seeked", () => {
+      if (String(state.stationPlaybackSlotKey || "").trim()) {
+        syncStationPlaybackCursorFromAudio();
+      }
+      render();
+    });
     refs.audio.addEventListener("ended", () => {
       if (String(state.stationPlaybackSlotKey || "").trim()) {
         const queue = Array.isArray(state.stationPlaybackQueue) ? state.stationPlaybackQueue : [];
+        const currentSegment = getStationPlaybackQueueSegment(state.stationPlaybackSegmentIndex);
+        if (currentSegment) {
+          state.stationPlaybackCursorMs = normalizeTimelineEventTimeMs(currentSegment.endMs);
+          applyStationTimelineHighlight(state.stationPlaybackCursorMs);
+        }
         const nextIndex = Number(state.stationPlaybackSegmentIndex) + 1;
         if (nextIndex >= 0 && nextIndex < queue.length) {
           state.playingStationSlotKey = "";
           state.pendingStationSlotKey = String(state.stationPlaybackSlotKey || "");
           state.audioBusy = true;
           state.stationPlaybackBusy = true;
+          state.stationPlaybackState = "playing";
           render();
-          void startStationSegment(state.stationPlaybackSlotKey, nextIndex, latestStationPlaybackSeq);
+          void startStationSegment(
+            state.stationPlaybackSlotKey,
+            nextIndex,
+            latestStationPlaybackSeq,
+            normalizeTimelineEventTimeMs(queue[nextIndex] && queue[nextIndex].startMs)
+          );
           return;
         }
         state.audioBusy = false;
         state.stationPlaybackBusy = false;
+        state.stationPlaybackState = "idle";
         state.playingStationSlotKey = "";
         state.pendingStationSlotKey = "";
-        state.stationPlaybackSlotKey = "";
-        state.stationPlaybackStopName = "";
-        state.stationPlaybackQueue = [];
-        state.stationPlaybackSegmentIndex = -1;
-        state.stationPlaybackAnswerText = "";
-        state.stationPlaybackTimelineEvents = [];
-        state.highlightedHotspotId = "";
-        state.highlightedProductId = "";
+        state.stationPlaybackSegmentIndex = queue.length ? queue.length - 1 : -1;
+        state.stationPlaybackCursorMs = getStationPlaybackDurationMs();
+        applyStationTimelineHighlight(state.stationPlaybackCursorMs);
         stopStationTimelineSync();
         state.lastPlaybackRequestedUrl = "";
         render();
@@ -7521,9 +8269,13 @@
     refs.audio.addEventListener("pause", () => {
       state.audioBusy = false;
       if (String(state.stationPlaybackSlotKey || "").trim()) {
-        if (!state.pendingStationSlotKey && !refs.audio.ended) {
+        if (String(state.stationPlaybackState || "") === "paused") {
+          syncStationPlaybackCursorFromAudio();
+        } else if (!state.pendingStationSlotKey && !refs.audio.ended) {
           state.playingStationSlotKey = "";
           state.stationPlaybackBusy = false;
+          state.stationPlaybackState = "paused";
+          syncStationPlaybackCursorFromAudio();
         }
       } else if (!state.pendingPlaybackProductId) {
         state.playingProductId = "";
@@ -7695,15 +8447,20 @@
   }
 
   window.addEventListener("pointermove", (event) => {
+    if (stationTimelineInteraction) {
+      updateStationTimelineSelection(event.clientX);
+    }
     if (!sceneEditorInteraction) return;
     updateSceneEditorInteraction(event);
   });
 
   window.addEventListener("pointerup", () => {
+    endStationTimelineSelection();
     void endSceneEditorInteraction();
   });
 
   window.addEventListener("pointercancel", () => {
+    endStationTimelineSelection();
     void endSceneEditorInteraction();
   });
 
