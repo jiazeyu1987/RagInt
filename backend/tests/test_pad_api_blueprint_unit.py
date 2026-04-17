@@ -259,7 +259,7 @@ def test_bootstrap_products_and_manifest_are_scoped_by_client_id(work_dir: Path)
     assert unknown_client.get_json()["error"] == "display_binding_not_found"
 
 
-def test_current_audio_and_offline_audio_require_current_hall_scope(work_dir: Path):
+def test_current_audio_and_offline_assets_allow_cross_hall_online_but_require_reference_offline(work_dir: Path):
     app, deps = _build_app(work_dir)
     _seed_products_and_bindings(deps)
     client = app.test_client()
@@ -269,8 +269,8 @@ def test_current_audio_and_offline_audio_require_current_hall_scope(work_dir: Pa
     assert "audio/wav" in str(ok.headers.get("content-type", "")).lower()
 
     wrong_hall = client.get("/api/pad/products/product_002/audio/current", headers={"X-Client-ID": "pad-a"})
-    assert wrong_hall.status_code == 404
-    assert wrong_hall.get_json()["error"] == "product_not_found"
+    assert wrong_hall.status_code == 200
+    assert "audio/wav" in str(wrong_hall.headers.get("content-type", "")).lower()
 
     current_asset = deps.pad_product_store.get_current_audio_asset("product_001")
     assert current_asset is not None
@@ -300,8 +300,7 @@ def test_current_audio_and_offline_audio_require_current_hall_scope(work_dir: Pa
         f"/api/pad/products/product_001/images/{image_asset['image_asset_id']}",
         headers={"X-Client-ID": "pad-b"},
     )
-    assert image_wrong_hall.status_code == 404
-    assert image_wrong_hall.get_json()["error"] == "product_not_found"
+    assert image_wrong_hall.status_code == 200
 
     offline_image_ok = client.get(
         f"/api/pad/offline/images/{image_asset['image_asset_id']}",
@@ -659,7 +658,7 @@ def test_station_endpoints_roundtrip_and_manifest_payload(work_dir: Path):
     assert delete_hotspot.status_code == 200
 
 
-def test_station_wireframe_requires_background_and_product_scope(work_dir: Path):
+def test_station_wireframe_requires_background_and_allows_cross_hall_product_binding(work_dir: Path):
     app, deps = _build_app(work_dir)
     _seed_products_and_bindings(deps)
     client = app.test_client()
@@ -681,7 +680,7 @@ def test_station_wireframe_requires_background_and_product_scope(work_dir: Path)
     )
     assert background.status_code == 200
 
-    bad_hotspot = client.post(
+    cross_hall_hotspot = client.post(
         "/api/pad/halls/current/stations/display_slot_1/hotspots",
         headers={"X-Client-ID": "pad-a"},
         json={
@@ -693,8 +692,108 @@ def test_station_wireframe_requires_background_and_product_scope(work_dir: Path)
             "height_pct": 0.2,
         },
     )
-    assert bad_hotspot.status_code == 400
-    assert bad_hotspot.get_json()["error"] == "product_not_found"
+    assert cross_hall_hotspot.status_code == 200
+    assert cross_hall_hotspot.get_json()["hotspot"]["product_id"] == "product_002"
+
+
+def test_product_search_placeholder_hotspots_and_referenced_manifest_assets(work_dir: Path):
+    app, deps = _build_app(work_dir)
+    _seed_products_and_bindings(deps)
+    client = app.test_client()
+
+    search = client.get("/api/pad/products/search?q=Beta", headers={"X-Client-ID": "pad-a"})
+    assert search.status_code == 200
+    search_items = search.get_json()["items"]
+    assert search_items[0]["product_id"] == "product_002"
+    assert search_items[0]["hall_id"] == "hall_02"
+
+    unbound = client.post(
+        "/api/pad/halls/current/stations/display_slot_1/hotspots",
+        headers={"X-Client-ID": "pad-a"},
+        json={
+            "product_id": "",
+            "sort_order": 1,
+            "x_pct": 0.1,
+            "y_pct": 0.1,
+            "width_pct": 0.2,
+            "height_pct": 0.2,
+        },
+    )
+    assert unbound.status_code == 200
+    assert unbound.get_json()["hotspot"]["product_id"] == ""
+
+    placeholder = client.post(
+        "/api/pad/halls/current/stations/display_slot_1/hotspots",
+        headers={"X-Client-ID": "pad-a"},
+        json={
+            "product_id": "",
+            "manual_product_name": "Custom Placeholder",
+            "sort_order": 2,
+            "x_pct": 0.32,
+            "y_pct": 0.12,
+            "width_pct": 0.2,
+            "height_pct": 0.2,
+        },
+    )
+    assert placeholder.status_code == 200
+    placeholder_hotspot = placeholder.get_json()["hotspot"]
+    assert placeholder_hotspot["product_name"] == "Custom Placeholder"
+    assert placeholder_hotspot["product_source"] == "manual_placeholder"
+
+    cross_hall = client.post(
+        "/api/pad/halls/current/stations/display_slot_1/hotspots",
+        headers={"X-Client-ID": "pad-a"},
+        json={
+            "product_id": "product_002",
+            "sort_order": 3,
+            "x_pct": 0.54,
+            "y_pct": 0.14,
+            "width_pct": 0.2,
+            "height_pct": 0.2,
+        },
+    )
+    assert cross_hall.status_code == 200
+    cross_hall_hotspot = cross_hall.get_json()["hotspot"]
+    assert cross_hall_hotspot["product_hall_id"] == "hall_02"
+    assert cross_hall_hotspot["has_active_audio"] is True
+    assert cross_hall_hotspot["audio_url"].startswith("/api/pad/products/product_002/audio/current")
+
+    products = client.get("/api/pad/halls/current/products", headers={"X-Client-ID": "pad-a"})
+    assert products.status_code == 200
+    products_body = products.get_json()
+    assert any(item["product_id"] == "product_002" for item in products_body["referenced_items"])
+    assert any(item["product_source"] == "manual_placeholder" for item in products_body["items"])
+
+    manifest = client.get("/api/pad/offline/manifest", headers={"X-Client-ID": "pad-a"})
+    assert manifest.status_code == 200
+    manifest_body = manifest.get_json()
+    assert any(item["product_id"] == "product_002" for item in manifest_body["referenced_items"])
+
+    cross_hall_asset = deps.pad_product_store.get_current_audio_asset("product_002")
+    assert cross_hall_asset is not None
+    offline_audio = client.get(
+        f"/api/pad/offline/audio/{cross_hall_asset['audio_asset_id']}",
+        headers={"X-Client-ID": "pad-a"},
+    )
+    assert offline_audio.status_code == 200
+
+
+def test_product_update_endpoint_persists_fields(work_dir: Path):
+    app, deps = _build_app(work_dir)
+    _seed_products_and_bindings(deps)
+    client = app.test_client()
+
+    response = client.put(
+        "/api/pad/products/product_001",
+        json={
+            "product_name": "Alpha Updated",
+            "intro_text": "Alpha intro updated",
+        },
+    )
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["product"]["product_name"] == "Alpha Updated"
+    assert deps.pad_product_store.get_product("product_001")["intro_text"] == "Alpha intro updated"
 
 
 def test_station_control_hotspot_update_response_keeps_control_metadata(work_dir: Path):
@@ -727,6 +826,237 @@ def test_station_control_hotspot_update_response_keeps_control_metadata(work_dir
     hotspot_body = update_hotspot.get_json()["hotspot"]
     assert hotspot_body["control_action"] == "exit_app"
     assert hotspot_body["control_label"] == "退出"
+
+
+def test_station_hotspot_export_includes_control_hotspots(work_dir: Path):
+    app, deps = _build_app(work_dir)
+    _seed_products_and_bindings(deps)
+    _seed_station_assets(deps)
+    client = app.test_client()
+
+    placeholder = client.post(
+        "/api/pad/halls/current/stations/display_slot_1/hotspots",
+        headers={"X-Client-ID": "pad-a"},
+        json={
+            "product_id": "",
+            "manual_product_name": "Export Placeholder",
+            "sort_order": 2,
+            "x_pct": 0.42,
+            "y_pct": 0.2,
+            "width_pct": 0.18,
+            "height_pct": 0.24,
+        },
+    )
+    assert placeholder.status_code == 200
+
+    response = client.get(
+        "/api/pad/halls/current/stations/display_slot_1/hotspots/export",
+        headers={"X-Client-ID": "pad-a"},
+    )
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["station_key"] == "display_slot_1"
+    assert body["station_id"] == "station_a"
+    assert body["version"] == 1
+    assert isinstance(body["exported_at_ms"], int)
+    assert len(body["hotspots"]) == 6
+    assert sum(1 for item in body["hotspots"] if str(item["product_id"]).startswith("__control_")) == 4
+    exported_placeholder = next(
+        item for item in body["hotspots"] if item["manual_product_name"] == "Export Placeholder"
+    )
+    assert exported_placeholder["width_pct"] == pytest.approx(0.18)
+
+
+def test_station_hotspot_import_replaces_all_station_hotspots(work_dir: Path):
+    app, deps = _build_app(work_dir)
+    _seed_products_and_bindings(deps)
+    _seed_station_assets(deps)
+    client = app.test_client()
+
+    response = client.post(
+        "/api/pad/halls/current/stations/display_slot_1/hotspots/import",
+        headers={"X-Client-ID": "pad-a"},
+        json={
+            "hotspots": [
+                {
+                    "product_id": "__control_toggle_station__",
+                    "sort_order": 100,
+                    "x_pct": 0.01,
+                    "y_pct": 0.9,
+                    "width_pct": 0.08,
+                    "height_pct": 0.08,
+                },
+                {
+                    "product_id": "__control_toggle_station_narration__",
+                    "sort_order": 101,
+                    "x_pct": 0.01,
+                    "y_pct": 0.01,
+                    "width_pct": 0.08,
+                    "height_pct": 0.08,
+                },
+                {
+                    "product_id": "__control_enter_ops__",
+                    "sort_order": 102,
+                    "x_pct": 0.42,
+                    "y_pct": 0.9,
+                    "width_pct": 0.08,
+                    "height_pct": 0.08,
+                },
+                {
+                    "product_id": "__control_exit_app__",
+                    "sort_order": 103,
+                    "x_pct": 0.9,
+                    "y_pct": 0.01,
+                    "width_pct": 0.08,
+                    "height_pct": 0.08,
+                },
+                {
+                    "product_id": "",
+                    "manual_product_name": "Imported Placeholder",
+                    "sort_order": 8,
+                    "x_pct": 0.5,
+                    "y_pct": 0.12,
+                    "width_pct": 0.14,
+                    "height_pct": 0.2,
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200
+    body = response.get_json()
+    business_hotspots = [item for item in body["hotspots"] if item["target_type"] == "product"]
+    control_hotspots = [item for item in body["hotspots"] if item["target_type"] == "control"]
+    assert len(business_hotspots) == 1
+    assert len(control_hotspots) == 4
+    assert business_hotspots[0]["product_name"] == "Imported Placeholder"
+    assert business_hotspots[0]["sort_order"] == 8
+    assert {item["product_id"] for item in control_hotspots} == {
+        "__control_toggle_station__",
+        "__control_toggle_station_narration__",
+        "__control_enter_ops__",
+        "__control_exit_app__",
+    }
+
+    stations = client.get("/api/pad/halls/current/stations", headers={"X-Client-ID": "pad-a"})
+    assert stations.status_code == 200
+    station = stations.get_json()["items"][0]
+    assert len([item for item in station["hotspots"] if item["target_type"] == "product"]) == 1
+    assert len([item for item in station["hotspots"] if item["target_type"] == "control"]) == 4
+
+
+def test_station_hotspot_import_updates_control_positions_across_stations(work_dir: Path):
+    app, deps = _build_app(work_dir)
+    _seed_products_and_bindings(deps)
+    _seed_station_assets(deps, station_key="station_a")
+    _seed_station_assets(deps, station_key="station_b")
+    client = app.test_client()
+
+    exported = client.get(
+        "/api/pad/halls/current/stations/display_slot_1/hotspots/export",
+        headers={"X-Client-ID": "pad-a"},
+    )
+    assert exported.status_code == 200
+    payload = exported.get_json()
+    next_positions = {
+        "__control_toggle_station__": (0.11, 0.81),
+        "__control_toggle_station_narration__": (0.12, 0.12),
+        "__control_enter_ops__": (0.55, 0.82),
+        "__control_exit_app__": (0.83, 0.11),
+    }
+    for hotspot in payload["hotspots"]:
+        product_id = str(hotspot["product_id"])
+        if product_id in next_positions:
+            hotspot["x_pct"], hotspot["y_pct"] = next_positions[product_id]
+
+    imported = client.post(
+        "/api/pad/halls/current/stations/display_slot_2/hotspots/import",
+        headers={"X-Client-ID": "pad-a"},
+        json={"hotspots": payload["hotspots"]},
+    )
+    assert imported.status_code == 200
+
+    stations = client.get("/api/pad/halls/current/stations", headers={"X-Client-ID": "pad-a"})
+    assert stations.status_code == 200
+    target_station = stations.get_json()["items"][1]
+    actual_positions = {
+        item["product_id"]: (item["x_pct"], item["y_pct"])
+        for item in target_station["hotspots"]
+        if item["target_type"] == "control"
+    }
+    assert actual_positions == next_positions
+
+
+def test_station_hotspot_import_validates_payload(work_dir: Path):
+    app, deps = _build_app(work_dir)
+    _seed_products_and_bindings(deps)
+    _seed_station_assets(deps)
+    client = app.test_client()
+
+    not_a_list = client.post(
+        "/api/pad/halls/current/stations/display_slot_1/hotspots/import",
+        headers={"X-Client-ID": "pad-a"},
+        json={"hotspots": {}},
+    )
+    assert not_a_list.status_code == 400
+    assert not_a_list.get_json()["error"] == "hotspots_must_be_list"
+
+    missing_binding = client.post(
+        "/api/pad/halls/current/stations/display_slot_1/hotspots/import",
+        headers={"X-Client-ID": "pad-a"},
+        json={
+            "hotspots": [
+                {
+                    "product_id": "",
+                    "manual_product_name": "",
+                    "sort_order": 1,
+                    "x_pct": 0.1,
+                    "y_pct": 0.1,
+                    "width_pct": 0.2,
+                    "height_pct": 0.2,
+                }
+            ]
+        },
+    )
+    assert missing_binding.status_code == 400
+    assert missing_binding.get_json()["error"] == "product_binding_required"
+
+    bad_geometry = client.post(
+        "/api/pad/halls/current/stations/display_slot_1/hotspots/import",
+        headers={"X-Client-ID": "pad-a"},
+        json={
+            "hotspots": [
+                {
+                    "product_id": "product_001",
+                    "sort_order": 1,
+                    "x_pct": 0.95,
+                    "y_pct": 0.1,
+                    "width_pct": 0.2,
+                    "height_pct": 0.2,
+                }
+            ]
+        },
+    )
+    assert bad_geometry.status_code == 400
+    assert bad_geometry.get_json()["error"] == "hotspot_bounds_invalid"
+
+    missing_product = client.post(
+        "/api/pad/halls/current/stations/display_slot_1/hotspots/import",
+        headers={"X-Client-ID": "pad-a"},
+        json={
+            "hotspots": [
+                {
+                    "product_id": "product_missing",
+                    "sort_order": 1,
+                    "x_pct": 0.1,
+                    "y_pct": 0.1,
+                    "width_pct": 0.2,
+                    "height_pct": 0.2,
+                }
+            ]
+        },
+    )
+    assert missing_product.status_code == 400
+    assert missing_product.get_json()["error"] == "product_not_found"
 
 
 def test_batch_default_tts_generation_is_visible_via_products_and_manifest_endpoints(work_dir: Path):

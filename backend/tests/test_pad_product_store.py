@@ -368,7 +368,8 @@ def test_station_configs_and_hotspots_roundtrip(work_dir: Path):
     listed = store.list_station_configs(hall_id="hall_01")
     assert [item["station_key"] for item in listed] == ["station_a"]
     assert listed[0]["background_rel_path"] == background_rel
-    assert store.list_station_hotspots(hall_id="hall_01", station_key="station_a")[0]["hotspot_id"] == hotspot["hotspot_id"]
+    listed_hotspots = store.list_station_hotspots(hall_id="hall_01", station_key="station_a")
+    assert any(item["hotspot_id"] == hotspot["hotspot_id"] for item in listed_hotspots)
 
     updated_hotspot = store.update_station_hotspot(
         hall_id="hall_01",
@@ -390,7 +391,10 @@ def test_station_configs_and_hotspots_roundtrip(work_dir: Path):
         hotspot_id=hotspot["hotspot_id"],
     )
     assert deleted is not None
-    assert store.list_station_hotspots(hall_id="hall_01", station_key="station_a") == []
+    assert all(
+        item["hotspot_id"] != hotspot["hotspot_id"]
+        for item in store.list_station_hotspots(hall_id="hall_01", station_key="station_a")
+    )
 
 
 def test_station_timeline_events_roundtrip(work_dir: Path):
@@ -462,4 +466,269 @@ def test_station_hotspot_validates_product_scope_and_custom_station_ids(work_dir
             y_pct=0.1,
             width_pct=0.2,
             height_pct=0.2,
+        )
+
+
+def test_manual_placeholder_products_are_preserved_and_searchable(work_dir: Path):
+    store = _store(work_dir)
+    store.replace_hall_products(
+        hall_id="hall_01",
+        products=[_product(product_id="product_001", sort_order=1, name="Alpha")],
+    )
+    placeholder = store.create_manual_placeholder_product(
+        hall_id="hall_01",
+        product_name="Alpha Placeholder",
+    )
+    assert placeholder["product_source"] == "manual_placeholder"
+
+    store.replace_hall_products(
+        hall_id="hall_01",
+        products=[_product(product_id="product_002", sort_order=2, name="Gamma")],
+    )
+
+    assert store.get_product(str(placeholder["product_id"])) is not None
+    assert store.get_product("product_001") is None
+    search_results = store.search_products(query="Alpha Placeholder", limit=10)
+    assert search_results[0]["product_id"] == placeholder["product_id"]
+
+
+def test_station_hotspot_supports_unbound_placeholder_and_cross_hall_products(work_dir: Path):
+    store = _store(work_dir)
+    store.replace_hall_products(
+        hall_id="hall_01",
+        products=[_product(product_id="product_001", sort_order=1, name="Alpha")],
+    )
+    store.replace_hall_products(
+        hall_id="hall_02",
+        products=[_product(product_id="product_002", sort_order=1, name="Beta", hall_id="hall_02")],
+    )
+    rel_path = _write_audio_file(store, product_id="product_002", filename="beta.wav")
+    store.create_audio_asset(
+        product_id="product_002",
+        source_type="recorded",
+        text_snapshot="beta audio",
+        rel_path=rel_path,
+        mimetype="audio/wav",
+        activate=True,
+    )
+
+    unbound = store.create_station_hotspot(
+        hall_id="hall_01",
+        station_key="station_a",
+        product_id="",
+        manual_product_name="",
+        sort_order=1,
+        x_pct=0.1,
+        y_pct=0.1,
+        width_pct=0.2,
+        height_pct=0.2,
+    )
+    assert unbound["product_id"] in {"", None}
+
+    placeholder_bound = store.update_station_hotspot(
+        hall_id="hall_01",
+        station_key="station_a",
+        hotspot_id=str(unbound["hotspot_id"]),
+        product_id="",
+        manual_product_name="Manual New Product",
+        sort_order=2,
+        x_pct=0.12,
+        y_pct=0.12,
+        width_pct=0.22,
+        height_pct=0.22,
+    )
+    placeholder_product = store.get_product(str(placeholder_bound["product_id"]))
+    assert placeholder_product is not None
+    assert placeholder_product["product_source"] == "manual_placeholder"
+
+    cross_hall = store.create_station_hotspot(
+        hall_id="hall_01",
+        station_key="station_b",
+        product_id="product_002",
+        sort_order=3,
+        x_pct=0.2,
+        y_pct=0.2,
+        width_pct=0.2,
+        height_pct=0.2,
+    )
+    listed = store.list_station_hotspots(hall_id="hall_01", station_key="station_b")
+    matched = next(item for item in listed if item["hotspot_id"] == cross_hall["hotspot_id"])
+    assert matched["product_hall_id"] == "hall_02"
+    assert matched["product_name"] == "Beta"
+    assert matched["active_audio_asset_id"]
+
+
+def test_list_exportable_station_hotspots_includes_control_hotspots(work_dir: Path):
+    store = _store(work_dir)
+    store.replace_hall_products(
+        hall_id="hall_01",
+        products=[_product(product_id="product_001", sort_order=1, name="Alpha")],
+    )
+    store.upsert_station_config(
+        hall_id="hall_01",
+        station_key="station_a",
+        label="Station A",
+        recording_id="recording_001",
+        stop_index=0,
+        stop_name="Stop A",
+    )
+    store.create_station_hotspot(
+        hall_id="hall_01",
+        station_key="station_a",
+        product_id="product_001",
+        sort_order=1,
+        x_pct=0.1,
+        y_pct=0.1,
+        width_pct=0.2,
+        height_pct=0.2,
+    )
+    store.create_station_hotspot(
+        hall_id="hall_01",
+        station_key="station_a",
+        product_id="",
+        manual_product_name="Manual Placeholder",
+        sort_order=2,
+        x_pct=0.3,
+        y_pct=0.15,
+        width_pct=0.18,
+        height_pct=0.22,
+    )
+
+    exported = store.list_exportable_station_hotspots(hall_id="hall_01", station_key="station_a")
+
+    assert len(exported) == 6
+    assert {item["product_id"] for item in exported} != set()
+    assert sum(1 for item in exported if str(item["product_id"]).startswith("__control_")) == 4
+    business_items = [item for item in exported if not str(item["product_id"]).startswith("__control_")]
+    assert business_items[0]["manual_product_name"] == ""
+    assert business_items[1]["manual_product_name"] == "Manual Placeholder"
+    assert business_items[1]["width_pct"] == pytest.approx(0.18)
+
+
+def test_replace_station_hotspots_replaces_all_station_hotspots(work_dir: Path):
+    store = _store(work_dir)
+    store.replace_hall_products(
+        hall_id="hall_01",
+        products=[_product(product_id="product_001", sort_order=1, name="Alpha")],
+    )
+    store.upsert_station_config(
+        hall_id="hall_01",
+        station_key="station_a",
+        label="Station A",
+        recording_id="recording_001",
+        stop_index=0,
+        stop_name="Stop A",
+    )
+    first = store.create_station_hotspot(
+        hall_id="hall_01",
+        station_key="station_a",
+        product_id="product_001",
+        sort_order=1,
+        x_pct=0.1,
+        y_pct=0.1,
+        width_pct=0.2,
+        height_pct=0.2,
+    )
+
+    replaced = store.replace_station_hotspots(
+        hall_id="hall_01",
+        station_key="station_a",
+        hotspots=[
+            {
+                "product_id": "__control_toggle_station__",
+                "sort_order": 100,
+                "x_pct": 0.01,
+                "y_pct": 0.9,
+                "width_pct": 0.08,
+                "height_pct": 0.08,
+            },
+            {
+                "product_id": "__control_enter_ops__",
+                "sort_order": 101,
+                "x_pct": 0.42,
+                "y_pct": 0.9,
+                "width_pct": 0.08,
+                "height_pct": 0.08,
+            },
+            {
+                "product_id": "__control_exit_app__",
+                "sort_order": 102,
+                "x_pct": 0.9,
+                "y_pct": 0.01,
+                "width_pct": 0.08,
+                "height_pct": 0.08,
+            },
+            {
+                "product_id": "__control_toggle_station_narration__",
+                "sort_order": 103,
+                "x_pct": 0.01,
+                "y_pct": 0.01,
+                "width_pct": 0.08,
+                "height_pct": 0.08,
+            },
+            {
+                "product_id": "",
+                "manual_product_name": "Imported Placeholder",
+                "sort_order": 10,
+                "x_pct": 0.45,
+                "y_pct": 0.2,
+                "width_pct": 0.15,
+                "height_pct": 0.25,
+            }
+        ],
+    )
+
+    control_hotspots = [item for item in replaced if str(item.get("product_id") or "").startswith("__control_")]
+    business_hotspots = [item for item in replaced if not str(item.get("product_id") or "").startswith("__control_")]
+    assert len(control_hotspots) == 4
+    assert len(business_hotspots) == 1
+    assert business_hotspots[0]["sort_order"] == 10
+    assert business_hotspots[0]["product_name"] == "Imported Placeholder"
+    assert all(item["hotspot_id"] != first["hotspot_id"] for item in business_hotspots)
+    assert {item["product_id"] for item in control_hotspots} == {
+        "__control_toggle_station__",
+        "__control_enter_ops__",
+        "__control_exit_app__",
+        "__control_toggle_station_narration__",
+    }
+
+
+def test_replace_station_hotspots_validates_required_fields(work_dir: Path):
+    store = _store(work_dir)
+    store.replace_hall_products(
+        hall_id="hall_01",
+        products=[_product(product_id="product_001", sort_order=1, name="Alpha")],
+    )
+
+    with pytest.raises(ValueError, match="product_binding_required"):
+        store.replace_station_hotspots(
+            hall_id="hall_01",
+            station_key="station_a",
+            hotspots=[
+                {
+                    "product_id": "",
+                    "manual_product_name": "",
+                    "sort_order": 1,
+                    "x_pct": 0.1,
+                    "y_pct": 0.1,
+                    "width_pct": 0.2,
+                    "height_pct": 0.2,
+                }
+            ],
+        )
+
+    with pytest.raises(ValueError, match="product_not_found"):
+        store.replace_station_hotspots(
+            hall_id="hall_01",
+            station_key="station_a",
+            hotspots=[
+                {
+                    "product_id": "missing",
+                    "sort_order": 1,
+                    "x_pct": 0.1,
+                    "y_pct": 0.1,
+                    "width_pct": 0.2,
+                    "height_pct": 0.2,
+                }
+            ],
         )

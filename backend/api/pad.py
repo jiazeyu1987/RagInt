@@ -30,6 +30,13 @@ def _require_binding(deps):
     return {"client_id": client_id, "binding": binding}, None
 
 
+def _is_product_accessible_from_binding(*, deps, binding: dict, product_id: str) -> bool:
+    return deps.pad_product_store.is_product_accessible_from_hall(
+        hall_id=str(binding.get("hall_id") or ""),
+        product_id=str(product_id or ""),
+    )
+
+
 def _display_payload(binding: dict) -> dict:
     item = binding if isinstance(binding, dict) else {}
     return {
@@ -102,6 +109,56 @@ def _image_response_payload(*, product_id: str, asset: dict, offline: bool = Fal
         "image_url": image_url,
         "offline_image_url": offline_image_url,
     }
+
+
+def _product_response_payload(*, deps, row: dict, offline: bool = False) -> dict:
+    item = row if isinstance(row, dict) else {}
+    product_id = str(item.get("product_id") or "")
+    active_audio_id = str(item.get("active_audio_asset_id") or "").strip()
+    payload = {
+        "product_id": product_id,
+        "hall_id": str(item.get("hall_id") or ""),
+        "sort_order": int(item.get("sort_order") or 0),
+        "product_name": str(item.get("product_name") or ""),
+        "product_name_en": str(item.get("product_name_en") or ""),
+        "intro_text": str(item.get("intro_text") or ""),
+        "registration_name": str(item.get("registration_name") or ""),
+        "registration_number": str(item.get("registration_number") or ""),
+        "effective_date": str(item.get("effective_date") or ""),
+        "company": str(item.get("company") or ""),
+        "product_source": str(item.get("product_source") or "imported"),
+        "updated_at_ms": int(item.get("updated_at_ms") or 0),
+        "has_active_audio": bool(active_audio_id),
+    }
+    if active_audio_id:
+        version = int(item.get("active_audio_updated_at_ms") or 0)
+        audio_url = (
+            f"/api/pad/offline/audio/{active_audio_id}"
+            if offline
+            else f"/api/pad/products/{product_id}/audio/current"
+        )
+        if version > 0:
+            audio_url = f"{audio_url}?v={version}"
+        payload["current_audio"] = {
+            "audio_asset_id": active_audio_id,
+            "source_type": str(item.get("active_audio_source_type") or ""),
+            "text_snapshot": str(item.get("active_audio_text_snapshot") or ""),
+            "mimetype": str(item.get("active_audio_mimetype") or "application/octet-stream"),
+            "updated_at_ms": version,
+            "audio_url": audio_url,
+        }
+    else:
+        payload["current_audio"] = None
+    if offline:
+        payload["audio"] = payload["current_audio"]
+    image_assets = [
+        _image_response_payload(product_id=product_id, asset=asset, offline=offline)
+        for asset in deps.pad_product_store.list_product_image_assets(product_id)
+    ]
+    payload["images"] = image_assets
+    payload["has_images"] = bool(image_assets)
+    payload["primary_image"] = image_assets[0] if image_assets else None
+    return payload
 
 
 def _scene_background_response_payload(*, scene: dict, offline: bool = False) -> dict:
@@ -204,6 +261,13 @@ def _station_hotspot_response_payload(hotspot: dict, *, slot_key: str = "") -> d
         control_action = "exit_app"
     if not control_label and product_id in CONTROL_HOTSPOT_SPECS:
         control_label = str(CONTROL_HOTSPOT_SPECS[product_id].get("label") or "")
+    active_audio_id = str(item.get("active_audio_asset_id") or "").strip()
+    audio_version = int(item.get("active_audio_updated_at_ms") or 0)
+    audio_url = ""
+    if active_audio_id and product_id:
+        audio_url = f"/api/pad/products/{product_id}/audio/current"
+        if audio_version > 0:
+            audio_url += f"?v={audio_version}"
     return {
         "hotspot_id": str(item.get("hotspot_id") or ""),
         "station_id": str(item.get("station_id") or item.get("station_key") or ""),
@@ -213,12 +277,32 @@ def _station_hotspot_response_payload(hotspot: dict, *, slot_key: str = "") -> d
         "target_type": "control" if control_action else "product",
         "control_action": control_action,
         "control_label": control_label,
+        "product_name": str(item.get("product_name") or ""),
+        "product_name_en": str(item.get("product_name_en") or ""),
+        "product_hall_id": str(item.get("product_hall_id") or ""),
+        "product_source": str(item.get("product_source") or ""),
+        "has_active_audio": bool(active_audio_id),
+        "audio_asset_id": active_audio_id,
+        "audio_url": audio_url,
         "sort_order": int(item.get("sort_order") or 0),
         "x_pct": float(item.get("x_pct") or 0),
         "y_pct": float(item.get("y_pct") or 0),
         "width_pct": float(item.get("width_pct") or 0),
         "height_pct": float(item.get("height_pct") or 0),
         "updated_at_ms": int(item.get("updated_at_ms") or 0),
+    }
+
+
+def _station_hotspot_export_payload(hotspot: dict) -> dict:
+    item = hotspot if isinstance(hotspot, dict) else {}
+    return {
+        "product_id": str(item.get("product_id") or ""),
+        "manual_product_name": str(item.get("manual_product_name") or ""),
+        "sort_order": int(item.get("sort_order") or 0),
+        "x_pct": float(item.get("x_pct") or 0),
+        "y_pct": float(item.get("y_pct") or 0),
+        "width_pct": float(item.get("width_pct") or 0),
+        "height_pct": float(item.get("height_pct") or 0),
     }
 
 
@@ -392,33 +476,42 @@ def create_blueprint(deps):
             return err
         binding = ctx["binding"]
         hall = _hall_summary_payload(deps=deps, binding=binding)
-        rows = deps.pad_product_store.list_hall_products(str(binding.get("hall_id") or ""))
-        items = []
-        for row in rows:
-            item = dict(row)
-            product_id = str(item.get("product_id") or "")
-            active_audio_id = str(item.get("active_audio_asset_id") or "").strip()
-            item["has_active_audio"] = bool(active_audio_id)
-            if active_audio_id:
-                item["current_audio"] = {
-                    "audio_asset_id": active_audio_id,
-                    "source_type": str(item.get("active_audio_source_type") or ""),
-                    "text_snapshot": str(item.get("active_audio_text_snapshot") or ""),
-                    "mimetype": str(item.get("active_audio_mimetype") or "application/octet-stream"),
-                    "updated_at_ms": int(item.get("active_audio_updated_at_ms") or 0),
-                    "audio_url": f"/api/pad/products/{str(item.get('product_id') or '')}/audio/current",
-                }
-            else:
-                item["current_audio"] = None
-            image_assets = [
-                _image_response_payload(product_id=product_id, asset=asset)
-                for asset in deps.pad_product_store.list_product_image_assets(product_id)
-            ]
-            item["images"] = image_assets
-            item["has_images"] = bool(image_assets)
-            item["primary_image"] = image_assets[0] if image_assets else None
-            items.append(item)
-        return jsonify({"ok": True, "client_id": ctx["client_id"], "hall": hall, "items": items})
+        hall_id = str(binding.get("hall_id") or "")
+        rows = deps.pad_product_store.list_hall_products(hall_id)
+        referenced_rows = deps.pad_product_store.list_referenced_station_products(hall_id)
+        return jsonify(
+            {
+                "ok": True,
+                "client_id": ctx["client_id"],
+                "hall": hall,
+                "items": [_product_response_payload(deps=deps, row=row) for row in rows],
+                "referenced_items": [_product_response_payload(deps=deps, row=row) for row in referenced_rows],
+            }
+        )
+
+    @bp.route("/api/pad/products/search", methods=["GET"])
+    def pad_search_products():
+        ctx, err = _require_binding(deps)
+        if err is not None:
+            return err
+        query = str(request.args.get("q") or "").strip()
+        try:
+            limit = min(max(int(request.args.get("limit") or 20), 1), 50)
+        except Exception:
+            limit = 20
+        rows = deps.pad_product_store.search_products(query=query, limit=limit) if query else []
+        items = [
+            {
+                "product_id": str(row.get("product_id") or ""),
+                "hall_id": str(row.get("hall_id") or ""),
+                "product_name": str(row.get("product_name") or ""),
+                "product_name_en": str(row.get("product_name_en") or ""),
+                "product_source": str(row.get("product_source") or "imported"),
+                "has_active_audio": bool(row.get("active_audio_asset_id")),
+            }
+            for row in rows
+        ]
+        return jsonify({"ok": True, "client_id": ctx["client_id"], "items": items})
 
     @bp.route("/api/pad/halls/current/scenes", methods=["GET"])
     def pad_current_hall_scenes():
@@ -822,6 +915,7 @@ def create_blueprint(deps):
                 hall_id=str(binding.get("hall_id") or ""),
                 station_key=str(station.get("station_id") or station_key),
                 product_id=str(data.get("product_id") or "").strip(),
+                manual_product_name=str(data.get("manual_product_name") or "").strip(),
                 sort_order=int(data.get("sort_order") or 0),
                 x_pct=data.get("x_pct"),
                 y_pct=data.get("y_pct"),
@@ -831,6 +925,32 @@ def create_blueprint(deps):
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
         return jsonify({"ok": True, "client_id": ctx["client_id"], "hotspot": _station_hotspot_response_payload(hotspot)})
+
+    @bp.route("/api/pad/halls/current/stations/<station_key>/hotspots/export", methods=["GET"])
+    def pad_export_station_hotspots(station_key: str):
+        ctx, err = _require_binding(deps)
+        if err is not None:
+            return err
+        binding = ctx["binding"]
+        station, station_err = _require_station_in_binding(deps=deps, binding=binding, station_key=station_key)
+        if station_err is not None:
+            return station_err
+        actual_station_id = str(station.get("station_id") or station_key)
+        hotspots = deps.pad_product_store.list_exportable_station_hotspots(
+            hall_id=str(binding.get("hall_id") or ""),
+            station_key=actual_station_id,
+        )
+        return jsonify(
+            {
+                "ok": True,
+                "client_id": ctx["client_id"],
+                "station_key": str(station_key or ""),
+                "station_id": actual_station_id,
+                "version": 1,
+                "exported_at_ms": int(deps.pad_product_store._now_ms()),
+                "hotspots": [_station_hotspot_export_payload(item) for item in hotspots],
+            }
+        )
 
     @bp.route("/api/pad/halls/current/stations/<station_key>/hotspots/<hotspot_id>", methods=["PUT"])
     def pad_update_station_hotspot(station_key: str, hotspot_id: str):
@@ -848,6 +968,7 @@ def create_blueprint(deps):
                 station_key=str(station.get("station_id") or station_key),
                 hotspot_id=hotspot_id,
                 product_id=str(data.get("product_id") or "").strip(),
+                manual_product_name=str(data.get("manual_product_name") or "").strip(),
                 sort_order=int(data.get("sort_order") or 0),
                 x_pct=data.get("x_pct"),
                 y_pct=data.get("y_pct"),
@@ -876,6 +997,38 @@ def create_blueprint(deps):
             return jsonify({"ok": False, "error": "hotspot_not_found"}), 404
         return jsonify({"ok": True, "client_id": ctx["client_id"], "deleted": True, "hotspot_id": hotspot_id})
 
+    @bp.route("/api/pad/halls/current/stations/<station_key>/hotspots/import", methods=["POST"])
+    def pad_import_station_hotspots(station_key: str):
+        ctx, err = _require_binding(deps)
+        if err is not None:
+            return err
+        binding = ctx["binding"]
+        station, station_err = _require_station_in_binding(deps=deps, binding=binding, station_key=station_key)
+        if station_err is not None:
+            return station_err
+        data = request.get_json(silent=True) or {}
+        hotspots = data.get("hotspots")
+        if not isinstance(hotspots, list):
+            return jsonify({"ok": False, "error": "hotspots_must_be_list"}), 400
+        try:
+            rows = deps.pad_product_store.replace_station_hotspots(
+                hall_id=str(binding.get("hall_id") or ""),
+                station_key=str(station.get("station_id") or station_key),
+                hotspots=hotspots,
+            )
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        slot_key = str(station.get("slot_key") or station_key)
+        return jsonify(
+            {
+                "ok": True,
+                "client_id": ctx["client_id"],
+                "station_key": str(station_key or ""),
+                "station_id": str(station.get("station_id") or station_key),
+                "hotspots": [_station_hotspot_response_payload(row, slot_key=slot_key) for row in rows],
+            }
+        )
+
     @bp.route("/api/pad/halls/current/stations/<station_key>/timeline", methods=["PUT"])
     def pad_replace_station_timeline(station_key: str):
         ctx, err = _require_binding(deps)
@@ -902,7 +1055,7 @@ def create_blueprint(deps):
         if err is not None:
             return err
         product = deps.pad_product_store.get_product(product_id)
-        if not product or str(product.get("hall_id") or "") != str(ctx["binding"].get("hall_id") or ""):
+        if not product:
             return jsonify({"ok": False, "error": "product_not_found"}), 404
         asset = deps.pad_product_store.get_current_audio_asset(product_id)
         if not asset:
@@ -913,6 +1066,24 @@ def create_blueprint(deps):
             return jsonify({"ok": False, "error": "audio_missing"}), 404
         except Exception:
             return jsonify({"ok": False, "error": "bad_audio_path"}), 400
+
+    @bp.route("/api/pad/products/<product_id>", methods=["PUT"])
+    def pad_update_product(product_id: str):
+        product = deps.pad_product_store.get_product(product_id)
+        if not product:
+            return jsonify({"ok": False, "error": "product_not_found"}), 404
+        data = request.get_json(silent=True) or {}
+        if "product_name" not in data and "intro_text" not in data:
+            return jsonify({"ok": False, "error": "product_update_fields_required"}), 400
+        try:
+            updated = deps.pad_product_store.update_product(
+                product_id=product_id,
+                product_name=data.get("product_name") if "product_name" in data else None,
+                intro_text=data.get("intro_text") if "intro_text" in data else None,
+            )
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        return jsonify({"ok": True, "product": updated})
 
     @bp.route("/api/pad/products/<product_id>/audio/upload", methods=["POST"])
     def pad_upload_product_audio(product_id: str):
@@ -1025,7 +1196,7 @@ def create_blueprint(deps):
         if err is not None:
             return err
         product = deps.pad_product_store.get_product(product_id)
-        if not product or str(product.get("hall_id") or "") != str(ctx["binding"].get("hall_id") or ""):
+        if not product:
             return jsonify({"ok": False, "error": "product_not_found"}), 404
         asset = deps.pad_product_store.get_image_asset(image_asset_id)
         if not asset or str(asset.get("product_id") or "") != str(product_id or ""):
@@ -1045,34 +1216,8 @@ def create_blueprint(deps):
         binding = ctx["binding"]
         hall = _hall_summary_payload(deps=deps, binding=binding)
         hall_id = str(binding.get("hall_id") or "")
-        rows = deps.pad_product_store.get_manifest_items(str(binding.get("hall_id") or ""))
-        items = []
-        for row in rows:
-            payload = {
-                "product_id": str(row.get("product_id") or ""),
-                "sort_order": int(row.get("sort_order") or 0),
-                "product_name": str(row.get("product_name") or ""),
-                "product_name_en": str(row.get("product_name_en") or ""),
-                "updated_at_ms": int(row.get("updated_at_ms") or 0),
-            }
-            active_audio_id = str(row.get("active_audio_asset_id") or "").strip()
-            if active_audio_id:
-                payload["audio"] = {
-                    "audio_asset_id": active_audio_id,
-                    "source_type": str(row.get("active_audio_source_type") or ""),
-                    "text_snapshot": str(row.get("active_audio_text_snapshot") or ""),
-                    "updated_at_ms": int(row.get("active_audio_updated_at_ms") or 0),
-                    "audio_url": f"/api/pad/offline/audio/{active_audio_id}",
-                }
-            else:
-                payload["audio"] = None
-            image_assets = [
-                _image_response_payload(product_id=str(row.get("product_id") or ""), asset=asset, offline=True)
-                for asset in deps.pad_product_store.list_product_image_assets(str(row.get("product_id") or ""))
-            ]
-            payload["images"] = image_assets
-            payload["primary_image"] = image_assets[0] if image_assets else None
-            items.append(payload)
+        rows = deps.pad_product_store.list_hall_products(hall_id)
+        referenced_rows = deps.pad_product_store.list_referenced_station_products(hall_id)
         scenes = deps.pad_product_store.list_hall_scenes_with_hotspots(hall_id)
         stations = deps.pad_product_store.list_display_station_configs(client_id=ctx["client_id"])
         return jsonify(
@@ -1082,7 +1227,8 @@ def create_blueprint(deps):
                 "display": _display_payload(binding),
                 "hall": hall,
                 "version": int(hall.get("updated_at_ms") or 0),
-                "items": items,
+                "items": [_product_response_payload(deps=deps, row=row, offline=True) for row in rows],
+                "referenced_items": [_product_response_payload(deps=deps, row=row, offline=True) for row in referenced_rows],
                 "scenes": [
                     _scene_response_payload(
                         scene=scene,
@@ -1113,7 +1259,11 @@ def create_blueprint(deps):
         asset = deps.pad_product_store.get_audio_asset(audio_asset_id)
         if not asset or not bool(asset.get("is_active")):
             return jsonify({"ok": False, "error": "audio_not_found"}), 404
-        if str(asset.get("hall_id") or "") != str(ctx["binding"].get("hall_id") or ""):
+        if not _is_product_accessible_from_binding(
+            deps=deps,
+            binding=ctx["binding"],
+            product_id=str(asset.get("product_id") or ""),
+        ):
             return jsonify({"ok": False, "error": "audio_not_found"}), 404
         try:
             return _send_audio_file(deps=deps, asset=asset)
@@ -1130,7 +1280,11 @@ def create_blueprint(deps):
         asset = deps.pad_product_store.get_image_asset(image_asset_id)
         if not asset:
             return jsonify({"ok": False, "error": "image_not_found"}), 404
-        if str(asset.get("hall_id") or "") != str(ctx["binding"].get("hall_id") or ""):
+        if not _is_product_accessible_from_binding(
+            deps=deps,
+            binding=ctx["binding"],
+            product_id=str(asset.get("product_id") or ""),
+        ):
             return jsonify({"ok": False, "error": "image_not_found"}), 404
         try:
             return _send_image_file(deps=deps, asset=asset)

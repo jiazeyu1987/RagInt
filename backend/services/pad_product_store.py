@@ -77,6 +77,10 @@ def _normalize_station_key(value: str) -> str:
     return _normalize_station_id(value)
 
 
+PRODUCT_SOURCE_IMPORTED = "imported"
+PRODUCT_SOURCE_MANUAL_PLACEHOLDER = "manual_placeholder"
+
+
 CONTROL_HOTSPOT_SPECS = {
     "__control_toggle_station__": {
         "label": "站台切换",
@@ -115,6 +119,17 @@ CONTROL_HOTSPOT_SPECS = {
 
 def _is_control_hotspot_product_id(product_id: str) -> bool:
     return str(product_id or "").strip() in CONTROL_HOTSPOT_SPECS
+
+
+def _normalize_product_source(value: str | None) -> str:
+    source = str(value or "").strip().lower()
+    if source == PRODUCT_SOURCE_MANUAL_PLACEHOLDER:
+        return PRODUCT_SOURCE_MANUAL_PLACEHOLDER
+    return PRODUCT_SOURCE_IMPORTED
+
+
+def _is_manual_placeholder_product_source(value: str | None) -> bool:
+    return str(value or "").strip().lower() == PRODUCT_SOURCE_MANUAL_PLACEHOLDER
 
 
 class PadProductStore:
@@ -195,6 +210,7 @@ class PadProductStore:
                         registration_number TEXT NOT NULL,
                         effective_date TEXT NOT NULL,
                         company TEXT NOT NULL,
+                        product_source TEXT NOT NULL DEFAULT 'imported',
                         updated_at_ms INTEGER NOT NULL
                     );
                     """
@@ -307,7 +323,7 @@ class PadProductStore:
                         hotspot_id TEXT PRIMARY KEY,
                         hall_id TEXT NOT NULL,
                         station_key TEXT NOT NULL,
-                        product_id TEXT NOT NULL,
+                        product_id TEXT,
                         sort_order INTEGER NOT NULL DEFAULT 0,
                         x_pct REAL NOT NULL,
                         y_pct REAL NOT NULL,
@@ -340,9 +356,87 @@ class PadProductStore:
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_pad_station_narration_timeline_events_station ON pad_station_narration_timeline_events(hall_id, station_id, sort_order, time_ms, event_id);"
                 )
+                self._migrate_hall_products_table(conn)
+                self._migrate_station_hotspots_table(conn)
                 conn.commit()
             finally:
                 conn.close()
+
+    def _migrate_hall_products_table(self, conn: sqlite3.Connection) -> None:
+        columns = {
+            str(row["name"] or ""): row
+            for row in conn.execute("PRAGMA table_info(hall_products)").fetchall()
+        }
+        if "product_source" not in columns:
+            conn.execute(
+                "ALTER TABLE hall_products ADD COLUMN product_source TEXT NOT NULL DEFAULT 'imported'"
+            )
+        conn.execute(
+            "UPDATE hall_products SET product_source=? WHERE COALESCE(TRIM(product_source), '')=''",
+            (PRODUCT_SOURCE_IMPORTED,),
+        )
+
+    def _migrate_station_hotspots_table(self, conn: sqlite3.Connection) -> None:
+        columns = {
+            str(row["name"] or ""): row
+            for row in conn.execute("PRAGMA table_info(pad_hall_station_hotspots)").fetchall()
+        }
+        product_column = columns.get("product_id")
+        if not product_column or not int(product_column["notnull"] or 0):
+            return
+
+        conn.execute("ALTER TABLE pad_hall_station_hotspots RENAME TO pad_hall_station_hotspots_old")
+        conn.execute(
+            """
+            CREATE TABLE pad_hall_station_hotspots (
+                hotspot_id TEXT PRIMARY KEY,
+                hall_id TEXT NOT NULL,
+                station_key TEXT NOT NULL,
+                product_id TEXT,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                x_pct REAL NOT NULL,
+                y_pct REAL NOT NULL,
+                width_pct REAL NOT NULL,
+                height_pct REAL NOT NULL,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL
+            );
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO pad_hall_station_hotspots (
+                hotspot_id,
+                hall_id,
+                station_key,
+                product_id,
+                sort_order,
+                x_pct,
+                y_pct,
+                width_pct,
+                height_pct,
+                created_at_ms,
+                updated_at_ms
+            )
+            SELECT
+                hotspot_id,
+                hall_id,
+                station_key,
+                product_id,
+                sort_order,
+                x_pct,
+                y_pct,
+                width_pct,
+                height_pct,
+                created_at_ms,
+                updated_at_ms
+            FROM pad_hall_station_hotspots_old
+            """
+        )
+        conn.execute("DROP TABLE pad_hall_station_hotspots_old")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pad_hall_station_hotspots_station ON pad_hall_station_hotspots(hall_id, station_key, sort_order, hotspot_id);"
+        )
 
     def _now_ms(self) -> int:
         return int(time.time() * 1000)
@@ -808,6 +902,43 @@ class PadProductStore:
             ("display_slot_2", _normalize_station_id(binding.get("slot_2_station_id") or "station_b")),
         ]
 
+    def _fetch_products_for_where(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        where_sql: str = "",
+        params: tuple | list = (),
+        order_sql: str = "p.sort_order ASC, p.product_id ASC",
+    ) -> list[dict]:
+        query = f"""
+            SELECT
+              p.product_id,
+              p.hall_id,
+              p.sort_order,
+              p.product_name,
+              p.product_name_en,
+              p.intro_text,
+              p.registration_name,
+              p.registration_number,
+              p.effective_date,
+              p.company,
+              p.product_source,
+              p.updated_at_ms,
+              a.audio_asset_id AS active_audio_asset_id,
+              a.source_type AS active_audio_source_type,
+              a.text_snapshot AS active_audio_text_snapshot,
+              a.mimetype AS active_audio_mimetype,
+              a.updated_at_ms AS active_audio_updated_at_ms
+            FROM hall_products p
+            LEFT JOIN product_audio_assets a
+              ON a.product_id = p.product_id
+             AND a.is_active = 1
+            {where_sql}
+            ORDER BY {order_sql}
+        """
+        rows = conn.execute(query, tuple(params or ())).fetchall()
+        return [dict(row) for row in rows]
+
     def replace_hall_products(self, *, hall_id: str, products: list[dict]) -> dict:
         hid = str(hall_id or "").strip()
         if not hid:
@@ -836,6 +967,7 @@ class PadProductStore:
                     "registration_number": str(item.get("registration_number") or "").strip(),
                     "effective_date": str(item.get("effective_date") or "").strip(),
                     "company": str(item.get("company") or "").strip(),
+                    "product_source": _normalize_product_source(item.get("product_source")),
                     "updated_at_ms": int(item.get("updated_at_ms") or now_ms),
                 }
             )
@@ -844,9 +976,16 @@ class PadProductStore:
         with self._lock:
             conn = self._connect()
             try:
-                existing_rows = conn.execute("SELECT product_id FROM hall_products WHERE hall_id=?", (hid,)).fetchall()
-                existing_ids = [str(row["product_id"]) for row in existing_rows]
-                deleted_ids = [pid for pid in existing_ids if pid not in keep_ids]
+                existing_rows = conn.execute(
+                    "SELECT product_id, product_source FROM hall_products WHERE hall_id=?",
+                    (hid,),
+                ).fetchall()
+                deleted_ids = [
+                    str(row["product_id"])
+                    for row in existing_rows
+                    if str(row["product_id"]) not in keep_ids
+                    and _normalize_product_source(row["product_source"]) == PRODUCT_SOURCE_IMPORTED
+                ]
 
                 for product in normalized_products:
                     conn.execute(
@@ -862,9 +1001,10 @@ class PadProductStore:
                             registration_number,
                             effective_date,
                             company,
+                            product_source,
                             updated_at_ms
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(product_id) DO UPDATE SET
                           hall_id=excluded.hall_id,
                           sort_order=excluded.sort_order,
@@ -875,6 +1015,7 @@ class PadProductStore:
                           registration_number=excluded.registration_number,
                           effective_date=excluded.effective_date,
                           company=excluded.company,
+                          product_source=excluded.product_source,
                           updated_at_ms=excluded.updated_at_ms
                         """,
                         (
@@ -888,6 +1029,7 @@ class PadProductStore:
                             product["registration_number"],
                             product["effective_date"],
                             product["company"],
+                            product["product_source"],
                             int(product["updated_at_ms"]),
                         ),
                     )
@@ -931,7 +1073,7 @@ class PadProductStore:
                 row = conn.execute(
                     """
                     SELECT product_id, hall_id, sort_order, product_name, product_name_en, intro_text,
-                           registration_name, registration_number, effective_date, company, updated_at_ms
+                           registration_name, registration_number, effective_date, company, product_source, updated_at_ms
                     FROM hall_products
                     WHERE product_id=?
                     """,
@@ -948,37 +1090,231 @@ class PadProductStore:
         with self._lock:
             conn = self._connect()
             try:
-                rows = conn.execute(
-                    """
-                    SELECT
-                      p.product_id,
-                      p.hall_id,
-                      p.sort_order,
-                      p.product_name,
-                      p.product_name_en,
-                      p.intro_text,
-                      p.registration_name,
-                      p.registration_number,
-                      p.effective_date,
-                      p.company,
-                      p.updated_at_ms,
-                      a.audio_asset_id AS active_audio_asset_id,
-                      a.source_type AS active_audio_source_type,
-                      a.text_snapshot AS active_audio_text_snapshot,
-                      a.mimetype AS active_audio_mimetype,
-                      a.updated_at_ms AS active_audio_updated_at_ms
-                    FROM hall_products p
-                    LEFT JOIN product_audio_assets a
-                      ON a.product_id = p.product_id
-                     AND a.is_active = 1
-                    WHERE p.hall_id=?
-                    ORDER BY p.sort_order ASC, p.product_id ASC
-                    """,
-                    (hid,),
-                ).fetchall()
-                return [dict(row) for row in rows]
+                return self._fetch_products_for_where(
+                    conn,
+                    where_sql="WHERE p.hall_id=?",
+                    params=(hid,),
+                )
             finally:
                 conn.close()
+
+    def list_products_by_ids(self, product_ids: list[str]) -> list[dict]:
+        cleaned_ids = [str(product_id or "").strip() for product_id in (product_ids or []) if str(product_id or "").strip()]
+        if not cleaned_ids:
+            return []
+        placeholders = ",".join("?" for _ in cleaned_ids)
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = self._fetch_products_for_where(
+                    conn,
+                    where_sql=f"WHERE p.product_id IN ({placeholders})",
+                    params=tuple(cleaned_ids),
+                )
+            finally:
+                conn.close()
+        row_map = {str(row.get("product_id") or ""): row for row in rows}
+        return [row_map[product_id] for product_id in cleaned_ids if product_id in row_map]
+
+    def list_referenced_station_products(self, hall_id: str) -> list[dict]:
+        hid = str(hall_id or "").strip()
+        if not hid:
+            return []
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT DISTINCT h.product_id
+                    FROM pad_hall_station_hotspots h
+                    JOIN hall_products p ON p.product_id = h.product_id
+                    WHERE h.hall_id=?
+                      AND COALESCE(TRIM(h.product_id), '')<>''
+                      AND p.hall_id<>?
+                    ORDER BY h.sort_order ASC, h.hotspot_id ASC
+                    """,
+                    (hid, hid),
+                ).fetchall()
+            finally:
+                conn.close()
+        product_ids = [str(row["product_id"] or "").strip() for row in rows if str(row["product_id"] or "").strip()]
+        return self.list_products_by_ids(product_ids)
+
+    def is_product_accessible_from_hall(self, *, hall_id: str, product_id: str) -> bool:
+        hid = str(hall_id or "").strip()
+        pid = str(product_id or "").strip()
+        if not hid or not pid:
+            return False
+        product = self.get_product(pid)
+        if not product:
+            return False
+        if str(product.get("hall_id") or "") == hid:
+            return True
+        with self._lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    """
+                    SELECT 1
+                    FROM pad_hall_station_hotspots
+                    WHERE hall_id=? AND product_id=?
+                    LIMIT 1
+                    """,
+                    (hid, pid),
+                ).fetchone()
+                return row is not None
+            finally:
+                conn.close()
+
+    def create_manual_placeholder_product(self, *, hall_id: str, product_name: str) -> dict:
+        hid = str(hall_id or "").strip()
+        name = str(product_name or "").strip()
+        if not hid:
+            raise ValueError("hall_id_required")
+        if not name:
+            raise ValueError("manual_product_name_required")
+        now_ms = self._now_ms()
+        product_id = f"manual_product_{uuid.uuid4().hex}"
+        with self._lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT COALESCE(MAX(sort_order), 0) AS max_sort_order FROM hall_products WHERE hall_id=?",
+                    (hid,),
+                ).fetchone()
+                next_sort_order = int((row["max_sort_order"] or 0) if row else 0) + 1
+                conn.execute(
+                    """
+                    INSERT INTO hall_products (
+                        product_id,
+                        hall_id,
+                        sort_order,
+                        product_name,
+                        product_name_en,
+                        intro_text,
+                        registration_name,
+                        registration_number,
+                        effective_date,
+                        company,
+                        product_source,
+                        updated_at_ms
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        product_id,
+                        hid,
+                        next_sort_order,
+                        name,
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        PRODUCT_SOURCE_MANUAL_PLACEHOLDER,
+                        int(now_ms),
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        return self.get_product(product_id) or {}
+
+    def update_product(
+        self,
+        *,
+        product_id: str,
+        product_name: str | None = None,
+        intro_text: str | None = None,
+    ) -> dict:
+        pid = str(product_id or "").strip()
+        if not pid:
+            raise ValueError("product_id_required")
+        existing = self.get_product(pid)
+        if not existing:
+            raise ValueError("product_not_found")
+        next_name = existing.get("product_name") if product_name is None else str(product_name or "").strip()
+        if not str(next_name or "").strip():
+            raise ValueError("product_name_required")
+        next_intro = existing.get("intro_text") if intro_text is None else str(intro_text or "").strip()
+        now_ms = self._now_ms()
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    """
+                    UPDATE hall_products
+                    SET product_name=?, intro_text=?, updated_at_ms=?
+                    WHERE product_id=?
+                    """,
+                    (str(next_name), str(next_intro), int(now_ms), pid),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        return self.get_product(pid) or {}
+
+    def search_products(self, *, query: str, limit: int = 20) -> list[dict]:
+        text = str(query or "").strip()
+        if not text:
+            return []
+        lowered = text.casefold()
+        like_value = f"%{text}%"
+        params = (text, text, text, like_value, like_value, like_value)
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = self._fetch_products_for_where(
+                    conn,
+                    where_sql="""
+                    WHERE (
+                        p.product_name = ?
+                        OR p.product_name_en = ?
+                        OR p.registration_name = ?
+                        OR p.product_name LIKE ?
+                        OR p.product_name_en LIKE ?
+                        OR p.registration_name LIKE ?
+                    )
+                    """,
+                    params=params,
+                    order_sql="p.sort_order ASC, p.product_id ASC",
+                )
+            finally:
+                conn.close()
+
+        def _score(row: dict) -> tuple[int, int, int, int]:
+            candidates = [
+                str(row.get("product_name") or ""),
+                str(row.get("product_name_en") or ""),
+                str(row.get("registration_name") or ""),
+            ]
+            best = 99
+            for candidate in candidates:
+                current = candidate.casefold()
+                if not current:
+                    continue
+                if current == lowered:
+                    best = min(best, 0)
+                elif current.startswith(lowered):
+                    best = min(best, 1)
+                elif lowered in current:
+                    best = min(best, 2)
+            return (
+                best,
+                int(row.get("hall_id") != ""),
+                int(row.get("sort_order") or 0),
+                0,
+            )
+
+        rows.sort(
+            key=lambda row: (
+                _score(row)[0],
+                int(row.get("sort_order") or 0),
+                str(row.get("product_id") or ""),
+            )
+        )
+        return rows[: max(1, int(limit or 20))]
 
     def get_hall_summary(self, hall_id: str) -> dict:
         hid = str(hall_id or "").strip()
@@ -1020,6 +1356,38 @@ class PadProductStore:
                         JOIN hall_products p ON p.product_id = i.product_id
                         WHERE p.hall_id=?
                         UNION ALL
+                        SELECT p.updated_at_ms
+                        FROM hall_products p
+                        WHERE p.hall_id<>?
+                          AND EXISTS (
+                              SELECT 1
+                              FROM pad_hall_station_hotspots h
+                              WHERE h.hall_id=?
+                                AND h.product_id = p.product_id
+                          )
+                        UNION ALL
+                        SELECT a.updated_at_ms
+                        FROM product_audio_assets a
+                        JOIN hall_products p ON p.product_id = a.product_id
+                        WHERE p.hall_id<>?
+                          AND EXISTS (
+                              SELECT 1
+                              FROM pad_hall_station_hotspots h
+                              WHERE h.hall_id=?
+                                AND h.product_id = p.product_id
+                          )
+                        UNION ALL
+                        SELECT i.updated_at_ms
+                        FROM product_image_assets i
+                        JOIN hall_products p ON p.product_id = i.product_id
+                        WHERE p.hall_id<>?
+                          AND EXISTS (
+                              SELECT 1
+                              FROM pad_hall_station_hotspots h
+                              WHERE h.hall_id=?
+                                AND h.product_id = p.product_id
+                          )
+                        UNION ALL
                         SELECT s.updated_at_ms
                         FROM pad_hall_scenes s
                         WHERE s.hall_id=?
@@ -1050,7 +1418,7 @@ class PadProductStore:
                         WHERE hall_id=?
                     )
                     """,
-                    (hid, hid, hid, hid, hid, hid, hid, hid, hid, hid),
+                    (hid, hid, hid, hid, hid, hid, hid, hid, hid, hid, hid, hid, hid, hid, hid, hid),
                 ).fetchone()
                 return {
                     "product_count": int(product_count_row["product_count"] or 0) if product_count_row else 0,
@@ -1899,6 +2267,7 @@ class PadProductStore:
                 conn.commit()
             finally:
                 conn.close()
+        self._ensure_default_control_hotspots(hall_id=hid, station_key=key)
         return self.get_station_config(hall_id=hid, station_key=key)
 
     def update_station_visual_assets(
@@ -1976,6 +2345,7 @@ class PadProductStore:
                 conn.commit()
             finally:
                 conn.close()
+        self._ensure_default_control_hotspots(hall_id=hid, station_key=key)
         return self.get_station_config(hall_id=hid, station_key=key)
 
     def list_station_hotspots(self, *, hall_id: str, station_key: str) -> list[dict]:
@@ -1983,27 +2353,36 @@ class PadProductStore:
         key = _normalize_station_key(station_key)
         if not hid:
             raise ValueError("hall_id_required")
-        self._ensure_default_control_hotspots(hall_id=hid, station_key=key)
         with self._lock:
             conn = self._connect()
             try:
                 rows = conn.execute(
                     """
                     SELECT
-                      hotspot_id,
-                      hall_id,
-                      station_key,
-                      product_id,
-                      sort_order,
-                      x_pct,
-                      y_pct,
-                      width_pct,
-                      height_pct,
-                      created_at_ms,
-                      updated_at_ms
-                    FROM pad_hall_station_hotspots
-                    WHERE hall_id=? AND station_key=?
-                    ORDER BY sort_order ASC, hotspot_id ASC
+                      h.hotspot_id,
+                      h.hall_id,
+                      h.station_key,
+                      h.product_id,
+                      h.sort_order,
+                      h.x_pct,
+                      h.y_pct,
+                      h.width_pct,
+                      h.height_pct,
+                      h.created_at_ms,
+                      h.updated_at_ms,
+                      p.hall_id AS product_hall_id,
+                      p.product_name,
+                      p.product_name_en,
+                      p.product_source,
+                      a.audio_asset_id AS active_audio_asset_id,
+                      a.updated_at_ms AS active_audio_updated_at_ms
+                    FROM pad_hall_station_hotspots h
+                    LEFT JOIN hall_products p ON p.product_id = h.product_id
+                    LEFT JOIN product_audio_assets a
+                      ON a.product_id = p.product_id
+                     AND a.is_active = 1
+                    WHERE h.hall_id=? AND h.station_key=?
+                    ORDER BY h.sort_order ASC, h.hotspot_id ASC
                     """,
                     (hid, key),
                 ).fetchall()
@@ -2017,6 +2396,148 @@ class PadProductStore:
                 return out
             finally:
                 conn.close()
+
+    def list_exportable_station_hotspots(self, *, hall_id: str, station_key: str) -> list[dict]:
+        items = self.list_station_hotspots(hall_id=hall_id, station_key=station_key)
+        out: list[dict] = []
+        for item in items:
+            product_id = str(item.get("product_id") or "").strip()
+            manual_product_name = ""
+            if not _is_control_hotspot_product_id(product_id) and _is_manual_placeholder_product_source(item.get("product_source")):
+                manual_product_name = str(item.get("product_name") or "").strip()
+            out.append(
+                {
+                    "product_id": product_id,
+                    "manual_product_name": manual_product_name,
+                    "sort_order": int(item.get("sort_order") or 0),
+                    "x_pct": float(item.get("x_pct") or 0),
+                    "y_pct": float(item.get("y_pct") or 0),
+                    "width_pct": float(item.get("width_pct") or 0),
+                    "height_pct": float(item.get("height_pct") or 0),
+                }
+            )
+        return out
+
+    def replace_station_hotspots(
+        self,
+        *,
+        hall_id: str,
+        station_key: str,
+        hotspots: list[dict],
+    ) -> list[dict]:
+        hid = str(hall_id or "").strip()
+        key = _normalize_station_key(station_key)
+        if not hid:
+            raise ValueError("hall_id_required")
+        if not isinstance(hotspots, list):
+            raise ValueError("hotspots_must_be_list")
+
+        normalized: list[dict] = []
+        for raw in hotspots:
+            item = raw if isinstance(raw, dict) else {}
+            product_id = str(item.get("product_id") or "").strip()
+            manual_product_name = str(item.get("manual_product_name") or "").strip()
+            if not product_id and not manual_product_name:
+                raise ValueError("product_binding_required")
+            x_value, y_value, width_value, height_value = _normalize_hotspot_geometry(
+                x_pct=item.get("x_pct"),
+                y_pct=item.get("y_pct"),
+                width_pct=item.get("width_pct"),
+                height_pct=item.get("height_pct"),
+            )
+            try:
+                sort_order = int(item.get("sort_order") or 0)
+            except Exception as exc:
+                raise ValueError("sort_order_invalid") from exc
+            if _is_control_hotspot_product_id(product_id):
+                resolved_product_id = product_id
+            else:
+                resolved_product_id = self._resolve_station_hotspot_product_id(
+                    hall_id=hid,
+                    product_id=product_id,
+                    manual_product_name=manual_product_name,
+                )
+            if not resolved_product_id:
+                raise ValueError("product_binding_required")
+            normalized.append(
+                {
+                    "product_id": resolved_product_id,
+                    "sort_order": sort_order,
+                    "x_pct": x_value,
+                    "y_pct": y_value,
+                    "width_pct": width_value,
+                    "height_pct": height_value,
+                }
+            )
+
+        now_ms = self._now_ms()
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    """
+                    DELETE FROM pad_hall_station_hotspots
+                    WHERE hall_id=? AND station_key=?
+                    """,
+                    (hid, key),
+                )
+                for item in normalized:
+                    conn.execute(
+                        """
+                        INSERT INTO pad_hall_station_hotspots (
+                            hotspot_id,
+                            hall_id,
+                            station_key,
+                            product_id,
+                            sort_order,
+                            x_pct,
+                            y_pct,
+                            width_pct,
+                            height_pct,
+                            created_at_ms,
+                            updated_at_ms
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            f"station_hotspot_{uuid.uuid4().hex}",
+                            hid,
+                            key,
+                            item["product_id"],
+                            int(item["sort_order"]),
+                            float(item["x_pct"]),
+                            float(item["y_pct"]),
+                            float(item["width_pct"]),
+                            float(item["height_pct"]),
+                            int(now_ms),
+                            int(now_ms),
+                        ),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+        return self.list_station_hotspots(hall_id=hid, station_key=key)
+
+    def _resolve_station_hotspot_product_id(
+        self,
+        *,
+        hall_id: str,
+        product_id: str,
+        manual_product_name: str,
+    ) -> str:
+        pid = str(product_id or "").strip()
+        if pid:
+            if _is_control_hotspot_product_id(pid):
+                return pid
+            product = self.get_product(pid)
+            if not product:
+                raise ValueError("product_not_found")
+            return pid
+        manual_name = str(manual_product_name or "").strip()
+        if manual_name:
+            created = self.create_manual_placeholder_product(hall_id=hall_id, product_name=manual_name)
+            return str(created.get("product_id") or "")
+        return ""
 
     def _ensure_default_control_hotspots(self, *, hall_id: str, station_key: str) -> None:
         hid = str(hall_id or "").strip()
@@ -2084,24 +2605,38 @@ class PadProductStore:
                 row = conn.execute(
                     """
                     SELECT
-                      hotspot_id,
-                      hall_id,
-                      station_key,
-                      product_id,
-                      sort_order,
-                      x_pct,
-                      y_pct,
-                      width_pct,
-                      height_pct,
-                      created_at_ms,
-                      updated_at_ms
-                    FROM pad_hall_station_hotspots
-                    WHERE hotspot_id=?
+                      h.hotspot_id,
+                      h.hall_id,
+                      h.station_key,
+                      h.product_id,
+                      h.sort_order,
+                      h.x_pct,
+                      h.y_pct,
+                      h.width_pct,
+                      h.height_pct,
+                      h.created_at_ms,
+                      h.updated_at_ms,
+                      p.hall_id AS product_hall_id,
+                      p.product_name,
+                      p.product_name_en,
+                      p.product_source,
+                      a.audio_asset_id AS active_audio_asset_id,
+                      a.updated_at_ms AS active_audio_updated_at_ms
+                    FROM pad_hall_station_hotspots h
+                    LEFT JOIN hall_products p ON p.product_id = h.product_id
+                    LEFT JOIN product_audio_assets a
+                      ON a.product_id = p.product_id
+                     AND a.is_active = 1
+                    WHERE h.hotspot_id=?
                     LIMIT 1
                     """,
                     (hid,),
                 ).fetchone()
-                return dict(row) if row else None
+                item = dict(row) if row else None
+                pid = str(item.get("product_id") or "").strip() if item else ""
+                if item and _is_control_hotspot_product_id(pid):
+                    item["control_label"] = str(CONTROL_HOTSPOT_SPECS[pid]["label"])
+                return item
             finally:
                 conn.close()
 
@@ -2111,6 +2646,7 @@ class PadProductStore:
         hall_id: str,
         station_key: str,
         product_id: str,
+        manual_product_name: str = "",
         sort_order: int,
         x_pct,
         y_pct,
@@ -2119,15 +2655,13 @@ class PadProductStore:
     ) -> dict:
         hid = str(hall_id or "").strip()
         key = _normalize_station_key(station_key)
-        pid = str(product_id or "").strip()
         if not hid:
             raise ValueError("hall_id_required")
-        if not pid:
-            raise ValueError("product_id_required")
-        if not _is_control_hotspot_product_id(pid):
-            product = self.get_product(pid)
-            if not product or str(product.get("hall_id") or "") != hid:
-                raise ValueError("product_not_found")
+        pid = self._resolve_station_hotspot_product_id(
+            hall_id=hid,
+            product_id=product_id,
+            manual_product_name=manual_product_name,
+        )
         x_value, y_value, width_value, height_value = _normalize_hotspot_geometry(
             x_pct=x_pct,
             y_pct=y_pct,
@@ -2160,7 +2694,7 @@ class PadProductStore:
                         hotspot_id,
                         hid,
                         key,
-                        pid,
+                        pid or None,
                         int(sort_order or 0),
                         float(x_value),
                         float(y_value),
@@ -2173,6 +2707,7 @@ class PadProductStore:
                 conn.commit()
             finally:
                 conn.close()
+        self._ensure_default_control_hotspots(hall_id=hid, station_key=key)
         return self.get_station_hotspot(hotspot_id) or {}
 
     def update_station_hotspot(
@@ -2182,6 +2717,7 @@ class PadProductStore:
         station_key: str,
         hotspot_id: str,
         product_id: str,
+        manual_product_name: str = "",
         sort_order: int,
         x_pct,
         y_pct,
@@ -2191,20 +2727,18 @@ class PadProductStore:
         hid = str(hall_id or "").strip()
         key = _normalize_station_key(station_key)
         hotspot_key = str(hotspot_id or "").strip()
-        pid = str(product_id or "").strip()
         if not hid:
             raise ValueError("hall_id_required")
         if not hotspot_key:
             raise ValueError("hotspot_id_required")
-        if not pid:
-            raise ValueError("product_id_required")
         hotspot = self.get_station_hotspot(hotspot_key)
         if not hotspot or str(hotspot.get("hall_id") or "") != hid or str(hotspot.get("station_key") or "") != key:
             raise ValueError("hotspot_not_found")
-        if not _is_control_hotspot_product_id(pid):
-            product = self.get_product(pid)
-            if not product or str(product.get("hall_id") or "") != hid:
-                raise ValueError("product_not_found")
+        pid = self._resolve_station_hotspot_product_id(
+            hall_id=hid,
+            product_id=product_id,
+            manual_product_name=manual_product_name,
+        )
         x_value, y_value, width_value, height_value = _normalize_hotspot_geometry(
             x_pct=x_pct,
             y_pct=y_pct,
@@ -2222,7 +2756,7 @@ class PadProductStore:
                     WHERE hotspot_id=? AND hall_id=? AND station_key=?
                     """,
                     (
-                        pid,
+                        pid or None,
                         int(sort_order or 0),
                         float(x_value),
                         float(y_value),

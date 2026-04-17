@@ -425,19 +425,25 @@ function stationAssetPayload(station, assetKind, offline) {
 }
 
 function buildFixturePayloads(state) {
+  const currentHallId = String((state.hall && state.hall.hall_id) || '').trim();
   const getStationById = (stationId) =>
     Object.values(state.stations).find((station) => String(station.station_id || '') === String(stationId || '').trim()) || null;
-  const productItems = state.products.map((product) => {
+  const productsById = new Map(
+    (Array.isArray(state.products) ? state.products : []).map((product) => [String(product.product_id || ''), product])
+  );
+  const buildProductItem = (product, offline) => {
     const currentAudio = product.current_audio
       ? {
           audio_asset_id: product.current_audio.audio_asset_id,
           source_type: product.current_audio.source_type,
           text_snapshot: product.current_audio.text_snapshot,
           updated_at_ms: product.current_audio.updated_at_ms,
-          audio_url: `/api/pad/products/${product.product_id}/audio/current`,
+          audio_url: offline
+            ? `/api/pad/offline/audio/${product.current_audio.audio_asset_id}`
+            : `/api/pad/products/${product.product_id}/audio/current`,
         }
       : null;
-    const images = productImagePayload(product, false);
+    const images = productImagePayload(product, offline);
     return {
       product_id: product.product_id,
       hall_id: product.hall_id,
@@ -449,12 +455,32 @@ function buildFixturePayloads(state) {
       registration_number: product.registration_number,
       effective_date: product.effective_date,
       company: product.company,
-      updated_at_ms: Number(product.current_audio ? product.current_audio.updated_at_ms : 1710000000000),
+      product_source: product.product_source || 'imported',
+      updated_at_ms: Number(product.current_audio ? product.current_audio.updated_at_ms : product.updated_at_ms || 1710000000000),
       current_audio: currentAudio,
+      audio: offline ? currentAudio : undefined,
       images,
       primary_image: images[0] || null,
     };
-  });
+  };
+  const currentHallProducts = (Array.isArray(state.products) ? state.products : []).filter(
+    (product) => String(product.hall_id || '').trim() === currentHallId
+  );
+  const referencedProductIds = Array.from(
+    new Set(
+      Object.values(state.stations)
+        .flatMap((station) => (station.hotspots || []).map((hotspot) => String(hotspot.product_id || '').trim()))
+        .filter((productId) => {
+          const product = productsById.get(productId);
+          return !!product && String(product.hall_id || '').trim() !== currentHallId;
+        })
+    )
+  );
+  const referencedProducts = referencedProductIds
+    .map((productId) => productsById.get(productId))
+    .filter(Boolean);
+  const productItems = currentHallProducts.map((product) => buildProductItem(product, false));
+  const referencedProductItems = referencedProducts.map((product) => buildProductItem(product, false));
   const stationItems = (state.display && Array.isArray(state.display.slot_station_ids) ? state.display.slot_station_ids : [])
     .map((stationId, index) => {
       const station = getStationById(stationId);
@@ -470,22 +496,32 @@ function buildFixturePayloads(state) {
         stop_name: station.stop_name,
         background: stationAssetPayload(station, 'background', false),
         wireframe: stationAssetPayload(station, 'wireframe', false),
-        hotspots: (station.hotspots || []).map((hotspot) => ({
-          hotspot_id: hotspot.hotspot_id,
-          station_id: station.station_id,
-          slot_key: slotKey,
-          station_key: station.station_key,
-          product_id: hotspot.product_id,
-          target_type: hotspot.control_action ? 'control' : 'product',
-          control_action: hotspot.control_action || '',
-          control_label: hotspot.control_label || '',
-          sort_order: hotspot.sort_order,
-          x_pct: hotspot.x_pct,
-          y_pct: hotspot.y_pct,
-          width_pct: hotspot.width_pct,
-          height_pct: hotspot.height_pct,
-          updated_at_ms: hotspot.updated_at_ms,
-        })),
+        hotspots: (station.hotspots || []).map((hotspot) => {
+          const product = productsById.get(String(hotspot.product_id || '').trim()) || null;
+          return {
+            hotspot_id: hotspot.hotspot_id,
+            station_id: station.station_id,
+            slot_key: slotKey,
+            station_key: station.station_key,
+            product_id: hotspot.product_id,
+            product_name: product ? product.product_name : '',
+            product_name_en: product ? product.product_name_en : '',
+            product_hall_id: product ? product.hall_id : '',
+            product_source: product ? product.product_source || 'imported' : '',
+            has_active_audio: !!(product && product.current_audio),
+            audio_asset_id: product && product.current_audio ? product.current_audio.audio_asset_id : '',
+            audio_url: product && product.current_audio ? `/api/pad/products/${product.product_id}/audio/current` : '',
+            target_type: hotspot.control_action ? 'control' : 'product',
+            control_action: hotspot.control_action || '',
+            control_label: hotspot.control_label || '',
+            sort_order: hotspot.sort_order,
+            x_pct: hotspot.x_pct,
+            y_pct: hotspot.y_pct,
+            width_pct: hotspot.width_pct,
+            height_pct: hotspot.height_pct,
+            updated_at_ms: hotspot.updated_at_ms,
+          };
+        }),
         updated_at_ms: Math.max(
           Number(station.background_updated_at_ms || 0),
           Number(station.wireframe_updated_at_ms || 0),
@@ -496,36 +532,8 @@ function buildFixturePayloads(state) {
       };
     })
     .filter(Boolean);
-  const manifestItems = productItems.map((product) => ({
-    product_id: product.product_id,
-    sort_order: product.sort_order,
-    product_name: product.product_name,
-    product_name_en: product.product_name_en,
-    updated_at_ms: Number(product.updated_at_ms || 0),
-    audio: product.current_audio
-      ? {
-          audio_asset_id: product.current_audio.audio_asset_id,
-          source_type: product.current_audio.source_type,
-          text_snapshot: product.current_audio.text_snapshot,
-          updated_at_ms: product.current_audio.updated_at_ms,
-          audio_url: `/api/pad/offline/audio/${product.current_audio.audio_asset_id}`,
-        }
-      : null,
-    images: productImagePayload(
-      {
-        product_id: product.product_id,
-        images: (state.products.find((item) => item.product_id === product.product_id) || {}).images || [],
-      },
-      true
-    ),
-    primary_image: productImagePayload(
-      {
-        product_id: product.product_id,
-        images: (state.products.find((item) => item.product_id === product.product_id) || {}).images || [],
-      },
-      true
-    )[0] || null,
-  }));
+  const manifestItems = currentHallProducts.map((product) => buildProductItem(product, true));
+  const manifestReferencedItems = referencedProducts.map((product) => buildProductItem(product, true));
   const manifestStations = stationItems.map((station) => ({
     ...station,
     background: stationAssetPayload(state.stations[station.station_key], 'background', true),
@@ -535,6 +543,7 @@ function buildFixturePayloads(state) {
   const updatedAtMs = Math.max(
     1710000000000,
     ...manifestItems.map((item) => Number(item.updated_at_ms || 0)),
+    ...manifestReferencedItems.map((item) => Number(item.updated_at_ms || 0)),
     ...manifestStations.map((item) => Number(item.updated_at_ms || 0))
   );
   const hall = {
@@ -571,6 +580,7 @@ function buildFixturePayloads(state) {
       client_id: '',
       hall,
       items: productItems,
+      referenced_items: referencedProductItems,
     },
     stations: {
       ok: true,
@@ -612,6 +622,7 @@ function buildFixturePayloads(state) {
       hall,
       version: updatedAtMs,
       items: manifestItems,
+      referenced_items: manifestReferencedItems,
       stations: manifestStations,
     },
   };
@@ -630,6 +641,31 @@ async function fulfillJson(route, payload, status = 200) {
 
 async function installPadApiMocks(page, options = {}) {
   const state = createFixture(options.fixtureOverrides || {});
+  const findProductById = (productId) =>
+    (Array.isArray(state.products) ? state.products : []).find(
+      (item) => String(item && item.product_id ? item.product_id : '') === String(productId || '').trim()
+    ) || null;
+  const createPlaceholderProduct = (productName) => {
+    const updatedAtMs = Date.now();
+    const product = {
+      product_id: `manual_product_${updatedAtMs}`,
+      hall_id: state.hall.hall_id,
+      sort_order: (Array.isArray(state.products) ? state.products.length : 0) + 1,
+      product_name: String(productName || '').trim(),
+      product_name_en: '',
+      intro_text: '',
+      registration_name: '',
+      registration_number: '',
+      effective_date: '',
+      company: '',
+      product_source: 'manual_placeholder',
+      current_audio: null,
+      images: [],
+      updated_at_ms: updatedAtMs,
+    };
+    state.products.push(product);
+    return product;
+  };
   const getFixtureStation = (stationKey) => {
     const key = String(stationKey || '').trim();
     if (key === 'display_slot_1' || key === 'display_slot_2') {
@@ -667,6 +703,27 @@ async function installPadApiMocks(page, options = {}) {
 
     if (path === '/api/pad/halls/current/products' && method === 'GET') {
       await fulfillJson(route, payloads.products);
+      return;
+    }
+
+    if (path === '/api/pad/products/search' && method === 'GET') {
+      const query = String(url.searchParams.get('q') || '').trim().toLowerCase();
+      const items = (Array.isArray(state.products) ? state.products : [])
+        .filter((product) => {
+          if (!query) return false;
+          return [product.product_name, product.product_name_en, product.registration_name]
+            .map((value) => String(value || '').toLowerCase())
+            .some((value) => value.includes(query));
+        })
+        .map((product) => ({
+          product_id: product.product_id,
+          hall_id: product.hall_id,
+          product_name: product.product_name,
+          product_name_en: product.product_name_en || '',
+          product_source: product.product_source || 'imported',
+          has_active_audio: !!product.current_audio,
+        }));
+      await fulfillJson(route, { ok: true, client_id: '', items });
       return;
     }
 
@@ -740,7 +797,7 @@ async function installPadApiMocks(page, options = {}) {
     if (productRegenerateMatch && method === 'POST') {
       const productId = decodeURIComponent(productRegenerateMatch[1]);
       const body = request.postDataJSON ? request.postDataJSON() : {};
-      const target = state.products.find((item) => item.product_id === productId);
+      const target = findProductById(productId);
       if (!target) {
         await fulfillJson(route, { ok: false, error: 'product_not_found' }, 404);
         return;
@@ -774,7 +831,7 @@ async function installPadApiMocks(page, options = {}) {
     const productImageUploadMatch = path.match(/^\/api\/pad\/products\/([^/]+)\/images\/upload$/);
     if (productImageUploadMatch && method === 'POST') {
       const productId = decodeURIComponent(productImageUploadMatch[1]);
-      const target = state.products.find((item) => item.product_id === productId);
+      const target = findProductById(productId);
       if (!target) {
         await fulfillJson(route, { ok: false, error: 'product_not_found' }, 404);
         return;
@@ -796,6 +853,22 @@ async function installPadApiMocks(page, options = {}) {
           offline_image_url: `/api/pad/offline/images/${target.images[0].image_asset_id}`,
         },
       });
+      return;
+    }
+
+    const productUpdateMatch = path.match(/^\/api\/pad\/products\/([^/]+)$/);
+    if (productUpdateMatch && method === 'PUT') {
+      const productId = decodeURIComponent(productUpdateMatch[1]);
+      const body = request.postDataJSON ? request.postDataJSON() : {};
+      const target = findProductById(productId);
+      if (!target) {
+        await fulfillJson(route, { ok: false, error: 'product_not_found' }, 404);
+        return;
+      }
+      target.product_name = String((body && body.product_name) || target.product_name || '').trim();
+      target.intro_text = String((body && body.intro_text) || '').trim();
+      target.updated_at_ms = Date.now();
+      await fulfillJson(route, { ok: true, product: buildFixturePayloads(state).products.items.find((item) => item.product_id === productId) || target });
       return;
     }
 
@@ -865,9 +938,16 @@ async function installPadApiMocks(page, options = {}) {
         return;
       }
       const updatedAtMs = Date.now();
+      const requestedProductId = String((body && body.product_id) || '').trim();
+      const manualProductName = String((body && body.manual_product_name) || '').trim();
+      const resolvedProduct = requestedProductId
+        ? findProductById(requestedProductId)
+        : manualProductName
+          ? createPlaceholderProduct(manualProductName)
+          : null;
       const hotspot = {
         hotspot_id: `station_hotspot_${stationKey}_${updatedAtMs}`,
-        product_id: String((body && body.product_id) || '').trim(),
+        product_id: resolvedProduct ? String(resolvedProduct.product_id || '').trim() : requestedProductId,
         sort_order: Number((body && body.sort_order) || 0),
         x_pct: Number((body && body.x_pct) || 0),
         y_pct: Number((body && body.y_pct) || 0),
@@ -876,22 +956,13 @@ async function installPadApiMocks(page, options = {}) {
         updated_at_ms: updatedAtMs,
       };
       target.hotspots = [hotspot].concat(target.hotspots || []);
+      const builtStation = buildFixturePayloads(state).stations.items.find(
+        (item) => item.slot_key === stationKey || item.station_key === stationKey || item.station_id === stationKey
+      );
+      const builtHotspot = builtStation && (builtStation.hotspots || []).find((item) => item.hotspot_id === hotspot.hotspot_id);
       await fulfillJson(route, {
         ok: true,
-        hotspot: {
-          hotspot_id: hotspot.hotspot_id,
-          station_key: stationKey,
-          product_id: hotspot.product_id,
-          target_type: hotspot.control_action ? 'control' : 'product',
-          control_action: hotspot.control_action || '',
-          control_label: hotspot.control_label || '',
-          sort_order: hotspot.sort_order,
-          x_pct: hotspot.x_pct,
-          y_pct: hotspot.y_pct,
-          width_pct: hotspot.width_pct,
-          height_pct: hotspot.height_pct,
-          updated_at_ms: hotspot.updated_at_ms,
-        },
+        hotspot: builtHotspot,
       });
       return;
     }
@@ -928,26 +999,27 @@ async function installPadApiMocks(page, options = {}) {
         await fulfillJson(route, { ok: false, error: 'hotspot_not_found' }, 404);
         return;
       }
-      hotspot.product_id = String((body && body.product_id) || '').trim();
+      const requestedProductId = String((body && body.product_id) || '').trim();
+      const manualProductName = String((body && body.manual_product_name) || '').trim();
+      const resolvedProduct = requestedProductId
+        ? findProductById(requestedProductId)
+        : manualProductName
+          ? createPlaceholderProduct(manualProductName)
+          : null;
+      hotspot.product_id = resolvedProduct ? String(resolvedProduct.product_id || '').trim() : requestedProductId;
       hotspot.sort_order = Number((body && body.sort_order) || 0);
       hotspot.x_pct = Number((body && body.x_pct) || 0);
       hotspot.y_pct = Number((body && body.y_pct) || 0);
       hotspot.width_pct = Number((body && body.width_pct) || 0);
       hotspot.height_pct = Number((body && body.height_pct) || 0);
       hotspot.updated_at_ms = Date.now();
+      const builtStation = buildFixturePayloads(state).stations.items.find(
+        (item) => item.slot_key === stationKey || item.station_key === stationKey || item.station_id === stationKey
+      );
+      const builtHotspot = builtStation && (builtStation.hotspots || []).find((item) => item.hotspot_id === hotspot.hotspot_id);
       await fulfillJson(route, {
         ok: true,
-        hotspot: {
-          hotspot_id: hotspot.hotspot_id,
-          station_key: stationKey,
-          product_id: hotspot.product_id,
-          sort_order: hotspot.sort_order,
-          x_pct: hotspot.x_pct,
-          y_pct: hotspot.y_pct,
-          width_pct: hotspot.width_pct,
-          height_pct: hotspot.height_pct,
-          updated_at_ms: hotspot.updated_at_ms,
-        },
+        hotspot: builtHotspot,
       });
       return;
     }
@@ -1155,6 +1227,30 @@ async function switchToOpsMode(page) {
   await expect
     .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().mode || ''), { timeout: 3000 })
     .toBe('ops');
+}
+
+async function pickHotspotProduct(page, queryText, productId) {
+  await page.locator('[data-action="station-hotspot-product-search"]').fill(queryText);
+  await expect(page.locator(`[data-action="station-hotspot-pick"][data-product-id="${productId}"]`)).toBeVisible();
+  await page.locator(`[data-action="station-hotspot-pick"][data-product-id="${productId}"]`).click();
+}
+
+async function drawEditorHotspot(page, startXRatio, startYRatio, endXRatio, endYRatio) {
+  await page.evaluate(
+    ({ sx, sy, ex, ey }) => {
+      const el = document.querySelector('[data-scene-stage-role="editor"]');
+      if (!el) throw new Error('editor_stage_missing');
+      const rect = el.getBoundingClientRect();
+      const startX = rect.left + rect.width * sx;
+      const startY = rect.top + rect.height * sy;
+      const endX = rect.left + rect.width * ex;
+      const endY = rect.top + rect.height * ey;
+      el.dispatchEvent(new PointerEvent('pointerdown', { clientX: startX, clientY: startY, bubbles: true }));
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: endX, clientY: endY, bubbles: true }));
+      window.dispatchEvent(new PointerEvent('pointerup', { clientX: endX, clientY: endY, bubbles: true }));
+    },
+    { sx: startXRatio, sy: startYRatio, ex: endXRatio, ey: endYRatio }
+  );
 }
 
 test('demo defaults to station-integrated scene view without product list', async ({ page }, testInfo) => {
@@ -1388,49 +1484,55 @@ test('timeline config save and reread survives reload and is visible in guide st
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
 
-  await page.locator('[data-action="station-timeline-events"]').fill(
-    JSON.stringify(
-      [
-        {
-          sort_order: 0,
-          time_ms: 0,
-          product_id: 'product_001',
-          station_hotspot_id: 'station_hotspot_a_1',
-          event_type: 'focus_switch',
-        },
-        {
-          sort_order: 1,
-          time_ms: 400,
-          product_id: 'product_002',
-          station_hotspot_id: 'station_hotspot_a_2',
-          event_type: 'focus_switch',
-        },
-      ],
-      null,
-      2,
-    ),
-  );
+  const secondTimelineTimeInput = page.locator('[data-action="station-timeline-time-ms"][data-index="1"]');
+  await secondTimelineTimeInput.fill('400');
+  await secondTimelineTimeInput.blur();
+  const timelineSaveRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return request.method() === 'PUT' && url.pathname === '/api/pad/halls/current/stations/display_slot_1/timeline';
+  });
   await page.locator('[data-action="save-station-config"]').click();
+  const timelineSavePayload = await timelineSaveRequest.then((request) => request.postDataJSON());
+  expect(timelineSavePayload.timeline_events[1].time_ms).toBe(400);
   await page.reload();
   await waitForOfflineReady(page);
 
   const state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
   expect(state.stationSlots[0].timelineEvents).toHaveLength(2);
+  expect(state.stationSlots[0].timelineEvents[1].timeMs).toBe(400);
 });
 
-test('invalid timeline json fails fast without success state', async ({ page }) => {
+test('timeline editor add remove flow works without raw json input', async ({ page }) => {
   await installClientIdAndAudioStub(page, 'pad-a');
-  await installPadApiMocks(page);
+  await installPadApiMocks(page, { fixtureOverrides: createTwoTimelineEventsFixture() });
 
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
-  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
 
-  await page.locator('[data-action="station-timeline-events"]').fill('{not-valid-json');
+  await expect(page.locator('[data-action="station-timeline-events"]')).toHaveCount(0);
+  await expect(page.locator('.pad-station-timeline__item')).toHaveCount(2);
+
+  await page.locator('[data-action="station-timeline-remove"][data-index="1"]').click();
+  await expect(page.locator('.pad-station-timeline__item')).toHaveCount(1);
+
+  await page.locator('[data-action="station-timeline-add"]').click();
+  await expect(page.locator('.pad-station-timeline__item')).toHaveCount(2);
+
+  const secondTimelineTimeInput = page.locator('[data-action="station-timeline-time-ms"][data-index="1"]');
+  await secondTimelineTimeInput.fill('1200');
+  await secondTimelineTimeInput.blur();
+  const timelineSaveRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return request.method() === 'PUT' && url.pathname === '/api/pad/halls/current/stations/display_slot_1/timeline';
+  });
   await page.locator('[data-action="save-station-config"]').click();
+  const timelineSavePayload = await timelineSaveRequest.then((request) => request.postDataJSON());
+  expect(timelineSavePayload.timeline_events[1].time_ms).toBe(1200);
 
-  await expect(page.locator('.pad-banner--danger')).toContainText('Timeline events JSON is invalid.');
+  const state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(state.stationSlots[0].timelineEvents).toHaveLength(2);
+  expect(state.stationSlots[0].timelineEvents[1].timeMs).toBe(1200);
 });
 
 test('station config save updates display binding and station config together', async ({ page }) => {
@@ -1622,7 +1724,7 @@ test('ops can update station config, upload background, and create a product hot
       return false;
     }
   });
-  await page.locator('[data-action="station-hotspot-product"]').selectOption('product_002');
+  await pickHotspotProduct(page, 'Hydrophilic', 'product_002');
   const createRequest = await createRequestPromise;
   const requestBody = createRequest.postDataJSON();
   expect(requestBody.product_id).toBe('product_002');
@@ -1704,7 +1806,7 @@ test('new hotspot auto-saves after product selection and exits create mode', asy
     window.dispatchEvent(new PointerEvent('pointermove', { clientX: endX, clientY: endY, bubbles: true }));
     window.dispatchEvent(new PointerEvent('pointerup', { clientX: endX, clientY: endY, bubbles: true }));
   });
-  await page.locator('[data-action="station-hotspot-product"]').selectOption('product_002');
+  await pickHotspotProduct(page, 'Hydrophilic', 'product_002');
   const createRequest = await createRequestPromise;
   const requestBody = createRequest.postDataJSON();
   expect(requestBody.product_id).toBe('product_002');
@@ -1717,6 +1819,264 @@ test('new hotspot auto-saves after product selection and exits create mode', asy
     .toBe(6);
   state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
   expect(state.productHotspots.some((item) => item.productId === 'product_002')).toBe(true);
+});
+
+test('new hotspot can be saved unbound and stays red', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+
+  await page.locator('[data-action="enter-station-hotspot-create"]').click();
+  const createRequestPromise = page.waitForRequest((request) => {
+    try {
+      const url = new URL(request.url());
+      return request.method() === 'POST' && url.pathname === '/api/pad/halls/current/stations/display_slot_1/hotspots';
+    } catch (_) {
+      return false;
+    }
+  });
+  await drawEditorHotspot(page, 0.58, 0.26, 0.74, 0.44);
+  await page.locator('[data-action="save-station-hotspot"]').click();
+
+  const createRequest = await createRequestPromise;
+  const requestBody = createRequest.postDataJSON();
+  expect(requestBody.product_id).toBe('');
+  expect(requestBody.manual_product_name).toBe('');
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().activeStationHotspotCount || 0), { timeout: 5000 })
+    .toBe(6);
+
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.setMode?.('demo'));
+  await expect(page.locator('[data-action="play-product-hotspot"].pad-scene-hotspot--unbound')).toHaveCount(1);
+});
+
+test('manual placeholder hotspot can be completed later and turn green after audio generation', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+
+  await page.locator('[data-action="enter-station-hotspot-create"]').click();
+  const createRequestPromise = page.waitForRequest((request) => {
+    try {
+      const url = new URL(request.url());
+      return request.method() === 'POST' && url.pathname === '/api/pad/halls/current/stations/display_slot_1/hotspots';
+    } catch (_) {
+      return false;
+    }
+  });
+  await drawEditorHotspot(page, 0.18, 0.5, 0.34, 0.64);
+  await page.locator('[data-action="station-hotspot-product-search"]').fill('Custom Placeholder');
+  await page.locator('[data-action="save-station-hotspot"]').click();
+
+  const createRequest = await createRequestPromise;
+  const requestBody = createRequest.postDataJSON();
+  expect(requestBody.manual_product_name).toBe('Custom Placeholder');
+
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.setMode?.('demo'));
+  const placeholderHotspot = page.locator('[data-action="play-product-hotspot"].pad-scene-hotspot--missing-audio');
+  await expect(placeholderHotspot).toHaveCount(1);
+  await placeholderHotspot.click();
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().selectedProductId || ''), { timeout: 3000 })
+    .not.toBe('');
+  const manualProductId = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().selectedProductId || '');
+  expect(String(manualProductId || '')).toContain('manual_product_');
+
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().audioError || ''), { timeout: 3000 })
+    .toBe('This product has no active narration audio.');
+
+  await switchToOpsMode(page);
+  await page.locator('[data-action="product-name-draft"]').fill('Custom Placeholder Ready');
+  await page.locator('[data-action="product-intro-draft"]').fill('Custom placeholder introduction');
+  await page.locator('[data-action="save-product-info"]').click();
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().syncTone || ''), { timeout: 8000 })
+    .not.toBe('pending');
+  await page.locator('[data-action="regenerate-audio"]').click();
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().currentAudioText || ''), { timeout: 8000 })
+    .toBe('Custom placeholder introduction');
+
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.setMode?.('demo'));
+  await expect(
+    page.locator(`[data-action="play-product-hotspot"][data-product-id="${manualProductId}"]`)
+  ).toHaveClass(/pad-scene-hotspot--has-audio/);
+});
+
+test('cross-hall hotspot binding keeps main list scoped but exposes referenced product playback', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page, {
+    fixtureOverrides: {
+      products: createBaseFixture().products.concat([
+        {
+          product_id: 'product_900',
+          hall_id: 'hall_02',
+          sort_order: 9,
+          product_name: 'External Valve',
+          product_name_en: 'External Valve',
+          intro_text: 'External intro',
+          registration_name: 'External registration',
+          registration_number: 'REG-900',
+          effective_date: '2026-02-01',
+          company: 'External Co',
+          product_source: 'imported',
+          current_audio: {
+            audio_asset_id: 'audio_900',
+            source_type: 'recorded',
+            text_snapshot: 'External valve narration',
+            updated_at_ms: 1710000010900,
+          },
+          images: [],
+        },
+      ]),
+    },
+  });
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+
+  await page.locator('[data-action="enter-station-hotspot-create"]').click();
+  const createRequestPromise = page.waitForRequest((request) => {
+    try {
+      const url = new URL(request.url());
+      return request.method() === 'POST' && url.pathname === '/api/pad/halls/current/stations/display_slot_1/hotspots';
+    } catch (_) {
+      return false;
+    }
+  });
+  await drawEditorHotspot(page, 0.62, 0.52, 0.8, 0.68);
+  await pickHotspotProduct(page, 'External', 'product_900');
+
+  const createRequest = await createRequestPromise;
+  expect(createRequest.postDataJSON().product_id).toBe('product_900');
+
+  const state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(state.displayProductIds).not.toContain('product_900');
+  expect(state.referencedProductIds).toContain('product_900');
+});
+
+test('hotspot product search input keeps focus while typing', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+
+  await page.locator('[data-action="enter-station-hotspot-create"]').click();
+  await drawEditorHotspot(page, 0.2, 0.2, 0.34, 0.36);
+  const input = page.locator('[data-action="station-hotspot-product-search"]');
+  await input.click();
+  await input.type('E');
+
+  await expect(page.locator('[data-action="station-hotspot-pick"]').first()).toBeVisible();
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () => document.activeElement && document.activeElement.getAttribute('data-action')
+        ),
+      { timeout: 3000 }
+    )
+    .toBe('station-hotspot-product-search');
+});
+
+test('hotspot product search supports chinese composition input', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+
+  await page.locator('[data-action="enter-station-hotspot-create"]').click();
+  await drawEditorHotspot(page, 0.22, 0.18, 0.34, 0.32);
+
+  await page.evaluate(() => {
+    const input = document.querySelector('[data-action="station-hotspot-product-search"]');
+    if (!input) throw new Error('hotspot_search_input_missing');
+    input.focus();
+    input.dispatchEvent(new CompositionEvent('compositionstart', { data: '造' }));
+    input.value = '造';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new CompositionEvent('compositionend', { data: '造影' }));
+    input.value = '造影';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+
+  await expect(page.locator('[data-action="station-hotspot-product-search"]')).toHaveValue('造影');
+  await expect(page.locator('[data-action="station-hotspot-pick"]').first()).toBeVisible();
+});
+
+test('timeline editor can play station narration and insert highlight range events', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+
+  await page.locator('[data-action="play-station-slot"][data-slot-key="display_slot_1"]').first().click();
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().playingStationSlotKey || ''), { timeout: 5000 })
+    .toBe('display_slot_1');
+
+  await page.locator('[data-action="station-timeline-add-highlight-on"][data-slot-key="display_slot_1"]').click();
+  await page.locator('[data-action="station-timeline-add-highlight-off"][data-slot-key="display_slot_1"]').click();
+
+  await expect(page.locator('.pad-station-timeline__item')).toHaveCount(3);
+  await expect(page.locator('[data-action="station-timeline-event-type"][data-index="1"]')).toHaveValue('highlight_on');
+  await expect(page.locator('[data-action="station-timeline-event-type"][data-index="2"]')).toHaveValue('highlight_off');
+});
+
+test('draft hotspot can be resized before it is saved', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+
+  await page.locator('[data-action="enter-station-hotspot-create"]').click();
+  await drawEditorHotspot(page, 0.24, 0.28, 0.34, 0.38);
+
+  const draftHotspot = page.locator('[data-action="scene-editor-hotspot"][data-hotspot-id="__draft__"]');
+  const resizeHandle = page.locator('[data-action="scene-editor-hotspot-resize"][data-hotspot-id="__draft__"]');
+  await expect(draftHotspot).toBeVisible();
+  const beforeStyle = await draftHotspot.getAttribute('style');
+
+  await page.evaluate(() => {
+    const node = document.querySelector('[data-action="scene-editor-hotspot-resize"][data-hotspot-id="__draft__"]');
+    if (!node) throw new Error('draft_resize_missing');
+    const rect = node.getBoundingClientRect();
+    const startX = rect.left + rect.width / 2;
+    const startY = rect.top + rect.height / 2;
+    const endX = startX + 120;
+    const endY = startY + 90;
+    node.dispatchEvent(new PointerEvent('pointerdown', { clientX: startX, clientY: startY, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: endX, clientY: endY, bubbles: true }));
+    window.dispatchEvent(new PointerEvent('pointerup', { clientX: endX, clientY: endY, bubbles: true }));
+  });
+
+  await expect(draftHotspot).not.toHaveAttribute('style', beforeStyle || '');
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().sceneEditorCreateMode), { timeout: 3000 })
+    .toBe(false);
 });
 
 test('selecting existing hotspot exits create mode', async ({ page }) => {
@@ -1792,6 +2152,99 @@ test('ops product management still supports TTS regeneration and image upload', 
     .poll(() => page.evaluate(() => (window.__RAGINT_PAD_E2E__?.getState?.().currentImageAssetIds || []).length), { timeout: 8000 })
     .toBeGreaterThan(0);
   await captureEvidence(page, testInfo, 'ops-product-regression');
+});
+
+test('ops layout fits in a single screen without page scrolling', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+
+  await expect(page.locator('.pad-shell--ops')).toBeVisible();
+  await expect(page.locator('.pad-ops-topbar')).toBeVisible();
+  await expect(page.locator('.pad-ops-annotate-shell')).toBeVisible();
+  await expect(page.locator('.pad-ops-annotate-sidebar [data-action="save-station-config"]')).toBeVisible();
+  await expect(page.locator('.pad-ops-annotate-sidebar [data-action="enter-station-hotspot-create"]')).toBeVisible();
+  await expect(page.locator('[data-action="save-product-info"]')).toHaveCount(0);
+  await expect(page.locator('[data-action="select-upload-image"]')).toHaveCount(0);
+
+  const metrics = await page.evaluate(() => {
+    const shell = document.querySelector('.pad-shell--ops');
+    return {
+      innerHeight: window.innerHeight,
+      docScrollHeight: document.documentElement.scrollHeight,
+      bodyScrollHeight: document.body.scrollHeight,
+      shellClientHeight: shell ? shell.clientHeight : 0,
+      shellScrollHeight: shell ? shell.scrollHeight : 0,
+      pageScrollable: window.innerHeight < document.documentElement.scrollHeight - 1,
+    };
+  });
+
+  expect(metrics.pageScrollable).toBe(false);
+  expect(metrics.docScrollHeight).toBeLessThanOrEqual(metrics.innerHeight + 1);
+  expect(metrics.bodyScrollHeight).toBeLessThanOrEqual(metrics.innerHeight + 1);
+  expect(metrics.shellScrollHeight).toBeLessThanOrEqual(metrics.shellClientHeight + 1);
+
+  await captureEvidence(page, testInfo, 'ops-single-screen');
+});
+
+test('ops compact layout still supports product editing and TTS regeneration', async ({ page }, testInfo) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+  await page.locator('[data-action="set-ops-station-tab"][data-tab="settings"]').click();
+
+  await page.locator('[data-product-id="product_002"]').click();
+  await expect(page.getByTestId('audio-text-editor')).toHaveValue('亲水涂层造影导管默认 TTS 讲解');
+  await page.getByTestId('audio-text-editor').fill('更新后的亲水涂层造影导管讲解');
+  await page.locator('[data-action="regenerate-audio"]').click();
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().currentAudioText || ''), { timeout: 8000 })
+    .toBe('更新后的亲水涂层造影导管讲解');
+
+  await page.locator('[data-action="product-name-draft"]').fill('亲水涂层造影导管（运维修订）');
+  await page.locator('[data-action="product-intro-draft"]').fill('新的单屏运维布局下，产品说明仍可直接维护。');
+  const saveProductRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return request.method() === 'PUT' && url.pathname === '/api/pad/products/product_002';
+  });
+  await page.locator('[data-action="save-product-info"]').click();
+  const saveProductPayload = await saveProductRequest.then((request) => request.postDataJSON());
+  expect(saveProductPayload.product_name).toContain('运维修订');
+  expect(saveProductPayload.intro_text).toContain('单屏运维布局');
+
+  await captureEvidence(page, testInfo, 'ops-compact-product-edit');
+});
+
+test('ops station area separates hotspot annotation and station settings tabs', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+
+  await expect(page.locator('[data-action="set-ops-station-tab"][data-tab="annotate"]')).toBeVisible();
+  await expect(page.locator('[data-action="set-ops-station-tab"][data-tab="settings"]')).toBeVisible();
+  await expect(page.locator('.pad-scene-stage--ops-editor')).toBeVisible();
+  await expect(page.locator('.pad-scene-stage--ops-editor')).toHaveClass(/is-stretched/);
+  await expect(page.locator('[data-action="enter-station-hotspot-create"]')).toBeVisible();
+  await expect(page.locator('.pad-ops-product-panel')).toHaveCount(0);
+  await expect(page.locator('.pad-ops-detail-panel')).toHaveCount(0);
+
+  await page.locator('[data-action="set-ops-station-tab"][data-tab="settings"]').click();
+  await expect(page.locator('.pad-ops-product-panel')).toHaveCount(1);
+  await expect(page.locator('.pad-ops-detail-panel')).toHaveCount(1);
+  await expect(page.locator('[data-action="station-slot-recording"]')).toBeVisible();
+  await expect(page.locator('[data-action="station-slot-stop"]')).toBeVisible();
+  await expect(page.locator('[data-action="station-timeline-add"]')).toBeVisible();
+  await expect(page.locator('[data-action="enter-station-hotspot-create"]')).toHaveCount(0);
 });
 
 test('ops layout and Hall product list are hidden by default and shown via buttons', async ({ page }) => {

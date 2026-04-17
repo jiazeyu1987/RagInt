@@ -22,71 +22,71 @@
   const RECORDING_OPTIONS_LIMIT = 100;
 
   const TEXT = Object.freeze({
-    loading: "Loading current hall and product list...",
-    loadFailed: "Online load failed",
-    offlineNotReady: "Offline resources not ready",
-    offlineNotReadyDetail: "This device has not completed offline sync for the current hall yet. Please sync once while online.",
-    hallBindingNotFoundDetail: "The current clientId is not bound to a hall. Please use the hall switcher below.",
-    backendErrorPrefix: "Backend error: ",
-    backendUnknownDetail: "Backend returned an unexpected state.",
-    unboundHall: "Unbound hall",
+    loading: "正在加载当前展厅和产品列表...",
+    loadFailed: "在线加载失败",
+    offlineNotReady: "离线资源未就绪",
+    offlineNotReadyDetail: "当前设备尚未完成本展厅的离线同步，请先在线同步一次。",
+    hallBindingNotFoundDetail: "当前 clientId 尚未绑定展厅，请先在下方切换展厅。",
+    backendErrorPrefix: "后端错误：",
+    backendUnknownDetail: "\u540e\u7aef\u8fd4\u56de\u4e86\u672a\u9884\u671f\u7684\u72b6\u6001\u3002",
+    unboundHall: "\u672a\u7ed1\u5b9a\u5c55\u5385",
     liveData: "实时数据",
     offlineSnapshot: "离线快照",
-    noProducts: "No products are available in the current hall.",
-    noSelection: "Select a product card on the left to play its active narration audio.",
-    noAudio: "This product has no active narration audio.",
-    audioPlayFailed: "Product narration audio failed to play. Please check whether the resource is synced.",
-    audioPreparing: "Preparing playback...",
-    audioPlay: "Play product narration",
-    currentAudioReady: "Active audio",
-    currentAudioMissing: "No audio",
-    introTitle: "Product introduction",
-    infoTitle: "Product info",
-    registrationName: "Registration name",
-    registrationNumber: "Registration number",
-    effectiveDate: "Effective date",
-    company: "Company",
-    emptyField: "Not filled",
-    currentAudioStatusReady: "Narration ready",
-    currentAudioStatusMissing: "No active audio",
-    currentAudioStatusFailed: "Playback failed",
-    currentAudioStatusPreparing: "Preparing playback",
-    currentAudioStatusPlaying: "Playing",
-    notSelected: "No product selected",
+    noProducts: "\u5f53\u524d\u5c55\u5385\u6682\u65e0\u4ea7\u54c1\u3002",
+    noSelection: "\u8bf7\u5148\u5728\u5de6\u4fa7\u9009\u62e9\u4e00\u4e2a\u4ea7\u54c1\u3002",
+    noAudio: "\u8be5\u4ea7\u54c1\u6682\u65e0\u751f\u6548\u8bb2\u89e3\u97f3\u9891\u3002",
+    audioPlayFailed: "\u4ea7\u54c1\u8bb2\u89e3\u97f3\u9891\u64ad\u653e\u5931\u8d25\uff0c\u8bf7\u786e\u8ba4\u8d44\u6e90\u662f\u5426\u5df2\u540c\u6b65\u3002",
+    audioPreparing: "\u6b63\u5728\u51c6\u5907\u64ad\u653e...",
+    audioPlay: "\u64ad\u653e\u8bb2\u89e3",
+    currentAudioReady: "\u97f3\u9891\u5df2\u5c31\u7eea",
+    currentAudioMissing: "\u6682\u65e0\u97f3\u9891",
+    introTitle: "\u4ea7\u54c1\u8bf4\u660e",
+    infoTitle: "\u4ea7\u54c1\u4fe1\u606f",
+    registrationName: "\u6ce8\u518c\u8bc1\u540d\u79f0",
+    registrationNumber: "\u6ce8\u518c\u8bc1\u53f7",
+    effectiveDate: "\u751f\u6548\u65e5\u671f",
+    company: "\u6240\u5c5e\u516c\u53f8",
+    emptyField: "\u672a\u586b\u5199",
+    currentAudioStatusReady: "\u8bb2\u89e3\u5df2\u5c31\u7eea",
+    currentAudioStatusMissing: "\u6682\u65e0\u751f\u6548\u97f3\u9891",
+    currentAudioStatusFailed: "\u64ad\u653e\u5931\u8d25",
+    currentAudioStatusPreparing: "\u51c6\u5907\u64ad\u653e\u4e2d",
+    currentAudioStatusPlaying: "\u64ad\u653e\u4e2d",
+    notSelected: "\u672a\u9009\u62e9\u4ea7\u54c1",
     heroEyebrow: "Hall Product Explainer",
     heroSubtitle: "This device binds a hall by clientId and prioritizes that hall's offline assets.",
-    refreshOnline: "Refresh live data",
-    syncOffline: "Sync offline assets",
-    gotoRagint: "Enter hall guide mode",
-    statClientId: "Device clientId",
-    statProductCount: "Product count",
-    statNetwork: "Network",
-    statOffline: "Offline",
-    online: "Online",
-    offline: "Offline",
-    hallListTitle: "Hall product list",
-    lastSyncAt: "Last sync time: ",
-    currentPlaying: "Now playing",
-    syncPendingInit: "Preparing hall assets",
-    syncPendingOnlineLoaded: "Live data loaded, preparing offline pack",
-    syncPendingSyncing: "Syncing offline assets for this hall",
-    syncReadyOffline: "Using offline resources",
-    syncReadyCountPrefix: "Offline assets synced (",
-    syncReadyCountSuffix: " audio items)",
-    syncDangerLoadFailed: "Current hall failed to load",
-    syncDangerOfflineNotReady: "Offline resources not ready",
-    syncDangerOfflineUnsupported: "Browser does not support offline cache",
-    syncDangerOfflineInitFailed: "Offline cache initialization failed",
-    syncDangerOfflineSyncFailed: "Offline sync failed: ",
-    syncDangerOfflineUnsupportedDetail: "Browser does not support offline resources: ",
-    bannerUsingOffline: "Currently using locally synced offline resources.",
-    bannerOfflineReady: "Offline assets are ready and can continue playing without network.",
-    bannerOnlineOnly: "Current view is online data and offline resources are not fully synced.",
-    quickSwitchTitle: "Quick hall switch",
-    quickSwitchHint: "Click a button to switch the current Pad clientId and hall content.",
-    modeLabel: "UI mode",
-    modeDemo: "Demo",
-    modeOps: "Ops",
+    refreshOnline: "\u5728\u7ebf\u5237\u65b0",
+    syncOffline: "\u79bb\u7ebf\u540c\u6b65",
+    gotoRagint: "\u8fdb\u5165\u8bb2\u89e3\u6a21\u5f0f",
+    statClientId: "\u8bbe\u5907 clientId",
+    statProductCount: "\u4ea7\u54c1\u6570",
+    statNetwork: "\u7f51\u7edc",
+    statOffline: "\u79bb\u7ebf\u8d44\u6e90",
+    online: "\u5728\u7ebf",
+    offline: "\u79bb\u7ebf",
+    hallListTitle: "\u5c55\u5385\u4ea7\u54c1\u5217\u8868",
+    lastSyncAt: "\u6700\u8fd1\u540c\u6b65\uff1a",
+    currentPlaying: "\u5f53\u524d\u64ad\u653e",
+    syncPendingInit: "\u6b63\u5728\u51c6\u5907\u5c55\u5385\u8d44\u6e90",
+    syncPendingOnlineLoaded: "\u5728\u7ebf\u6570\u636e\u5df2\u52a0\u8f7d\uff0c\u6b63\u5728\u51c6\u5907\u79bb\u7ebf\u5305",
+    syncPendingSyncing: "\u6b63\u5728\u540c\u6b65\u5f53\u524d\u5c55\u5385\u7684\u79bb\u7ebf\u8d44\u6e90",
+    syncReadyOffline: "\u5f53\u524d\u4f7f\u7528\u79bb\u7ebf\u8d44\u6e90",
+    syncReadyCountPrefix: "\u79bb\u7ebf\u8d44\u6e90\u5df2\u540c\u6b65\uff08",
+    syncReadyCountSuffix: " \u6761\u97f3\u9891\uff09",
+    syncDangerLoadFailed: "\u5f53\u524d\u5c55\u5385\u52a0\u8f7d\u5931\u8d25",
+    syncDangerOfflineNotReady: "\u79bb\u7ebf\u8d44\u6e90\u672a\u5c31\u7eea",
+    syncDangerOfflineUnsupported: "\u5f53\u524d\u6d4f\u89c8\u5668\u4e0d\u652f\u6301\u79bb\u7ebf\u7f13\u5b58",
+    syncDangerOfflineInitFailed: "\u79bb\u7ebf\u7f13\u5b58\u521d\u59cb\u5316\u5931\u8d25",
+    syncDangerOfflineSyncFailed: "\u79bb\u7ebf\u540c\u6b65\u5931\u8d25\uff1a",
+    syncDangerOfflineUnsupportedDetail: "\u5f53\u524d\u6d4f\u89c8\u5668\u4e0d\u652f\u6301\u79bb\u7ebf\u8d44\u6e90\uff1a",
+    bannerUsingOffline: "\u5f53\u524d\u6b63\u5728\u4f7f\u7528\u672c\u5730\u79bb\u7ebf\u8d44\u6e90\u3002",
+    bannerOfflineReady: "\u79bb\u7ebf\u8d44\u6e90\u5df2\u51c6\u5907\u5b8c\u6210\uff0c\u65ad\u7f51\u540e\u4ecd\u53ef\u7ee7\u7eed\u64ad\u653e\u3002",
+    bannerOnlineOnly: "\u5f53\u524d\u4e3a\u5728\u7ebf\u6570\u636e\u89c6\u56fe\uff0c\u79bb\u7ebf\u8d44\u6e90\u5c1a\u672a\u5b8c\u5168\u540c\u6b65\u3002",
+    quickSwitchTitle: "\u5feb\u901f\u5207\u5385",
+    quickSwitchHint: "\u70b9\u51fb\u6309\u94ae\u5373\u53ef\u5207\u6362\u5f53\u524d Pad \u7684 clientId \u4e0e\u5c55\u5385\u5185\u5bb9\u3002",
+    modeLabel: "\u754c\u9762\u6a21\u5f0f",
+    modeDemo: "\u6f14\u793a",
+    modeOps: "\u8fd0\u7ef4",
     demoEyebrow: "Exhibit Playback",
     demoSubtitle: "Tap a product item to play the active narration audio.",
     demoListTitle: "Tap a product to start narration",
@@ -125,6 +125,12 @@
     exit_app: "退出",
   });
 
+  const TIMELINE_EVENT_TYPE_LABELS = Object.freeze({
+    focus_switch: "切换焦点",
+    highlight_on: "开启高亮",
+    highlight_off: "取消高亮",
+  });
+
   const HALL_PRESETS = Object.freeze([
     { clientId: "pad-a", hallId: "hall_01", hallName: "Cardio Implant Hall", shortLabel: "Hall 1" },
     { clientId: "pad-b", hallId: "hall_02", hallName: "Cardiac Implant Hall", shortLabel: "Hall 2" },
@@ -142,6 +148,7 @@
     display: null,
     hall: null,
     products: [],
+    referencedProducts: [],
     selectedProductId: "",
     loading: true,
     errorMessage: "",
@@ -175,12 +182,15 @@
     assetMessage: "",
     assetTone: "pending",
     audioTextDrafts: Object.create(null),
+    productInfoDrafts: Object.create(null),
     displayProductPlayCounts: Object.create(null),
     productPlayCounts: Object.create(null),
     demoColumns: DEFAULT_DEMO_COLUMNS,
     opsShowDemoLayout: false,
     opsShowHallProductList: false,
     opsShowHallSwitcher: false,
+    opsStationTab: "annotate",
+    opsAnnotateSidebarTab: "overview",
     demoLeftTabKey: DEFAULT_DEMO_LEFT_TAB,
     demoRightTabKey: DEFAULT_DEMO_RIGHT_TAB,
     scenes: [],
@@ -189,6 +199,9 @@
     sceneEditorActiveHotspotId: "",
     sceneEditorDraft: null,
     sceneEditorCreateMode: false,
+    hotspotSearchResults: [],
+    hotspotSearchBusy: false,
+    hotspotSearchQuery: "",
     demoStationSlots: [],
     recordingOptions: [],
     recordingOptionsReady: false,
@@ -205,8 +218,10 @@
 
   let latestLoadSeq = 0;
   let latestSyncSeq = 0;
+  let latestHotspotSearchSeq = 0;
   let latestStationPlaybackSeq = 0;
   let sceneEditorInteraction = null;
+  let hotspotSearchComposing = false;
   const recordingMetaRequestMap = Object.create(null);
   let stationTimelineTimer = null;
   let stationTimelineStartedAtMs = 0;
@@ -294,6 +309,21 @@
     return Math.floor(parsed);
   }
 
+  function normalizeTimelineEventTimeMs(value) {
+    if (value == null || String(value).trim() === "") return 0;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return 0;
+    return Math.floor(parsed);
+  }
+
+  function normalizeTimelineEventType(value) {
+    const next = String(value || "focus_switch").trim() || "focus_switch";
+    if (next === "focus_switch" || next === "highlight_on" || next === "highlight_off") {
+      return next;
+    }
+    return "focus_switch";
+  }
+
   function normalizeStationSlot(raw, index) {
     const base = getDefaultStationSlot("", index);
     const item = raw && typeof raw === "object" ? raw : {};
@@ -304,7 +334,9 @@
       recordingId: String(item.recordingId || "").trim(),
       stopIndex: normalizeStationStopIndex(item.stopIndex),
       stopName: String(item.stopName || "").trim(),
-      timelineEvents: Array.isArray(item.timelineEvents) ? item.timelineEvents.slice() : [],
+      timelineEvents: normalizeTimelineEvents(
+        Array.isArray(item.timelineEvents) ? item.timelineEvents : item.timeline_events
+      ),
     };
   }
 
@@ -587,6 +619,258 @@
     render();
   }
 
+  function findStationTimelineHotspot(scene, hotspotId) {
+    const nextId = String(hotspotId || "").trim();
+    if (!nextId) return null;
+    const hotspots = scene && Array.isArray(scene.hotspots) ? scene.hotspots : [];
+    return (
+      hotspots.find((item) => String(item && item.hotspot_id ? item.hotspot_id : "").trim() === nextId) || null
+    );
+  }
+
+  function getStationTimelineHotspotOptions(scene, selectedHotspotId) {
+    const hotspots = scene && Array.isArray(scene.hotspots) ? scene.hotspots : [];
+    const seen = new Set();
+    const options = [];
+    hotspots.forEach((hotspot) => {
+      const hotspotId = String(hotspot && hotspot.hotspot_id ? hotspot.hotspot_id : "").trim();
+      if (!hotspotId || seen.has(hotspotId)) return;
+      seen.add(hotspotId);
+      options.push(hotspot);
+    });
+    const fallbackId = String(selectedHotspotId || "").trim();
+    if (fallbackId && !seen.has(fallbackId)) {
+      options.push({
+        hotspot_id: fallbackId,
+        product_id: "",
+        target_type: "missing",
+        control_label: "",
+      });
+    }
+    return options;
+  }
+
+  function getStationTimelineHotspotLabel(scene, hotspotId) {
+    const hotspot = findStationTimelineHotspot(scene, hotspotId);
+    if (!hotspot) {
+      const fallbackId = String(hotspotId || "").trim();
+      return fallbackId ? "\u5931\u6548\u70ed\u533a \u00b7 " + fallbackId : "\u672a\u9009\u62e9\u70ed\u533a";
+    }
+    if (String(hotspot.target_type || "product") === "control") {
+      const controlLabel = String(hotspot.control_label || "").trim() || "\u63a7\u5236\u70ed\u533a";
+      return controlLabel + " \u00b7 " + String(hotspot.hotspot_id || "").trim();
+    }
+    const product = findProductById(hotspot.product_id);
+    const productName = String(product && product.product_name ? product.product_name : hotspot.product_id || "").trim();
+    return (productName || "\u672a\u7ed1\u5b9a\u4ea7\u54c1") + " \u00b7 " + String(hotspot.hotspot_id || "").trim();
+  }
+
+  function getStationTimelineEventSummary(scene, event) {
+    const actionLabel =
+      TIMELINE_EVENT_TYPE_LABELS[normalizeTimelineEventType(event && event.eventType)] ||
+      TIMELINE_EVENT_TYPE_LABELS.focus_switch;
+    const hotspot = findStationTimelineHotspot(scene, event && event.hotspotId);
+    if (!hotspot) {
+      return "\u5f53\u524d\u8282\u70b9\u5f15\u7528\u7684\u70ed\u533a\u5df2\u4e0d\u5b58\u5728\uff0c\u4fdd\u5b58\u65f6\u4f1a\u5931\u8d25\uff0c\u8bf7\u91cd\u65b0\u9009\u62e9\u70ed\u533a\u3002";
+    }
+    if (String(hotspot.target_type || "product") === "control") {
+      const controlLabel = String(hotspot.control_label || "").trim() || "\u63a7\u5236\u70ed\u533a";
+      return actionLabel + "\uff1a" + controlLabel;
+    }
+    const product = findProductById(hotspot.product_id);
+    const productName = String(product && product.product_name ? product.product_name : hotspot.product_id || "").trim();
+    return (
+      actionLabel +
+      "\uff1a" +
+      (productName || "\u672a\u7ed1\u5b9a\u4ea7\u54c1") +
+      "\uff08" +
+      String(hotspot.hotspot_id || "").trim() +
+      "\uff09"
+    );
+  }
+
+  function formatTimelineOffset(timeMs) {
+    const totalMs = Math.max(0, normalizeTimelineEventTimeMs(timeMs));
+    const minutes = Math.floor(totalMs / 60000);
+    const seconds = Math.floor((totalMs % 60000) / 1000);
+    const milliseconds = totalMs % 1000;
+    return (
+      String(minutes).padStart(2, "0") +
+      ":" +
+      String(seconds).padStart(2, "0") +
+      "." +
+      String(milliseconds).padStart(3, "0")
+    );
+  }
+
+  function normalizeStationTimelineEditorEvents(rawEvents, scene) {
+    return (Array.isArray(rawEvents) ? rawEvents : [])
+      .map((raw, index) => {
+        const item = raw && typeof raw === "object" ? raw : {};
+        const hotspotId = String(item.hotspotId || item.station_hotspot_id || item.hotspot_id || "").trim();
+        if (!hotspotId) return null;
+        const hotspot = findStationTimelineHotspot(scene, hotspotId);
+        return {
+          eventId: String(item.eventId || item.event_id || "").trim(),
+          sortOrder: index,
+          timeMs: normalizeTimelineEventTimeMs(item.timeMs != null ? item.timeMs : item.time_ms),
+          productId: hotspot ? String(hotspot.product_id || "").trim() : String(item.productId || item.product_id || "").trim(),
+          hotspotId,
+          eventType: normalizeTimelineEventType(item.eventType != null ? item.eventType : item.event_type),
+          updatedAtMs: Number(item.updatedAtMs != null ? item.updatedAtMs : item.updated_at_ms || 0),
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function readStationTimelineEventsFromDom(slotKey) {
+    const key = normalizeDemoLeftTabKey(slotKey);
+    const scene = findSceneById(key) || getSelectedScene();
+    if (!refs.app) {
+      return normalizeStationTimelineEditorEvents(getStationSlotByKey(key).timelineEvents, scene);
+    }
+    const rowNodes = Array.from(refs.app.querySelectorAll(".pad-station-timeline__item"));
+    if (!rowNodes.length) {
+      return [];
+    }
+    return normalizeStationTimelineEditorEvents(
+      rowNodes.map((node, index) => {
+        const timeInput = node.querySelector('[data-action="station-timeline-time-ms"]');
+        const hotspotSelect = node.querySelector('[data-action="station-timeline-hotspot"]');
+        const eventTypeSelect = node.querySelector('[data-action="station-timeline-event-type"]');
+        const hotspotId = String(hotspotSelect && hotspotSelect.value ? hotspotSelect.value : "").trim();
+        const hotspot = findStationTimelineHotspot(scene, hotspotId);
+        return {
+          sortOrder: index,
+          timeMs: normalizeTimelineEventTimeMs(timeInput ? timeInput.value : 0),
+          hotspotId,
+          productId: hotspot ? String(hotspot.product_id || "").trim() : "",
+          eventType: normalizeTimelineEventType(eventTypeSelect ? eventTypeSelect.value : "focus_switch"),
+        };
+      }),
+      scene
+    );
+  }
+
+  function updateStationTimelineEvents(slotKey, updater) {
+    const key = normalizeDemoLeftTabKey(slotKey);
+    const scene = findSceneById(key) || getSelectedScene();
+    updateStationSlot(key, (slot) => {
+      const prevEvents = normalizeStationTimelineEditorEvents(slot.timelineEvents, scene);
+      const draftEvents =
+        typeof updater === "function" ? updater(prevEvents.map((event) => Object.assign({}, event))) : prevEvents;
+      return {
+        timelineEvents: normalizeStationTimelineEditorEvents(draftEvents, scene),
+      };
+    });
+  }
+
+  function addStationTimelineEvent(slotKey) {
+    const key = normalizeDemoLeftTabKey(slotKey);
+    const scene = findSceneById(key) || getSelectedScene();
+    const hotspot = getStationTimelineHotspotOptions(scene)[0] || null;
+    if (!hotspot) return;
+    updateStationTimelineEvents(key, (events) => {
+      const lastEvent = events[events.length - 1] || null;
+      return events.concat({
+        eventId: "",
+        sortOrder: events.length,
+        timeMs: lastEvent ? normalizeTimelineEventTimeMs(lastEvent.timeMs) + 3000 : 0,
+        productId: String(hotspot.product_id || "").trim(),
+        hotspotId: String(hotspot.hotspot_id || "").trim(),
+        eventType: "focus_switch",
+        updatedAtMs: 0,
+      });
+    });
+  }
+
+  function removeStationTimelineEvent(slotKey, index) {
+    const currentIndex = Number(index);
+    updateStationTimelineEvents(slotKey, (events) =>
+      events.filter((_, eventIndex) => eventIndex !== currentIndex)
+    );
+  }
+
+  function moveStationTimelineEvent(slotKey, index, delta) {
+    const currentIndex = Number(index);
+    const moveDelta = Number(delta);
+    updateStationTimelineEvents(slotKey, (events) => {
+      const nextIndex = currentIndex + moveDelta;
+      if (
+        currentIndex < 0 ||
+        currentIndex >= events.length ||
+        nextIndex < 0 ||
+        nextIndex >= events.length
+      ) {
+        return events;
+      }
+      const nextEvents = events.slice();
+      const moved = nextEvents.splice(currentIndex, 1)[0];
+      nextEvents.splice(nextIndex, 0, moved);
+      return nextEvents;
+    });
+  }
+
+  function getStationPlaybackCurrentTimeMs() {
+    const audio = refs.audio;
+    if (!audio) return 0;
+    const seconds = Number(audio.currentTime || 0);
+    if (!Number.isFinite(seconds) || seconds < 0) return 0;
+    return Math.max(0, Math.round(seconds * 1000));
+  }
+
+  function getTimelineSelectedTargetHotspot(scene) {
+    const options = getStationTimelineHotspotOptions(scene);
+    if (!options.length) return null;
+    const selectedHotspotId = String(state.sceneEditorActiveHotspotId || state.highlightedHotspotId || "").trim();
+    if (selectedHotspotId) {
+      const matched = options.find((item) => String(item.hotspot_id || "").trim() === selectedHotspotId);
+      if (matched) return matched;
+    }
+    return options[0] || null;
+  }
+
+  function addStationTimelineEventFromPlayback(slotKey, eventType) {
+    const key = normalizeDemoLeftTabKey(slotKey);
+    const scene = findSceneById(key) || getSelectedScene();
+    const targetHotspot = getTimelineSelectedTargetHotspot(scene);
+    if (!targetHotspot) {
+      setAssetState("请先创建并选中一个产品热区，再设置高亮时间。", "warning", false, "station-timeline");
+      render();
+      return;
+    }
+    const playbackMs = getStationPlaybackCurrentTimeMs();
+    updateStationTimelineEvents(key, (events) => {
+      const nextEvents = events.concat({
+        eventId: "",
+        sortOrder: events.length,
+        timeMs: playbackMs,
+        productId: String(targetHotspot.product_id || "").trim(),
+        hotspotId: String(targetHotspot.hotspot_id || "").trim(),
+        eventType: normalizeTimelineEventType(eventType),
+        updatedAtMs: 0,
+      });
+      return nextEvents.sort((left, right) => {
+        const timeDiff = normalizeTimelineEventTimeMs(left.timeMs) - normalizeTimelineEventTimeMs(right.timeMs);
+        if (timeDiff !== 0) return timeDiff;
+        return String(left.hotspotId || "").localeCompare(String(right.hotspotId || ""));
+      });
+    });
+  }
+
+  function useCurrentPlaybackTimeForTimelineEvent(slotKey, index) {
+    const currentIndex = Number(index);
+    const playbackMs = getStationPlaybackCurrentTimeMs();
+    updateStationTimelineEvents(slotKey, (events) => {
+      if (currentIndex < 0 || currentIndex >= events.length) return events;
+      const nextEvents = events.slice();
+      nextEvents[currentIndex] = Object.assign({}, nextEvents[currentIndex], {
+        timeMs: playbackMs,
+      });
+      return nextEvents;
+    });
+  }
+
   function setDemoLeftTab(value) {
     const nextTab = normalizeDemoLeftTabKey(value);
     if (state.demoLeftTabKey === nextTab) return;
@@ -652,19 +936,23 @@
     state.sceneEditorCreateMode = true;
     state.sceneEditorDraft = null;
     state.sceneEditorActiveHotspotId = "";
+    clearHotspotProductSearch();
     render();
   }
 
-  function updateSceneEditorDraft(fields) {
+  function updateSceneEditorDraft(fields, options) {
     const selectedScene = getSelectedScene();
     if (!selectedScene) return null;
     const base = getSceneEditorDraftForScene(selectedScene);
     if (!base) return null;
+    const opts = options && typeof options === "object" ? options : {};
     state.sceneEditorDraft = Object.assign({}, base, fields || {}, {
       scene_id: String(selectedScene.scene_id || ""),
     });
     state.sceneEditorActiveHotspotId = String(state.sceneEditorDraft.hotspot_id || "");
-    render();
+    if (opts.render !== false) {
+      render();
+    }
     return state.sceneEditorDraft;
   }
 
@@ -864,6 +1152,13 @@
           target_type: String(item.target_type || (item.control_action ? "control" : "product")).trim() || "product",
           control_action: String(item.control_action || "").trim(),
           control_label: String(item.control_label || "").trim(),
+          product_name: String(item.product_name || "").trim(),
+          product_name_en: String(item.product_name_en || "").trim(),
+          product_hall_id: String(item.product_hall_id || item.hall_id || "").trim(),
+          product_source: String(item.product_source || "").trim(),
+          has_active_audio: !!item.has_active_audio,
+          audio_asset_id: String(item.audio_asset_id || "").trim(),
+          audio_url: String(item.audio_url || "").trim(),
           sort_order: Number(item.sort_order || 0),
           x_pct: Number(item.x_pct || 0),
           y_pct: Number(item.y_pct || 0),
@@ -886,17 +1181,23 @@
     return (Array.isArray(rawEvents) ? rawEvents : [])
       .map((raw, index) => {
         const item = raw && typeof raw === "object" ? raw : {};
-        const timeMs = Number(item.time_ms || 0);
-        const hotspotId = String(item.station_hotspot_id || item.hotspot_id || "").trim();
+        const timeMs = normalizeTimelineEventTimeMs(item.timeMs != null ? item.timeMs : item.time_ms);
+        const hotspotId = String(item.station_hotspot_id || item.hotspotId || item.hotspot_id || "").trim();
         if (!Number.isFinite(timeMs) || timeMs < 0 || !hotspotId) return null;
+        const sortOrder =
+          item.sortOrder != null
+            ? Number(item.sortOrder)
+            : item.sort_order != null
+              ? Number(item.sort_order)
+              : index;
         return {
-          eventId: String(item.event_id || "").trim(),
-          sortOrder: Number(item.sort_order || index),
+          eventId: String(item.eventId || item.event_id || "").trim(),
+          sortOrder: Number.isFinite(sortOrder) ? sortOrder : index,
           timeMs,
-          productId: String(item.product_id || "").trim(),
+          productId: String(item.productId || item.product_id || "").trim(),
           hotspotId,
-          eventType: String(item.event_type || "focus_switch").trim() || "focus_switch",
-          updatedAtMs: Number(item.updated_at_ms || 0),
+          eventType: normalizeTimelineEventType(item.eventType != null ? item.eventType : item.event_type),
+          updatedAtMs: Number(item.updatedAtMs != null ? item.updatedAtMs : item.updated_at_ms || 0),
         };
       })
       .filter(Boolean)
@@ -1065,6 +1366,13 @@
   function getSceneHotspotById(scene, hotspotId) {
     const targetId = String(hotspotId || "").trim();
     if (!scene || !targetId) return null;
+    const draft = getSceneEditorDraftForScene(scene);
+    if (draft) {
+      const draftId = String(draft.hotspot_id || "").trim() || "__draft__";
+      if (draftId === targetId) {
+        return draft;
+      }
+    }
     return (
       (Array.isArray(scene.hotspots) ? scene.hotspots : []).find(
         (item) => String(item && item.hotspot_id ? item.hotspot_id : "").trim() === targetId
@@ -1103,6 +1411,15 @@
     return findProductById(item.product_id ? item.product_id : "");
   }
 
+  function getHotspotVisualTone(hotspot) {
+    const item = hotspot && typeof hotspot === "object" ? hotspot : {};
+    if (getHotspotControlAction(item)) return "control";
+    if (!String(item.product_id || "").trim()) return "unbound";
+    if (item.has_active_audio) return "has-audio";
+    const product = getHotspotProduct(item);
+    return product && product.has_active_audio ? "has-audio" : "missing-audio";
+  }
+
   function getHotspotDisplayLabel(hotspot, index) {
     const item = hotspot && typeof hotspot === "object" ? hotspot : {};
     const resolvedControlAction = getHotspotControlAction(item);
@@ -1115,6 +1432,7 @@
     }
     const product = getHotspotProduct(hotspot);
     if (product && String(product.product_name || "").trim()) return String(product.product_name || "").trim();
+    if (String(item.product_name || "").trim()) return String(item.product_name || "").trim();
     const title = String((item && item.title) || "").trim();
     if (title) return title;
     return "产品 " + String(index + 1);
@@ -1139,7 +1457,12 @@
         const item = raw && typeof raw === "object" ? raw : {};
         const productId = String(item.product_id || "").trim();
         const manifestRow = manifestMap.get(productId) || null;
-        const manifestAudio = manifestRow && manifestRow.audio ? manifestRow.audio : null;
+        const manifestAudio =
+          manifestRow && manifestRow.current_audio && typeof manifestRow.current_audio === "object"
+            ? manifestRow.current_audio
+            : manifestRow && manifestRow.audio && typeof manifestRow.audio === "object"
+              ? manifestRow.audio
+              : null;
         const currentAudio = item.current_audio && typeof item.current_audio === "object" ? item.current_audio : null;
         const manifestImages = normalizeProductImages(manifestRow && manifestRow.images ? manifestRow.images : [], clientId);
         const currentImages = normalizeProductImages(item.images, clientId);
@@ -1156,6 +1479,7 @@
           registration_number: String(item.registration_number || "").trim(),
           effective_date: String(item.effective_date || "").trim(),
           company: String(item.company || "").trim(),
+          product_source: String(item.product_source || "").trim() || "imported",
           updated_at_ms: Number(item.updated_at_ms || 0),
           has_active_audio: !!chosenAudio,
           audio_asset_id: String(chosenAudio && chosenAudio.audio_asset_id ? chosenAudio.audio_asset_id : "").trim(),
@@ -1220,10 +1544,25 @@
     writeProductPlayCountsToStorage();
   }
 
+  function getAllProducts() {
+    const merged = [];
+    const seen = new Set();
+    const lists = [state.products, state.referencedProducts];
+    lists.forEach((list) => {
+      (Array.isArray(list) ? list : []).forEach((item) => {
+        const productId = String(item && item.product_id ? item.product_id : "").trim();
+        if (!productId || seen.has(productId)) return;
+        seen.add(productId);
+        merged.push(item);
+      });
+    });
+    return merged;
+  }
+
   function getSelectedProduct() {
-    const list = Array.isArray(state.products) ? state.products : [];
+    const list = getAllProducts();
     const selected = list.find((item) => String(item.product_id || "") === String(state.selectedProductId || ""));
-    return selected || list[0] || null;
+    return selected || (Array.isArray(state.products) && state.products[0]) || list[0] || null;
   }
 
   function ensureSelectedProduct() {
@@ -1234,11 +1573,89 @@
   function findProductById(productId) {
     const nextId = String(productId || "").trim();
     if (!nextId) return null;
-    return (
-      (Array.isArray(state.products) ? state.products : []).find(
-        (item) => String(item && item.product_id ? item.product_id : "").trim() === nextId
-      ) || null
-    );
+    return getAllProducts().find((item) => String(item && item.product_id ? item.product_id : "").trim() === nextId) || null;
+  }
+
+  function upsertReferencedProduct(product) {
+    const item = product && typeof product === "object" ? product : null;
+    const productId = String(item && item.product_id ? item.product_id : "").trim();
+    if (!productId) return;
+    if ((Array.isArray(state.products) ? state.products : []).some((entry) => String(entry.product_id || "") === productId)) {
+      return;
+    }
+    const nextProduct = {
+      product_id: productId,
+      hall_id: String(item.hall_id || "").trim(),
+      sort_order: Number(item.sort_order || 0),
+      product_name: String(item.product_name || "").trim(),
+      product_name_en: String(item.product_name_en || "").trim(),
+      intro_text: String(item.intro_text || "").trim(),
+      registration_name: String(item.registration_name || "").trim(),
+      registration_number: String(item.registration_number || "").trim(),
+      effective_date: String(item.effective_date || "").trim(),
+      company: String(item.company || "").trim(),
+      product_source: String(item.product_source || "").trim() || "imported",
+      updated_at_ms: Number(item.updated_at_ms || 0),
+      has_active_audio: !!item.has_active_audio,
+      audio_asset_id: String(item.audio_asset_id || "").trim(),
+      audio_source_type: String(item.audio_source_type || "").trim(),
+      audio_text_snapshot: String(item.audio_text_snapshot || "").trim(),
+      audio_updated_at_ms: Number(item.audio_updated_at_ms || 0),
+      playback_url: String(item.playback_url || "").trim(),
+      has_images: !!item.has_images,
+      images: Array.isArray(item.images) ? item.images : [],
+      primary_image: item.primary_image || null,
+      primary_image_url: String(item.primary_image_url || "").trim(),
+    };
+    const current = Array.isArray(state.referencedProducts) ? state.referencedProducts.slice() : [];
+    const existingIndex = current.findIndex((entry) => String(entry.product_id || "") === productId);
+    if (existingIndex >= 0) {
+      current.splice(existingIndex, 1, Object.assign({}, current[existingIndex], nextProduct));
+    } else {
+      current.push(nextProduct);
+    }
+    state.referencedProducts = current;
+  }
+
+  function clearHotspotProductSearch() {
+    latestHotspotSearchSeq += 1;
+    state.hotspotSearchBusy = false;
+    state.hotspotSearchQuery = "";
+    state.hotspotSearchResults = [];
+  }
+
+  async function searchStationHotspotProducts(queryText, options) {
+    const query = String(queryText || "").trim();
+    const opts = options && typeof options === "object" ? options : {};
+    const restoreSnapshot = opts.restoreSnapshot || null;
+    latestHotspotSearchSeq += 1;
+    const searchSeq = latestHotspotSearchSeq;
+    if (!query) {
+      state.hotspotSearchBusy = false;
+      state.hotspotSearchQuery = "";
+      state.hotspotSearchResults = [];
+      render();
+      restoreHotspotSearchInputState(restoreSnapshot);
+      return;
+    }
+    state.hotspotSearchBusy = true;
+    state.hotspotSearchQuery = query;
+    render();
+    restoreHotspotSearchInputState(restoreSnapshot);
+    try {
+      const payload = await fetchJson("/api/pad/products/search?q=" + encodeURIComponent(query), state.clientId);
+      if (searchSeq !== latestHotspotSearchSeq) return;
+      state.hotspotSearchBusy = false;
+      state.hotspotSearchResults = Array.isArray(payload && payload.items) ? payload.items : [];
+      render();
+      restoreHotspotSearchInputState(restoreSnapshot);
+    } catch (_) {
+      if (searchSeq !== latestHotspotSearchSeq) return;
+      state.hotspotSearchBusy = false;
+      state.hotspotSearchResults = [];
+      render();
+      restoreHotspotSearchInputState(restoreSnapshot);
+    }
   }
 
   function isProductPlaying(product) {
@@ -1320,6 +1737,28 @@
     render();
   }
 
+  function normalizeOpsStationTab(value) {
+    return String(value || "").trim() === "settings" ? "settings" : "annotate";
+  }
+
+  function normalizeOpsAnnotateSidebarTab(value) {
+    return String(value || "").trim() === "tools" ? "tools" : "overview";
+  }
+
+  function setOpsStationTab(value) {
+    const nextTab = normalizeOpsStationTab(value);
+    if (state.opsStationTab === nextTab) return;
+    state.opsStationTab = nextTab;
+    render();
+  }
+
+  function setOpsAnnotateSidebarTab(value) {
+    const nextTab = normalizeOpsAnnotateSidebarTab(value);
+    if (state.opsAnnotateSidebarTab === nextTab) return;
+    state.opsAnnotateSidebarTab = nextTab;
+    render();
+  }
+
   function setDemoColumns(value) {
     const nextColumns = normalizeDemoColumns(value);
     if (state.demoColumns === nextColumns) return;
@@ -1381,6 +1820,33 @@
   function getCurrentAudioText(product) {
     if (!product || typeof product !== "object") return "";
     return String(product.audio_text_snapshot || "").trim();
+  }
+
+  function getEditableProductName(product) {
+    if (!product || typeof product !== "object") return "";
+    const productId = String(product.product_id || "").trim();
+    const draft = productId ? state.productInfoDrafts[productId] : null;
+    if (draft && Object.prototype.hasOwnProperty.call(draft, "product_name")) {
+      return String(draft.product_name || "");
+    }
+    return String(product.product_name || "").trim();
+  }
+
+  function getEditableProductIntro(product) {
+    if (!product || typeof product !== "object") return "";
+    const productId = String(product.product_id || "").trim();
+    const draft = productId ? state.productInfoDrafts[productId] : null;
+    if (draft && Object.prototype.hasOwnProperty.call(draft, "intro_text")) {
+      return String(draft.intro_text || "");
+    }
+    return String(product.intro_text || "").trim();
+  }
+
+  function updateProductInfoDraft(productId, fields) {
+    const nextId = String(productId || "").trim();
+    if (!nextId) return;
+    const current = state.productInfoDrafts[nextId] && typeof state.productInfoDrafts[nextId] === "object" ? state.productInfoDrafts[nextId] : {};
+    state.productInfoDrafts[nextId] = Object.assign({}, current, fields || {});
   }
 
   function getEditableAudioText(product) {
@@ -1506,6 +1972,752 @@
     return '<span class="pad-chip ' + toneClass + '">' + escapeHtml(state.syncMessage) + "</span>";
   }
 
+  function countProductsWithActiveAudio() {
+    return (Array.isArray(state.products) ? state.products : []).filter((item) => !!(item && item.has_active_audio)).length;
+  }
+
+  function renderOpsSummaryStat(label, value, dataTestId) {
+    return (
+      '<div class="pad-ops-stat">' +
+      '<div class="pad-ops-stat__label">' +
+      escapeHtml(label) +
+      "</div>" +
+      '<div class="pad-ops-stat__value"' +
+      (dataTestId ? ' data-testid="' + escapeHtml(dataTestId) + '"' : "") +
+      ">" +
+      escapeHtml(value || "--") +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function renderOpsHallQuickSwitch() {
+    return (
+      '<section class="pad-panel pad-ops-hall-panel" aria-label="' +
+      escapeHtml(TEXT.quickSwitchTitle) +
+      '">' +
+      '<div class="pad-panel__header pad-ops-panel__header">' +
+      "<div>" +
+      '<div class="pad-panel__title">' +
+      escapeHtml(TEXT.quickSwitchTitle) +
+      "</div>" +
+      '<div class="pad-panel__hint">' +
+      escapeHtml(TEXT.quickSwitchHint) +
+      "</div>" +
+      "</div>" +
+      "</div>" +
+      '<div class="pad-ops-hall-panel__grid">' +
+      HALL_PRESETS.map((preset, index) => {
+        const active = String(preset.clientId || "") === String(state.clientId || "");
+        return (
+          '<button type="button" class="pad-ops-hall-btn' +
+          (active ? " is-active" : "") +
+          '" data-action="switch-hall" data-client-id="' +
+          escapeHtml(preset.clientId) +
+          '">' +
+          '<span class="pad-ops-hall-btn__tag">' +
+          escapeHtml(String(index + 1).padStart(2, "0")) +
+          "</span>" +
+          '<span class="pad-ops-hall-btn__main">' +
+          escapeHtml(String(preset.clientId || "").trim()) +
+          "</span>" +
+          '<span class="pad-ops-hall-btn__meta">' +
+          escapeHtml(String(preset.hallId || "").trim()) +
+          "</span>" +
+          "</button>"
+        );
+      }).join("") +
+      "</div>" +
+      "</section>"
+    );
+  }
+
+  function renderOpsHallQuickSwitchInline() {
+    return (
+      '<div class="pad-ops-inline-switches" aria-label="' +
+      escapeHtml(TEXT.quickSwitchTitle) +
+      '">' +
+      HALL_PRESETS.map((preset, index) => {
+        const active = String(preset.clientId || "") === String(state.clientId || "");
+        return (
+          '<button type="button" class="pad-ops-inline-switch' +
+          (active ? " is-active" : "") +
+          '" data-action="switch-hall" data-client-id="' +
+          escapeHtml(preset.clientId) +
+          '">' +
+          '<span class="pad-ops-inline-switch__tag">' +
+          escapeHtml(String(index + 1).padStart(2, "0")) +
+          "</span>" +
+          '<span class="pad-ops-inline-switch__label">' +
+          escapeHtml(String(preset.clientId || "").trim()) +
+          "</span>" +
+          "</button>"
+        );
+      }).join("") +
+      "</div>"
+    );
+  }
+
+  function renderOpsStationTabs() {
+    return (
+      '<div class="pad-ops-station-tabs" role="tablist" aria-label="\u7ad9\u53f0\u5207\u6362">' +
+      STATION_SLOT_KEYS.map((slotKey, index) => {
+        const slot = getStationSlotByKey(slotKey);
+        const active = normalizeDemoLeftTabKey(state.demoLeftTabKey) === slotKey;
+        return (
+          '<button type="button" class="pad-ops-station-tab' +
+          (active ? " is-active" : "") +
+          '" data-action="set-demo-left-tab" data-tab-key="' +
+          escapeHtml(slotKey) +
+          '" role="tab" aria-selected="' +
+          (active ? "true" : "false") +
+          '">' +
+          '<span class="pad-ops-station-tab__index">' +
+          escapeHtml(String(index + 1).padStart(2, "0")) +
+          "</span>" +
+          '<span class="pad-ops-station-tab__label">' +
+          escapeHtml(getStationSlotDisplayName(slot)) +
+          "</span>" +
+          "</button>"
+        );
+      }).join("") +
+      "</div>"
+    );
+  }
+
+  function renderOpsStationModeTabs() {
+    const tabs = [
+      { key: "annotate", label: "\u70ed\u533a\u6807\u6ce8" },
+      { key: "settings", label: "\u7ad9\u70b9\u914d\u7f6e" },
+    ];
+    return (
+      '<div class="pad-ops-mode-tabs" role="tablist" aria-label="\u8fd0\u7ef4\u7ad9\u70b9\u529f\u80fd">' +
+      tabs
+        .map((tab) => {
+          const active = normalizeOpsStationTab(state.opsStationTab) === tab.key;
+          return (
+            '<button type="button" class="pad-ops-mode-tab' +
+            (active ? " is-active" : "") +
+            '" data-action="set-ops-station-tab" data-tab="' +
+            escapeHtml(tab.key) +
+            '" role="tab" aria-selected="' +
+            (active ? "true" : "false") +
+            '">' +
+            escapeHtml(tab.label) +
+            "</button>"
+          );
+        })
+        .join("") +
+      "</div>"
+    );
+  }
+
+  function renderOpsAnnotateSidebarTabs() {
+    const tabs = [
+      { key: "overview", label: "\u6982\u89c8\u64cd\u4f5c" },
+      { key: "tools", label: "\u6807\u6ce8\u5de5\u5177" },
+    ];
+    return (
+      '<div class="pad-ops-mode-tabs pad-ops-mode-tabs--sidebar" role="tablist" aria-label="\u53f3\u4fa7\u5de5\u5177\u680f">' +
+      tabs
+        .map((tab) => {
+          const active = normalizeOpsAnnotateSidebarTab(state.opsAnnotateSidebarTab) === tab.key;
+          return (
+            '<button type="button" class="pad-ops-mode-tab' +
+            (active ? " is-active" : "") +
+            '" data-action="set-ops-annotate-sidebar-tab" data-tab="' +
+            escapeHtml(tab.key) +
+            '" role="tab" aria-selected="' +
+            (active ? "true" : "false") +
+            '">' +
+            escapeHtml(tab.label) +
+            "</button>"
+          );
+        })
+        .join("") +
+      "</div>"
+    );
+  }
+
+  function renderOpsHotspotInspector(draft) {
+    if (!draft) {
+      return (
+        '<section class="pad-ops-side-card">' +
+        '<div class="pad-ops-side-card__title">\u70ed\u533a\u7ed1\u5b9a</div>' +
+        '<div class="pad-panel__hint">\u5148\u5728\u4e2d\u592e\u753b\u5e03\u4e2d\u9009\u4e2d\u4e00\u4e2a\u70ed\u533a\uff0c\u6216\u70b9\u51fb\u201c\u65b0\u5efa\u70ed\u533a\u201d\u540e\u5728\u753b\u5e03\u4e0a\u62d6\u62fd\u521b\u5efa\u3002</div>' +
+        "</section>"
+      );
+    }
+    return (
+      '<section class="pad-ops-side-card">' +
+      '<div class="pad-ops-side-card__title">\u70ed\u533a\u7ed1\u5b9a</div>' +
+      '<label class="pad-station-config-panel__field"><span>\u7ed1\u5b9a\u4ea7\u54c1</span><select data-action="station-hotspot-product">' +
+      '<option value="">\u8bf7\u9009\u62e9\u4ea7\u54c1</option>' +
+      (Array.isArray(state.products) ? state.products : [])
+        .map((product) => {
+          const productId = String(product && product.product_id ? product.product_id : "").trim();
+          return (
+            '<option value="' +
+            escapeHtml(productId) +
+            '"' +
+            (productId === String(draft.product_id || "") ? " selected" : "") +
+            ">" +
+            escapeHtml(String(product.product_name || "").trim() || productId) +
+            "</option>"
+          );
+        })
+        .join("") +
+      "</select></label>" +
+      '<label class="pad-station-config-panel__field"><span>\u6392\u5e8f</span><input type="number" min="0" step="1" data-action="station-hotspot-sort-order" value="' +
+      escapeHtml(String(draft.sort_order || 0)) +
+      '" /></label>' +
+      '<div class="pad-ops-side-card__meta">' +
+      "x " +
+      escapeHtml((clampPct(draft.x_pct) * 100).toFixed(1)) +
+      "% / y " +
+      escapeHtml((clampPct(draft.y_pct) * 100).toFixed(1)) +
+      "% / w " +
+      escapeHtml((clampPct(draft.width_pct) * 100).toFixed(1)) +
+      "% / h " +
+      escapeHtml((clampPct(draft.height_pct) * 100).toFixed(1)) +
+      "%" +
+      "</div>" +
+      '<div class="pad-ops-inline-actions">' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="save-station-hotspot">\u4fdd\u5b58\u70ed\u533a</button>' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="clear-station-hotspot-draft">\u53d6\u6d88</button>' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="delete-station-hotspot"' +
+      (draft.hotspot_id ? "" : " disabled") +
+      ">\u5220\u9664</button>" +
+      "</div>" +
+      "</section>"
+    );
+  }
+
+  function renderOpsHotspotTransferActions() {
+    const hasActiveSlot = !!getActiveStationSlot();
+    return (
+      '<div class="pad-ops-inline-actions pad-ops-hotspot-transfer-actions">' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="export-station-hotspots"' +
+      (hasActiveSlot ? "" : " disabled") +
+      '>导出热区配置</button>' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="import-station-hotspots"' +
+      (hasActiveSlot ? "" : " disabled") +
+      '>导入热区配置</button>' +
+      '<input type="file" class="pad-hidden-file-input" data-action="import-station-hotspots-input" accept=".json,application/json" />' +
+      "</div>"
+    );
+  }
+
+  function renderOpsTimelineEventRow(slot, scene, event, index, total) {
+    const labels = {
+      focus_switch: "\u5207\u6362\u7126\u70b9",
+      highlight_on: "\u5f00\u542f\u9ad8\u4eae",
+      highlight_off: "\u53d6\u6d88\u9ad8\u4eae",
+    };
+    const slotKey = String(slot && slot.slotKey ? slot.slotKey : "").trim();
+    const currentIndex = Number(index);
+    const hotspotOptions = getStationTimelineHotspotOptions(scene, event && event.hotspotId);
+    const missingHotspot = !findStationTimelineHotspot(scene, event && event.hotspotId);
+    return (
+      '<div class="pad-ops-timeline-row' +
+      (missingHotspot ? " is-invalid" : "") +
+      '">' +
+      '<div class="pad-ops-timeline-row__head">' +
+      '<div>' +
+      '<div class="pad-ops-timeline-row__title">\u8282\u70b9 ' +
+      escapeHtml(String(currentIndex + 1)) +
+      "</div>" +
+      '<div class="pad-ops-timeline-row__time">' +
+      escapeHtml(formatTimelineOffset(event && event.timeMs)) +
+      "</div>" +
+      "</div>" +
+      '<div class="pad-ops-inline-actions">' +
+      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-move-up" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-index="' +
+      escapeHtml(String(currentIndex)) +
+      '"' +
+      (currentIndex <= 0 ? " disabled" : "") +
+      ">\u4e0a\u79fb</button>" +
+      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-move-down" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-index="' +
+      escapeHtml(String(currentIndex)) +
+      '"' +
+      (currentIndex >= total - 1 ? " disabled" : "") +
+      ">\u4e0b\u79fb</button>" +
+      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-remove" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-index="' +
+      escapeHtml(String(currentIndex)) +
+      '">\u5220\u9664</button>' +
+      "</div>" +
+      "</div>" +
+      '<div class="pad-ops-timeline-row__grid">' +
+      '<label class="pad-station-config-panel__field"><span>\u89e6\u53d1\u65f6\u95f4 (ms)</span><input type="number" min="0" step="100" data-action="station-timeline-time-ms" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-index="' +
+      escapeHtml(String(currentIndex)) +
+      '" value="' +
+      escapeHtml(String(normalizeTimelineEventTimeMs(event && event.timeMs))) +
+      '" /></label>' +
+      '<label class="pad-station-config-panel__field"><span>\u76ee\u6807\u70ed\u533a</span><select data-action="station-timeline-hotspot" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-index="' +
+      escapeHtml(String(currentIndex)) +
+      '">' +
+      hotspotOptions
+        .map((hotspot) => {
+          const hotspotId = String(hotspot && hotspot.hotspot_id ? hotspot.hotspot_id : "").trim();
+          return (
+            '<option value="' +
+            escapeHtml(hotspotId) +
+            '"' +
+            (hotspotId === String(event && event.hotspotId ? event.hotspotId : "").trim() ? " selected" : "") +
+            ">" +
+            escapeHtml(getStationTimelineHotspotLabel(scene, hotspotId)) +
+            "</option>"
+          );
+        })
+        .join("") +
+      "</select></label>" +
+      '<label class="pad-station-config-panel__field"><span>\u4e8b\u4ef6\u7c7b\u578b</span><select data-action="station-timeline-event-type" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-index="' +
+      escapeHtml(String(currentIndex)) +
+      '">' +
+      Object.keys(labels)
+        .map((key) => {
+          return (
+            '<option value="' +
+            escapeHtml(key) +
+            '"' +
+            (normalizeTimelineEventType(event && event.eventType) === key ? " selected" : "") +
+            ">" +
+            escapeHtml(labels[key]) +
+            "</option>"
+          );
+        })
+        .join("") +
+      "</select></label>" +
+      "</div>" +
+      '<div class="pad-ops-timeline-row__summary' +
+      (missingHotspot ? " is-danger" : "") +
+      '">' +
+      escapeHtml(getStationTimelineEventSummary(scene, event)) +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function renderOpsStationTimeline(slot, scene) {
+    const slotKey = String(slot && slot.slotKey ? slot.slotKey : "").trim();
+    const timelineEvents = normalizeStationTimelineEditorEvents(slot && slot.timelineEvents, scene);
+    const hotspotOptions = getStationTimelineHotspotOptions(scene);
+    return (
+      '<section class="pad-ops-side-card pad-ops-side-card--timeline">' +
+      '<div class="pad-ops-side-card__title-row">' +
+      '<div class="pad-ops-side-card__title">\u8bb2\u89e3\u65f6\u95f4\u8f74</div>' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="station-timeline-add" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '"' +
+      (hotspotOptions.length ? "" : " disabled") +
+      ">\u65b0\u589e\u8282\u70b9</button>" +
+      "</div>" +
+      (!hotspotOptions.length
+        ? '<div class="pad-banner pad-banner--warning" style="margin-top:12px;">\u5f53\u524d\u7ad9\u53f0\u8fd8\u6ca1\u6709\u53ef\u7528\u70ed\u533a\uff0c\u8bf7\u5148\u5728\u753b\u5e03\u4e0a\u65b0\u5efa\u4ea7\u54c1\u70ed\u533a\u3002</div>'
+        : "") +
+      (timelineEvents.length
+        ? '<div class="pad-ops-timeline-list">' +
+          timelineEvents.map((event, index) => renderOpsTimelineEventRow(slot, scene, event, index, timelineEvents.length)).join("") +
+          "</div>"
+        : '<div class="pad-empty" style="margin:12px 0 0;">\u5f53\u524d\u8fd8\u6ca1\u6709\u65f6\u95f4\u8f74\u8282\u70b9\u3002</div>') +
+      "</section>"
+    );
+  }
+
+  function renderOpsStationWorkspace() {
+    const slot = getActiveStationSlot();
+    const stationVisual = getSelectedScene();
+    const draft = getSceneEditorDraftForScene(stationVisual);
+    const metaEntry = getRecordingMetaEntry(slot.recordingId);
+    const stops = getRecordingStops(slot.recordingId);
+    const selectedStopIndex = normalizeStationStopIndex(slot.stopIndex);
+    const recordingOptions = Array.isArray(state.recordingOptions) ? state.recordingOptions.slice() : [];
+    const stationStatus = getStationSlotStatus(slot);
+    const stationButtonActive = isStationSlotPlaying(slot) || isStationSlotPending(slot);
+    const stationButtonDisabled = !stationButtonActive && !stationStatus.playable ? " disabled" : "";
+    const opsStationTab = normalizeOpsStationTab(state.opsStationTab);
+
+    if (slot.recordingId && !recordingOptions.find((item) => String(item.recording_id || "") === String(slot.recordingId || ""))) {
+      recordingOptions.unshift({
+        recording_id: String(slot.recordingId || ""),
+        display_name: "\u5f53\u524d\u5df2\u9009\u5f55\u97f3",
+      });
+    }
+
+    const stationFields =
+      '<div class="pad-ops-station-card__fields">' +
+      '<label class="pad-station-config-panel__field"><span>\u771f\u5b9e\u7ad9\u4f4d</span><select data-action="station-slot-id" data-slot-key="' +
+      escapeHtml(String(slot.slotKey || "")) +
+      '">' +
+      (Array.isArray(state.stationCatalog) ? state.stationCatalog : [])
+        .map((item) => {
+          const stationId = String(item && item.station_id ? item.station_id : "").trim();
+          return (
+            '<option value="' +
+            escapeHtml(stationId) +
+            '"' +
+            (stationId === String(slot.stationId || "") ? " selected" : "") +
+            ">" +
+            escapeHtml(String(item && item.label ? item.label : stationId).trim() || stationId) +
+            "</option>"
+          );
+        })
+        .join("") +
+      "</select></label>" +
+      '<label class="pad-station-config-panel__field"><span>\u5c55\u793a\u540d</span><input type="text" data-action="station-slot-label" data-slot-key="' +
+      escapeHtml(String(slot.slotKey || "")) +
+      '" value="' +
+      escapeHtml(String(slot.label || "")) +
+      '" /></label>' +
+      '<label class="pad-station-config-panel__field"><span>\u8bb2\u89e3\u5f55\u97f3</span><select data-action="station-slot-recording" data-slot-key="' +
+      escapeHtml(String(slot.slotKey || "")) +
+      '">' +
+      '<option value="">\u8bf7\u9009\u62e9\u5f55\u97f3</option>' +
+      recordingOptions
+        .map((item) => {
+          const recordingId = String(item && item.recording_id ? item.recording_id : "").trim();
+          return (
+            '<option value="' +
+            escapeHtml(recordingId) +
+            '"' +
+            (recordingId === String(slot.recordingId || "") ? " selected" : "") +
+            ">" +
+            escapeHtml(formatRecordingLabel(item)) +
+            "</option>"
+          );
+        })
+        .join("") +
+      "</select></label>" +
+      '<label class="pad-station-config-panel__field"><span>\u7ad9\u70b9</span><select data-action="station-slot-stop" data-slot-key="' +
+      escapeHtml(String(slot.slotKey || "")) +
+      '"' +
+      (!slot.recordingId || (metaEntry && metaEntry.loading) || (metaEntry && metaEntry.error) ? " disabled" : "") +
+      ">" +
+      '<option value="">' +
+      escapeHtml(metaEntry && metaEntry.loading ? "\u6b63\u5728\u52a0\u8f7d\u7ad9\u70b9..." : "\u8bf7\u9009\u62e9\u7ad9\u70b9") +
+      "</option>" +
+      stops
+        .map((stopName, stopIndex) => {
+          return (
+            '<option value="' +
+            escapeHtml(String(stopIndex)) +
+            '"' +
+            (selectedStopIndex === stopIndex ? " selected" : "") +
+            ">" +
+            escapeHtml(stopName) +
+            "</option>"
+          );
+        })
+        .join("") +
+      "</select></label>" +
+      "</div>";
+
+    const annotateMain =
+      '<div class="pad-ops-station-card__canvas-wrap">' +
+      (stationVisual
+        ? renderSceneStage(stationVisual, {
+            editor: true,
+            showLabels: true,
+            stretchToFit: true,
+            className: "pad-scene-stage--ops-editor",
+          })
+        : '<div class="pad-empty">\u5f53\u524d\u7ad9\u70b9\u8fd8\u6ca1\u6709\u80cc\u666f\u56fe\u3002</div>') +
+      "</div>";
+
+    const settingsMain =
+      '<div class="pad-ops-station-card__toolbar">' +
+      renderOpsStationTabs() +
+      renderOpsStationModeTabs() +
+      stationFields +
+      '<div class="pad-ops-station-card__status">' +
+      renderToneChip(stationStatus.text, stationStatus.tone) +
+      '<span class="pad-ops-station-card__status-text">' +
+      escapeHtml("\u5f53\u524d\u7ad9\u70b9\uff1a" + (String(slot.stopName || "").trim() || "--")) +
+      "</span>" +
+      "</div>" +
+      "</div>" +
+      renderOpsStationTimeline(slot, stationVisual);
+
+    const settingsSide =
+      '<div class="pad-ops-station-card__side pad-ops-station-card__side--settings">' +
+      '<section class="pad-ops-side-card">' +
+      '<div class="pad-ops-side-card__title">\u7ad9\u70b9\u64ad\u653e</div>' +
+      '<div class="pad-panel__hint">\u5728\u4e0d\u8fdb\u5165\u6807\u6ce8\u7684\u60c5\u51b5\u4e0b\uff0c\u7ef4\u62a4\u7ad9\u4f4d\u3001\u5f55\u97f3\u548c\u65f6\u95f4\u8f74\u8bbe\u7f6e\u3002</div>' +
+      '<div class="pad-ops-inline-actions" style="margin-top:12px;">' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="refresh-recordings">\u5237\u65b0\u5f55\u97f3</button>' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="play-station-slot" data-slot-key="' +
+      escapeHtml(String(slot.slotKey || "")) +
+      '"' +
+      stationButtonDisabled +
+      ">" +
+      escapeHtml(stationButtonActive ? "\u505c\u6b62\u7ad9\u53f0\u8bb2\u89e3" : "\u64ad\u653e\u7ad9\u53f0\u8bb2\u89e3") +
+      "</button>" +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="save-station-config">\u4fdd\u5b58\u7ad9\u70b9</button>' +
+      "</div>" +
+      "</section>" +
+      (stationVisual
+        ? '<section class="pad-ops-side-card"><div class="pad-ops-side-card__title">\u9884\u89c8\u80cc\u666f</div><div class="pad-ops-station-card__preview-wrap">' +
+          renderSceneStage(stationVisual, {
+            editor: false,
+            showLabels: false,
+            stretchToFit: false,
+            className: "pad-scene-stage--ops-preview",
+          }) +
+          "</div></section>"
+        : "") +
+      "</div>";
+
+    if (opsStationTab === "settings") {
+      return (
+        '<section class="pad-panel pad-ops-station-card pad-ops-station-card--settings">' +
+        '<div class="pad-panel__header pad-ops-panel__header">' +
+        "<div>" +
+        '<div class="pad-panel__title">\u7ad9\u70b9\u878d\u5408</div>' +
+        '<div class="pad-panel__hint">\u7ad9\u4f4d\u3001\u5f55\u97f3\u3001\u70ed\u533a\u548c\u65f6\u95f4\u8f74\u5168\u90e8\u5728\u540c\u4e00\u5757\u5de5\u4f5c\u533a\u5185\u5b8c\u6210\u3002</div>' +
+        "</div>" +
+        '<div class="pad-ops-inline-actions">' +
+        '<button type="button" class="pad-btn pad-btn--neutral" data-action="refresh-recordings">\u5237\u65b0\u5f55\u97f3</button>' +
+        '<button type="button" class="pad-btn pad-btn--neutral" data-action="save-station-config">\u4fdd\u5b58\u7ad9\u70b9</button>' +
+        "</div>" +
+        "</div>" +
+        '<div class="pad-ops-station-card__body">' +
+        '<div class="pad-ops-station-card__main">' +
+        settingsMain +
+        "</div>" +
+        settingsSide +
+        "</div>" +
+        (state.recordingOptionsError
+          ? '<div class="pad-banner pad-banner--danger" style="margin: 0 18px 18px;">' + escapeHtml(state.recordingOptionsError) + "</div>"
+          : "") +
+        "</section>"
+      );
+    }
+
+    return (
+      '<section class="pad-panel pad-ops-station-card pad-ops-station-card--annotate pad-ops-station-card--canvas-only">' +
+      '<div class="pad-ops-station-card__body">' +
+      '<div class="pad-ops-station-card__main">' +
+      annotateMain +
+      "</div>" +
+      "</div>" +
+      (state.recordingOptionsError
+        ? '<div class="pad-banner pad-banner--danger" style="margin: 0 18px 18px;">' + escapeHtml(state.recordingOptionsError) + "</div>"
+        : "") +
+      "</section>"
+    );
+  }
+
+  function renderOpsAnnotateSidebar(hallName, sourceBadge, syncSummary, annotateTargetLabel) {
+    const draft = state.sceneEditorDraft && typeof state.sceneEditorDraft === "object" ? state.sceneEditorDraft : null;
+    const slot = getActiveStationSlot();
+    const stationStatus = getStationSlotStatus(slot);
+    const sidebarTab = normalizeOpsAnnotateSidebarTab(state.opsAnnotateSidebarTab);
+    return (
+      '<aside class="pad-ops-annotate-sidebar">' +
+      '<section class="pad-panel pad-ops-annotate-overview pad-ops-annotate-overview--merged">' +
+      '<div class="pad-panel__header pad-ops-panel__header">' +
+      "<div>" +
+      '<div class="pad-ops-topbar__eyebrow">\u8fd0\u7ef4\u5de5\u4f5c\u53f0</div>' +
+      '<div class="pad-ops-annotate-overview__title-row">' +
+      '<div class="pad-panel__title">' +
+      escapeHtml(hallName) +
+      "</div>" +
+      sourceBadge +
+      "</div>" +
+      '<div class="pad-panel__hint">\u5c06\u9876\u90e8\u6982\u89c8\u3001\u7ad9\u4f4d\u5207\u6362\u548c\u6807\u6ce8\u64cd\u4f5c\u5408\u5e76\u5230\u53f3\u4fa7\u5de5\u5177\u680f\u3002</div>' +
+      "</div>" +
+      "</div>" +
+      '<div class="pad-ops-annotate-overview__body">' +
+      renderOpsAnnotateSidebarTabs() +
+      "</div>" +
+      "</section>" +
+      (sidebarTab === "overview"
+        ? '<section class="pad-panel pad-ops-annotate-overview">' +
+          '<div class="pad-ops-annotate-overview__body">' +
+          '<div class="pad-ops-annotate-overview__meta">' +
+          '<span>\u8bbe\u5907\uff1a<strong data-testid="client-id">' +
+          escapeHtml(state.clientId || "--") +
+          "</strong></span>" +
+          '<span>\u6700\u8fd1\u540c\u6b65\uff1a<strong data-testid="last-sync-at">' +
+          escapeHtml(formatTimestamp(state.lastSyncedAtMs)) +
+          "</strong></span>" +
+          '<span>\u79bb\u7ebf\u72b6\u6001\uff1a<strong>' +
+          escapeHtml(syncSummary) +
+          "</strong></span>" +
+          "</div>" +
+          '<div class="pad-ops-annotate-overview__stats">' +
+          renderOpsSummaryStat("\u5f53\u524d\u7ad9\u4f4d", getStationSlotDisplayName(slot)) +
+          renderOpsSummaryStat("\u6807\u6ce8\u5bf9\u8c61", annotateTargetLabel) +
+          "</div>" +
+          '<div class="pad-ops-annotate-overview__toolbar">' +
+          renderModeToggle() +
+          '<div class="pad-ops-inline-actions pad-ops-inline-actions--column pad-ops-annotate-overview__actions">' +
+          '<button type="button" class="pad-btn pad-btn--neutral" data-action="reload-live">' +
+          escapeHtml(TEXT.refreshOnline) +
+          "</button>" +
+          '<button type="button" class="pad-btn pad-btn--neutral" data-action="sync-offline"' +
+          (state.syncBusy ? " disabled" : "") +
+          ">" +
+          escapeHtml(TEXT.syncOffline) +
+          "</button>" +
+          '<a class="pad-btn pad-btn--primary" data-testid="goto-ragint" href="/ragint/?entry=tour" style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center;">' +
+          escapeHtml(TEXT.gotoRagint) +
+          "</a>" +
+          '<button type="button" class="pad-btn pad-btn--neutral" data-action="refresh-recordings">\u5237\u65b0\u5f55\u97f3</button>' +
+          '<button type="button" class="pad-btn pad-btn--neutral" data-action="save-station-config">\u4fdd\u5b58\u7ad9\u70b9</button>' +
+          "</div>" +
+          "</div>" +
+          renderOpsStationTabs() +
+          renderOpsHotspotTransferActions() +
+          renderOpsStationModeTabs() +
+          '<div class="pad-ops-station-card__status">' +
+          renderToneChip(stationStatus.text, stationStatus.tone) +
+          '<span class="pad-ops-station-card__status-text">' +
+          escapeHtml("\u5f53\u524d\u7ad9\u70b9\uff1a" + (String(slot.stopName || "").trim() || "--")) +
+          "</span>" +
+          "</div>" +
+          "</div>" +
+          "</section>"
+        : '<section class="pad-panel pad-ops-annotate-tools">' +
+          '<div class="pad-panel__header pad-ops-panel__header">' +
+          "<div>" +
+          '<div class="pad-panel__title">\u6807\u6ce8\u5de5\u5177</div>' +
+          '<div class="pad-panel__hint">\u6807\u6ce8\u76f8\u5173\u64cd\u4f5c\u96c6\u4e2d\u5728\u8fd9\u4e00\u4fa7\u3002</div>' +
+          "</div>" +
+          '<button type="button" class="pad-btn pad-btn--neutral' +
+          (state.sceneEditorCreateMode ? " is-active" : "") +
+          '" data-action="enter-station-hotspot-create" aria-pressed="' +
+          (state.sceneEditorCreateMode ? "true" : "false") +
+          '">' +
+          escapeHtml(state.sceneEditorCreateMode ? "\u6b63\u5728\u65b0\u5efa\u70ed\u533a" : "\u65b0\u5efa\u70ed\u533a") +
+          "</button>" +
+          "</div>" +
+          '<div class="pad-ops-annotate-tools__body">' +
+          renderOpsHotspotInspector(draft) +
+          "</div>" +
+          "</section>") +
+      "</aside>"
+    );
+  }
+
+  function renderOpsShellV4(hallName, productCount, snapshotBadge) {
+    const selectedProduct = getSelectedProduct();
+    const activeStation = getActiveStationSlot();
+    const audioReadyCount = countProductsWithActiveAudio();
+    const opsStationTab = normalizeOpsStationTab(state.opsStationTab);
+    const annotateMode = opsStationTab === "annotate";
+    const draft = state.sceneEditorDraft && typeof state.sceneEditorDraft === "object" ? state.sceneEditorDraft : null;
+    const draftProduct = draft ? findProductById(draft.product_id) : null;
+    const annotateTargetLabel = state.sceneEditorCreateMode
+      ? "\u65b0\u5efa\u70ed\u533a"
+      : draft
+        ? String((draftProduct && draftProduct.product_name) || draft.product_search_text || draft.hotspot_id || "\u672a\u9009\u4e2d").trim() || "\u672a\u9009\u4e2d"
+        : "\u672a\u9009\u4e2d";
+    const sourceBadge = state.usingOfflineSnapshot
+      ? '<span class="pad-chip pad-chip--ready">\u79bb\u7ebf\u5feb\u7167</span>'
+      : '<span class="pad-chip pad-chip--pending">\u5b9e\u65f6\u6570\u636e</span>';
+    const syncSummary =
+      state.syncTone === "danger"
+        ? "\u9700\u5904\u7406"
+        : state.syncBusy
+          ? "\u540c\u6b65\u4e2d"
+          : state.offlineReady || state.usingOfflineSnapshot
+            ? "\u5df2\u540c\u6b65"
+            : "\u5f85\u540c\u6b65";
+    return (
+      '<main class="pad-shell pad-shell--ops">' +
+      (annotateMode
+        ? '<section class="pad-ops-annotate-shell">' +
+          '<section class="pad-ops-annotate-main">' +
+          renderOpsStationWorkspace() +
+          "</section>" +
+          renderOpsAnnotateSidebar(hallName, sourceBadge, syncSummary, annotateTargetLabel) +
+          "</section>"
+        : '<section class="pad-ops-topbar">' +
+          '<div class="pad-ops-topbar__main">' +
+          '<div class="pad-ops-topbar__eyebrow">\u8fd0\u7ef4\u5de5\u4f5c\u53f0</div>' +
+          '<div class="pad-ops-topbar__title-row">' +
+          '<h1 class="pad-ops-topbar__title">' +
+          escapeHtml(hallName) +
+          "</h1>" +
+          sourceBadge +
+          "</div>" +
+          '<div class="pad-ops-topbar__meta">' +
+          '<span>\u8bbe\u5907\uff1a<strong data-testid="client-id">' +
+          escapeHtml(state.clientId || "--") +
+          "</strong></span>" +
+          '<span>\u6700\u8fd1\u540c\u6b65\uff1a<strong data-testid="last-sync-at">' +
+          escapeHtml(formatTimestamp(state.lastSyncedAtMs)) +
+          "</strong></span>" +
+          '<span>\u79bb\u7ebf\u72b6\u6001\uff1a' +
+          escapeHtml(syncSummary) +
+          "</span>" +
+          "</div>" +
+          "</div>" +
+          '<div class="pad-ops-topbar__stats">' +
+          renderOpsSummaryStat(TEXT.statProductCount, String(productCount), "product-count") +
+          renderOpsSummaryStat("\u6709\u97f3\u9891", String(audioReadyCount)) +
+          renderOpsSummaryStat("\u5f53\u524d\u7ad9\u4f4d", getStationSlotDisplayName(activeStation)) +
+          renderOpsSummaryStat("\u5f53\u524d\u4ea7\u54c1", selectedProduct ? String(selectedProduct.product_name || "") : TEXT.notSelected) +
+          "</div>" +
+          '<div class="pad-ops-topbar__actions">' +
+          renderModeToggle() +
+          '<button type="button" class="pad-btn pad-btn--neutral" data-action="reload-live">' +
+          escapeHtml(TEXT.refreshOnline) +
+          "</button>" +
+          '<button type="button" class="pad-btn pad-btn--neutral" data-action="sync-offline"' +
+          (state.syncBusy ? " disabled" : "") +
+          ">" +
+          escapeHtml(TEXT.syncOffline) +
+          "</button>" +
+          '<a class="pad-btn pad-btn--primary" data-testid="goto-ragint" href="/ragint/?entry=tour" style="text-decoration:none;display:inline-flex;align-items:center;">' +
+          escapeHtml(TEXT.gotoRagint) +
+          "</a>" +
+          renderOpsHallQuickSwitchInline() +
+          "</div>" +
+          "</section>" +
+          '<section class="pad-ops-workspace">' +
+          '<aside class="pad-ops-sidebar">' +
+          '<section class="pad-panel pad-ops-product-panel">' +
+          '<div class="pad-panel__header pad-ops-panel__header">' +
+          "<div>" +
+          '<div class="pad-panel__title">' +
+          escapeHtml(TEXT.hallListTitle) +
+          "</div>" +
+          '<div class="pad-panel__hint" data-testid="hall-name">' +
+          escapeHtml(hallName) +
+          "</div>" +
+          "</div>" +
+          '<div class="pad-panel__hint">\u9009\u4e2d\u4ea7\u54c1\u540e\uff0c\u53f3\u4fa7\u7acb\u5373\u53ef\u7f16\u8f91\u8bb2\u89e3\u4e0e\u4ea7\u54c1\u4fe1\u606f\u3002</div>' +
+          "</div>" +
+          renderProductCards() +
+          "</section>" +
+          "</aside>" +
+          '<section class="pad-ops-stage-column">' +
+          renderOpsStationWorkspace() +
+          "</section>" +
+          '<aside class="pad-ops-detail-column">' +
+          '<section class="pad-panel pad-ops-detail-panel">' +
+          renderDetailPanel() +
+          "</section>" +
+          "</aside>" +
+          "</section>") +
+      "</main>"
+    );
+  }
+
   function renderHallSwitcher() {
     return (
       '<section class="pad-hall-switcher" aria-label="' +
@@ -1578,6 +2790,161 @@
             ? "pad-chip--ready"
             : "pad-chip--pending";
     return '<span class="pad-chip ' + toneClass + '">' + escapeHtml(text) + "</span>";
+  }
+
+  function renderStationHotspotSearchField(draft) {
+    const item = draft && typeof draft === "object" ? draft : {};
+    const searchText = String(item.product_search_text || "").trim();
+    const selectedProduct = findProductById(item.product_id);
+    const suggestions = Array.isArray(state.hotspotSearchResults) ? state.hotspotSearchResults : [];
+    const isSearching = state.hotspotSearchBusy && searchText && searchText === String(state.hotspotSearchQuery || "").trim();
+    const selectionHint = selectedProduct
+      ? '<div class="pad-hotspot-search__selection">' +
+          '<span class="pad-hotspot-search__selection-name">' +
+          escapeHtml(String(selectedProduct.product_name || "").trim() || String(selectedProduct.product_id || "")) +
+          "</span>" +
+          renderToneChip(selectedProduct.has_active_audio ? "\u6709\u97f3\u9891" : "\u65e0\u97f3\u9891", selectedProduct.has_active_audio ? "ready" : "danger") +
+          '<span class="pad-hotspot-search__selection-hall">' +
+          escapeHtml(String(selectedProduct.hall_id || "").trim()) +
+          "</span>" +
+        "</div>"
+      : "";
+    const searchStatus = isSearching
+      ? '<div class="pad-hotspot-search__status">\u6b63\u5728\u641c\u7d22\u4ea7\u54c1...</div>'
+      : searchText && !selectedProduct && !suggestions.length
+        ? '<div class="pad-hotspot-search__status">\u672a\u627e\u5230\u73b0\u6709\u4ea7\u54c1\uff0c\u4fdd\u5b58\u65f6\u5c06\u521b\u5efa\u5360\u4f4d\u4ea7\u54c1\u3002</div>'
+        : "";
+    const results = searchText && suggestions.length
+      ? '<div class="pad-hotspot-search__results">' +
+          suggestions
+            .map((product) => {
+              const productId = String(product && product.product_id ? product.product_id : "").trim();
+              const productName = String(product && product.product_name ? product.product_name : "").trim() || productId;
+              const hallId = String(product && product.hall_id ? product.hall_id : "").trim();
+              const hasAudio = !!(product && product.has_active_audio);
+              return (
+                '<button type="button" class="pad-hotspot-search__result" data-action="station-hotspot-pick" data-product-id="' +
+                escapeHtml(productId) +
+                '">' +
+                '<span class="pad-hotspot-search__result-main">' +
+                '<span class="pad-hotspot-search__result-name">' +
+                escapeHtml(productName) +
+                "</span>" +
+                '<span class="pad-hotspot-search__result-meta">' +
+                escapeHtml(hallId) +
+                (hasAudio ? " / \u6709\u97f3\u9891" : " / \u65e0\u97f3\u9891") +
+                "</span>" +
+                "</span>" +
+                "</button>"
+              );
+            })
+            .join("") +
+        "</div>"
+      : "";
+    return (
+      '<label class="pad-station-config-panel__field"><span>\u7ed1\u5b9a\u4ea7\u54c1</span><input type="text" data-action="station-hotspot-product-search" value="' +
+      escapeHtml(searchText) +
+      '" placeholder="\u53ef\u7559\u7a7a\uff0c\u6216\u8f93\u5165\u4ea7\u54c1\u540d\u79f0\u641c\u7d22" /></label>' +
+      '<div class="pad-detail__hint">\u641c\u7d22\u8303\u56f4\u662f\u5168\u90e8\u4ea7\u54c1\uff1b\u672a\u547d\u4e2d\u65f6\uff0c\u4fdd\u5b58\u540e\u4f1a\u521b\u5efa\u5360\u4f4d\u4ea7\u54c1\u3002</div>' +
+      selectionHint +
+      searchStatus +
+      results
+    );
+  }
+
+  function hydrateStationHotspotSearchField(selectEl) {
+    const selectElement = selectEl || null;
+    if (!selectElement) return null;
+    const fieldLabel = selectElement.closest("label");
+    if (!fieldLabel || !fieldLabel.parentNode) return null;
+    fieldLabel.style.display = "none";
+    const host = document.createElement("div");
+    host.setAttribute("data-role", "station-hotspot-search-host");
+    host.innerHTML = renderStationHotspotSearchField(getSceneEditorDraftForScene(getSelectedScene()));
+    fieldLabel.parentNode.insertBefore(host, fieldLabel);
+    return host;
+  }
+
+  function captureHotspotSearchInputState(inputEl) {
+    const input = inputEl || null;
+    if (!input) return null;
+    return {
+      value: String(input.value || ""),
+      selectionStart: typeof input.selectionStart === "number" ? input.selectionStart : null,
+      selectionEnd: typeof input.selectionEnd === "number" ? input.selectionEnd : null,
+      scrollX: typeof window.scrollX === "number" ? window.scrollX : 0,
+      scrollY: typeof window.scrollY === "number" ? window.scrollY : 0,
+    };
+  }
+
+  function restoreHotspotSearchInputState(snapshot) {
+    const saved = snapshot && typeof snapshot === "object" ? snapshot : null;
+    if (!saved) return;
+    const input = refs.app.querySelector('[data-action="station-hotspot-product-search"]');
+    if (!input) return;
+    try {
+      input.focus({ preventScroll: true });
+    } catch (_) {
+      try {
+        input.focus();
+      } catch (_) {}
+    }
+    if (saved.selectionStart != null && saved.selectionEnd != null && typeof input.setSelectionRange === "function") {
+      try {
+        input.setSelectionRange(saved.selectionStart, saved.selectionEnd);
+      } catch (_) {}
+    }
+    try {
+      window.scrollTo(Number(saved.scrollX || 0), Number(saved.scrollY || 0));
+    } catch (_) {}
+  }
+
+  function hydrateStationTimelinePreviewControls() {
+    const slot = getActiveStationSlot();
+    const scene = getSelectedScene();
+    const timelineRoot = refs.app.querySelector(".pad-station-timeline");
+    const timelineHeader = refs.app.querySelector(".pad-station-timeline__header");
+    if (!timelineRoot || !timelineHeader || !slot) return;
+
+    let headerTools = timelineRoot.querySelector('[data-role="station-timeline-preview-tools"]');
+    const currentTimeText = formatTimelineOffset(getStationPlaybackCurrentTimeMs());
+    const playLabel =
+      isStationSlotPlaying(slot) || isStationSlotPending(slot) ? "停止播放" : "播放讲解";
+    if (!headerTools) {
+      headerTools = document.createElement("div");
+      headerTools.setAttribute("data-role", "station-timeline-preview-tools");
+      headerTools.className = "pad-station-timeline__preview-tools";
+      timelineHeader.appendChild(headerTools);
+    }
+    headerTools.innerHTML =
+      '<button type="button" class="pad-station-timeline__action" data-action="play-station-slot" data-slot-key="' +
+      escapeHtml(String(slot.slotKey || "")) +
+      '">' +
+      escapeHtml(playLabel) +
+      "</button>" +
+      '<span class="pad-station-timeline__preview-time">当前播放 ' +
+      escapeHtml(currentTimeText) +
+      "</span>" +
+      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-add-highlight-on" data-slot-key="' +
+      escapeHtml(String(slot.slotKey || "")) +
+      '">插入高亮开始</button>' +
+      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-add-highlight-off" data-slot-key="' +
+      escapeHtml(String(slot.slotKey || "")) +
+      '">插入高亮结束</button>';
+
+    refs.app.querySelectorAll('.pad-station-timeline__item').forEach((itemNode) => {
+      const actions = itemNode.querySelector(".pad-station-timeline__actions");
+      const removeButton = itemNode.querySelector('[data-action="station-timeline-remove"]');
+      if (!actions || !removeButton || actions.querySelector('[data-action="station-timeline-use-current-time"]')) return;
+      const useCurrentButton = document.createElement("button");
+      useCurrentButton.type = "button";
+      useCurrentButton.className = "pad-station-timeline__action";
+      useCurrentButton.setAttribute("data-action", "station-timeline-use-current-time");
+      useCurrentButton.setAttribute("data-slot-key", String(removeButton.getAttribute("data-slot-key") || ""));
+      useCurrentButton.setAttribute("data-index", String(removeButton.getAttribute("data-index") || ""));
+      useCurrentButton.textContent = "取当前播放时间";
+      actions.appendChild(useCurrentButton);
+    });
   }
 
   function renderDemoStationTabs() {
@@ -1823,6 +3190,7 @@
       scene_id: String(scene.scene_id || "").trim(),
       station_key: String(draft.station_key || scene.scene_id || "").trim(),
       product_id: String(draft.product_id || "").trim(),
+      product_search_text: String(draft.product_search_text || "").trim(),
       target_type: getHotspotTargetType(draft),
       control_action: controlAction,
       control_label: controlAction ? getHotspotControlLabel(draft) : "",
@@ -1841,11 +3209,19 @@
     if (!includeDraft) return baseHotspots;
     const draft = getSceneEditorDraftForScene(scene);
     if (!draft) return baseHotspots;
+    const draftProduct = findProductById(draft.product_id);
     const draftHotspot = {
       hotspot_id: draft.hotspot_id || "__draft__",
       scene_id: draft.scene_id,
       station_key: draft.station_key,
       product_id: draft.product_id,
+      product_name: draftProduct ? String(draftProduct.product_name || "").trim() : String(draft.product_search_text || "").trim(),
+      product_name_en: draftProduct ? String(draftProduct.product_name_en || "").trim() : "",
+      product_hall_id: draftProduct ? String(draftProduct.hall_id || "").trim() : "",
+      product_source: draftProduct ? String(draftProduct.product_source || "").trim() : "",
+      has_active_audio: !!(draftProduct && draftProduct.has_active_audio),
+      audio_asset_id: draftProduct ? String(draftProduct.audio_asset_id || "").trim() : "",
+      audio_url: draftProduct ? String(draftProduct.playback_url || "").trim() : "",
       target_type: draft.target_type,
       control_action: draft.control_action,
       control_label: draft.control_label,
@@ -1879,6 +3255,7 @@
     const opts = options && typeof options === "object" ? options : {};
     const editor = !!opts.editor;
     const stretchToFit = !!opts.stretchToFit;
+    const extraClassName = String(opts.className || "").trim();
     const hotspots = getSceneHotspotsForRender(item, editor);
     const activeHotspotId =
       editor && state.sceneEditorDraft && !state.sceneEditorDraft.hotspot_id
@@ -1895,6 +3272,7 @@
         const hotspotId = String(hotspot.hotspot_id || "");
         const active = hotspotId === activeHotspotId;
         const label = getHotspotDisplayLabel(hotspot, index);
+        const hotspotTone = getHotspotVisualTone(hotspot);
         const style =
           "left:" +
           String(clampPct(hotspot.x_pct) * 100) +
@@ -1909,7 +3287,10 @@
           const controlAction = String(hotspot.control_action || "").trim();
           return (
             '<button type="button" class="pad-scene-hotspot' +
-            (controlAction ? " pad-scene-hotspot--control" : "") +
+            (hotspotTone === "control" ? " pad-scene-hotspot--control" : "") +
+            (hotspotTone === "has-audio" ? " pad-scene-hotspot--has-audio" : "") +
+            (hotspotTone === "missing-audio" ? " pad-scene-hotspot--missing-audio" : "") +
+            (hotspotTone === "unbound" ? " pad-scene-hotspot--unbound" : "") +
             (active ? " is-active" : "") +
             '" data-action="play-product-hotspot" data-product-id="' +
             escapeHtml(String(hotspot.product_id || "")) +
@@ -1928,6 +3309,10 @@
         }
         return (
           '<div class="pad-scene-hotspot pad-scene-hotspot--editor' +
+          (hotspotTone === "control" ? " pad-scene-hotspot--control" : "") +
+          (hotspotTone === "has-audio" ? " pad-scene-hotspot--has-audio" : "") +
+          (hotspotTone === "missing-audio" ? " pad-scene-hotspot--missing-audio" : "") +
+          (hotspotTone === "unbound" ? " pad-scene-hotspot--unbound" : "") +
           (active ? " is-active" : "") +
           '" data-action="scene-editor-hotspot" data-hotspot-id="' +
           escapeHtml(hotspotId) +
@@ -1948,6 +3333,7 @@
       '<div class="pad-scene-stage' +
       (editor ? " is-editor" : "") +
       (stretchToFit ? " is-stretched" : "") +
+      (extraClassName ? " " + extraClassName : "") +
       '" data-scene-stage-role="' +
       escapeHtml(editor ? "editor" : "demo") +
       '" data-scene-id="' +
@@ -2374,43 +3760,45 @@
     }
 
     return (
-      '<div class="pad-products">' +
+      '<div class="pad-ops-product-table">' +
       state.products
-        .map((product) => {
+        .map((product, index) => {
           const active = String(product.product_id || "") === String(state.selectedProductId || "");
-          const audioChip = product.has_active_audio
-            ? '<span class="pad-chip pad-chip--ready">' + escapeHtml(TEXT.currentAudioReady) + "</span>"
-            : '<span class="pad-chip pad-chip--warning">' + escapeHtml(TEXT.currentAudioMissing) + "</span>";
+          const playing = isProductPlaying(product);
+          const pending = isProductPending(product);
+          const statusClass = product.has_active_audio ? "pad-chip--ready" : "pad-chip--warning";
+          const statusLabel = playing
+            ? TEXT.currentAudioStatusPlaying
+            : pending
+              ? TEXT.currentAudioStatusPreparing
+              : product.has_active_audio
+                ? TEXT.currentAudioReady
+                : TEXT.currentAudioMissing;
           return (
-            '<button type="button" class="pad-product-card' +
+            '<button type="button" class="pad-ops-product-row' +
             (active ? " is-active" : "") +
+            (playing ? " is-playing" : "") +
+            (pending ? " is-pending" : "") +
+            (!product.has_active_audio ? " is-missing-audio" : "") +
             '" data-product-id="' +
             escapeHtml(product.product_id) +
             '">' +
-            '<div class="pad-product-card__top">' +
-            "<div>" +
-            '<div class="pad-product-card__title">' +
-            escapeHtml(product.product_name || "Unnamed Product") +
-            "</div>" +
-            (product.product_name_en
-              ? '<div class="pad-product-card__title-en">' + escapeHtml(product.product_name_en) + "</div>"
-              : "") +
-            "</div>" +
-            audioChip +
-            "</div>" +
-            '<div class="pad-product-card__meta">' +
-            (product.company ? '<span class="pad-chip">' + escapeHtml(product.company) + "</span>" : "") +
-            (product.registration_number
-              ? '<span class="pad-chip">' +
-                escapeHtml(TEXT.registrationNumber + " " + product.registration_number) +
-                "</span>"
-              : "") +
-            (product.effective_date
-              ? '<span class="pad-chip">' +
-                escapeHtml(TEXT.effectiveDate + " " + product.effective_date) +
-                "</span>"
-              : "") +
-            "</div>" +
+            '<span class="pad-ops-product-row__index">' +
+            escapeHtml(String(index + 1).padStart(2, "0")) +
+            "</span>" +
+            '<span class="pad-ops-product-row__main">' +
+            '<span class="pad-ops-product-row__name">' +
+            escapeHtml(product.product_name || "\u672a\u547d\u540d\u4ea7\u54c1") +
+            "</span>" +
+            '<span class="pad-ops-product-row__meta">' +
+            escapeHtml(String(product.registration_number || product.company || "--").trim() || "--") +
+            "</span>" +
+            "</span>" +
+            '<span class="pad-chip ' +
+            statusClass +
+            '">' +
+            escapeHtml(statusLabel) +
+            "</span>" +
             "</button>"
           );
         })
@@ -2445,10 +3833,9 @@
       state.assetBusy && state.assetAction === "regenerate"
         ? "\u6b63\u5728\u751f\u6210..."
         : product.has_active_audio
-          ? "\u91cd\u65b0\u751f\u6210TTS"
-          : "\u751f\u6210TTS\u8bb2\u89e3";
+          ? "\u91cd\u751f TTS"
+          : "\u751f\u6210 TTS";
     const uploadLabel = state.assetBusy && state.assetAction === "upload" ? "\u6b63\u5728\u4e0a\u4f20..." : "\u4e0a\u4f20\u5f55\u97f3";
-    const uploadImageLabel = state.assetBusy && state.assetAction === "upload-image" ? IMAGE_TEXT.uploading : IMAGE_TEXT.upload;
     const actionDisabled = state.assetBusy ? " disabled" : "";
     const assetToneClass =
       state.assetTone === "danger"
@@ -2460,33 +3847,41 @@
             : "pad-banner--pending";
     const currentAudioText = getCurrentAudioText(product);
     const editableAudioText = getEditableAudioText(product);
+    const editableProductName = getEditableProductName(product);
+    const editableProductIntro = getEditableProductIntro(product);
     const assetSummary = product.has_active_audio
       ? "\u5f53\u524d\u751f\u6548\u97f3\u9891\uff1a" +
         formatAudioSourceType(product.audio_source_type) +
         "\uff0c\u66f4\u65b0\u65f6\u95f4 " +
         formatTimestamp(product.audio_updated_at_ms)
       : "\u5f53\u524d\u8fd8\u6ca1\u6709\u751f\u6548\u8bb2\u89e3\u97f3\u9891\u3002";
-    const currentAudioTextLabel = product.has_active_audio
-      ? "\u5f53\u524d\u7f13\u5b58\u97f3\u9891\u5bf9\u5e94\u6587\u5b57"
-      : "\u9884\u8bbe\u751f\u6210\u6587\u5b57";
     const currentAudioTextDisplay = currentAudioText
       ? currentAudioText
       : product.has_active_audio
         ? "\u5f53\u524d\u751f\u6548\u97f3\u9891\u8fd8\u672a\u7ed1\u5b9a\u6587\u5b57\u3002"
-        : "\u6682\u65e0\u5f53\u524d\u751f\u6548\u97f3\u9891\uff0c\u91cd\u751f\u6210 TTS \u65f6\u5c06\u4f7f\u7528\u4e0b\u65b9\u6587\u5b57\u3002";
+        : "\u6682\u65e0\u5f53\u524d\u751f\u6548\u97f3\u9891\uff0c\u91cd\u751f TTS \u65f6\u5c06\u4f7f\u7528\u4e0b\u65b9\u6587\u5b57\u3002";
 
     return (
-      '<div class="pad-detail">' +
-      '<div class="pad-detail__header">' +
+      '<div class="pad-ops-detail">' +
+      '<div class="pad-ops-detail__head">' +
       "<div>" +
-      '<h1 class="pad-detail__title">' +
-      escapeHtml(product.product_name || "Unnamed Product") +
-      "</h1>" +
+      '<h2 class="pad-ops-detail__title">' +
+      escapeHtml(product.product_name || "\u672a\u547d\u540d\u4ea7\u54c1") +
+      "</h2>" +
       (product.product_name_en
-        ? '<div class="pad-detail__subtitle">' + escapeHtml(product.product_name_en) + "</div>"
+        ? '<div class="pad-ops-detail__subtitle">' + escapeHtml(product.product_name_en) + "</div>"
         : "") +
+      '<div class="pad-ops-detail__summary">' +
+      '<span class="pad-chip ' +
+      (product.has_active_audio ? "pad-chip--ready" : "pad-chip--warning") +
+      '">' +
+      escapeHtml(product.has_active_audio ? TEXT.currentAudioReady : TEXT.currentAudioMissing) +
+      "</span>" +
+      (product.company ? '<span class="pad-chip">' + escapeHtml(product.company) + "</span>" : "") +
+      (product.registration_number ? '<span class="pad-chip">' + escapeHtml(product.registration_number) + "</span>" : "") +
       "</div>" +
-      '<div class="pad-detail__actions">' +
+      "</div>" +
+      '<div class="pad-ops-detail__actions">' +
       '<button type="button" class="pad-btn pad-btn--neutral" data-action="play-selected"' +
       playDisabled +
       ">" +
@@ -2503,54 +3898,55 @@
       escapeHtml(uploadLabel) +
       "</button>" +
       '<input class="pad-hidden-file-input" data-action="upload-audio-input" type="file" accept="audio/*,.wav,.mp3,.ogg,.flac" />' +
-      '<button type="button" class="pad-btn pad-btn--neutral" data-action="select-upload-image"' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="save-product-info"' +
       actionDisabled +
       ">" +
-      escapeHtml(uploadImageLabel) +
+      "\u4fdd\u5b58\u4ea7\u54c1" +
       "</button>" +
-      '<input class="pad-hidden-file-input" data-action="upload-image-input" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.gif,.bmp" multiple />' +
       "</div>" +
       "</div>" +
       '<div class="pad-banner ' + bannerTone + '">' + escapeHtml(bannerText) + "</div>" +
-      renderProductImageSection(product) +
-      (state.assetMessage && state.assetAction === "upload-image"
-        ? '<div class="pad-banner ' + assetToneClass + '" style="margin: 0 24px 0;">' + escapeHtml(state.assetMessage) + "</div>"
+      (state.assetMessage
+        ? '<div class="pad-banner ' + assetToneClass + '" style="margin-top:10px;">' + escapeHtml(state.assetMessage) + "</div>"
         : "") +
-      '<section class="pad-detail__section">' +
+      '<div class="pad-ops-detail__grid">' +
+      '<section class="pad-ops-detail__card">' +
       '<div class="pad-detail__section-title">\u8bb2\u89e3\u97f3\u9891</div>' +
       '<div class="pad-detail__asset-summary">' + escapeHtml(assetSummary) + "</div>" +
-      '<div class="pad-detail__field-label" style="margin-top:14px;">' +
-      escapeHtml(currentAudioTextLabel) +
-      "</div>" +
+      '<div class="pad-detail__field-label" style="margin-top:14px;">\u5f53\u524d\u7f13\u5b58\u6587\u5b57</div>' +
       '<div class="pad-detail__asset-text" data-testid="audio-text-current">' +
       escapeHtml(currentAudioTextDisplay) +
       "</div>" +
-      '<div class="pad-detail__field-label" style="margin-top:16px;">\u91cd\u751f\u6210 / \u5f55\u97f3\u7ed1\u5b9a\u6587\u5b57</div>' +
-      '<textarea class="pad-detail__textarea" data-action="audio-text-draft" data-testid="audio-text-editor" rows="7"' +
+      '<div class="pad-detail__field-label" style="margin-top:14px;">\u91cd\u751f / \u5f55\u97f3\u7ed1\u5b9a\u6587\u5b57</div>' +
+      '<textarea class="pad-detail__textarea pad-detail__textarea--compact" data-action="audio-text-draft" data-testid="audio-text-editor" rows="5"' +
       (state.assetBusy ? " disabled" : "") +
       ">" +
       escapeHtml(editableAudioText) +
       "</textarea>" +
-      '<div class="pad-detail__hint">\u70b9\u51fb\u201c\u91cd\u65b0\u751f\u6210TTS\u201d\u65f6\u4f1a\u4f7f\u7528\u8fd9\u91cc\u7684\u6587\u5b57\u751f\u6210\u65b0\u7684\u7f13\u5b58\u97f3\u9891\uff1b\u4e0a\u4f20\u5f55\u97f3\u65f6\u4e5f\u4f1a\u540c\u6b65\u7ed1\u5b9a\u8fd9\u6bb5\u6587\u5b57\u3002</div>' +
-      (state.assetMessage && state.assetAction !== "upload-image"
-        ? '<div class="pad-banner ' + assetToneClass + '" style="margin-top:12px;">' + escapeHtml(state.assetMessage) + "</div>"
-        : "") +
+      '<div class="pad-detail__hint">\u91cd\u751f TTS \u6216\u4e0a\u4f20\u5f55\u97f3\u65f6\uff0c\u90fd\u4f1a\u4f7f\u7528\u8fd9\u91cc\u7684\u6587\u672c\u3002</div>' +
       "</section>" +
-      '<section class="pad-detail__section">' +
+      '<section class="pad-ops-detail__card">' +
       '<div class="pad-detail__section-title">' + escapeHtml(TEXT.introTitle) + "</div>" +
-      '<div class="pad-detail__intro">' +
-      escapeHtml(product.intro_text || "?????????????") +
-      "</div>" +
-      "</section>" +
-      '<section class="pad-detail__section">' +
-      '<div class="pad-detail__section-title">' + escapeHtml(TEXT.infoTitle) + "</div>" +
-      '<div class="pad-detail__grid">' +
+      '<div class="pad-detail__field-label">\u4ea7\u54c1\u540d\u79f0</div>' +
+      '<input class="pad-detail__input" data-action="product-name-draft" type="text" value="' +
+      escapeHtml(editableProductName) +
+      '"' +
+      (state.assetBusy ? " disabled" : "") +
+      " />" +
+      '<div class="pad-detail__field-label" style="margin-top:14px;">\u4ea7\u54c1\u63cf\u8ff0</div>' +
+      '<textarea class="pad-detail__textarea pad-detail__textarea--compact" data-action="product-intro-draft" rows="5"' +
+      (state.assetBusy ? " disabled" : "") +
+      ">" +
+      escapeHtml(editableProductIntro) +
+      "</textarea>" +
+      '<div class="pad-ops-detail__meta-grid">' +
       renderField(TEXT.registrationName, product.registration_name || TEXT.emptyField) +
       renderField(TEXT.registrationNumber, product.registration_number || TEXT.emptyField) +
       renderField(TEXT.effectiveDate, product.effective_date || TEXT.emptyField) +
       renderField(TEXT.company, product.company || TEXT.emptyField) +
       "</div>" +
       "</section>" +
+      "</div>" +
       "</div>"
     );
   }
@@ -3323,22 +4719,147 @@
     );
   }
 
-  function formatTimelineEventsForEditor(events) {
-    try {
-      return JSON.stringify(
-        (Array.isArray(events) ? events : []).map((event, index) => ({
-          sort_order: Number(event && event.sortOrder != null ? event.sortOrder : index),
-          time_ms: Number(event && event.timeMs ? event.timeMs : 0),
-          product_id: String(event && event.productId ? event.productId : "").trim(),
-          station_hotspot_id: String(event && event.hotspotId ? event.hotspotId : "").trim(),
-          event_type: String(event && event.eventType ? event.eventType : "focus_switch").trim() || "focus_switch",
-        })),
-        null,
-        2
-      );
-    } catch (_) {
-      return "[]";
-    }
+  function renderStationTimelineEventTypeOptions(selectedType) {
+    const currentType = normalizeTimelineEventType(selectedType);
+    return Object.keys(TIMELINE_EVENT_TYPE_LABELS)
+      .map(
+        (key) =>
+          '<option value="' +
+          escapeHtml(key) +
+          '"' +
+          (key === currentType ? " selected" : "") +
+          ">" +
+          escapeHtml(TIMELINE_EVENT_TYPE_LABELS[key]) +
+          "</option>"
+      )
+      .join("");
+  }
+
+  function renderStationTimelineEventItem(slot, scene, event, index, total) {
+    const slotKey = String(slot && slot.slotKey ? slot.slotKey : "").trim();
+    const currentIndex = Number(index);
+    const hotspotOptions = getStationTimelineHotspotOptions(scene, event && event.hotspotId);
+    const missingHotspot = !findStationTimelineHotspot(scene, event && event.hotspotId);
+    const isPreviewActive =
+      String(state.highlightedHotspotId || "").trim() === String(event && event.hotspotId ? event.hotspotId : "").trim();
+    return (
+      '<div class="pad-station-timeline__item' +
+      (missingHotspot ? " is-invalid" : "") +
+      (isPreviewActive ? " is-preview-active" : "") +
+      '">' +
+      '<div class="pad-station-timeline__rail" aria-hidden="true">' +
+      '<span class="pad-station-timeline__dot"></span>' +
+      '<span class="pad-station-timeline__line' +
+      (currentIndex >= total - 1 ? " is-hidden" : "") +
+      '"></span>' +
+      "</div>" +
+      '<div class="pad-station-timeline__card">' +
+      '<div class="pad-station-timeline__card-top">' +
+      "<div>" +
+      '<div class="pad-station-timeline__card-title">节点 ' +
+      escapeHtml(String(currentIndex + 1)) +
+      "</div>" +
+      '<div class="pad-station-timeline__card-subtitle">' +
+      escapeHtml(formatTimelineOffset(event && event.timeMs)) +
+      "</div>" +
+      "</div>" +
+      '<div class="pad-station-timeline__actions">' +
+      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-move-up" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-index="' +
+      escapeHtml(String(currentIndex)) +
+      '"' +
+      (currentIndex <= 0 ? " disabled" : "") +
+      ">上移</button>" +
+      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-move-down" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-index="' +
+      escapeHtml(String(currentIndex)) +
+      '"' +
+      (currentIndex >= total - 1 ? " disabled" : "") +
+      ">下移</button>" +
+      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-remove" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-index="' +
+      escapeHtml(String(currentIndex)) +
+      '">删除</button>' +
+      "</div>" +
+      "</div>" +
+      '<div class="pad-station-timeline__grid">' +
+      '<label class="pad-station-config-panel__field"><span>触发时间 (ms)</span><input type="number" min="0" step="100" data-action="station-timeline-time-ms" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-index="' +
+      escapeHtml(String(currentIndex)) +
+      '" value="' +
+      escapeHtml(String(normalizeTimelineEventTimeMs(event && event.timeMs))) +
+      '" /></label>' +
+      '<label class="pad-station-config-panel__field"><span>目标热区</span><select data-action="station-timeline-hotspot" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-index="' +
+      escapeHtml(String(currentIndex)) +
+      '">' +
+      hotspotOptions
+        .map((hotspot) => {
+          const hotspotId = String(hotspot && hotspot.hotspot_id ? hotspot.hotspot_id : "").trim();
+          return (
+            '<option value="' +
+            escapeHtml(hotspotId) +
+            '"' +
+            (hotspotId === String(event && event.hotspotId ? event.hotspotId : "").trim() ? " selected" : "") +
+            ">" +
+            escapeHtml(getStationTimelineHotspotLabel(scene, hotspotId)) +
+            "</option>"
+          );
+        })
+        .join("") +
+      "</select></label>" +
+      '<label class="pad-station-config-panel__field"><span>事件类型</span><select data-action="station-timeline-event-type" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-index="' +
+      escapeHtml(String(currentIndex)) +
+      '">' +
+      renderStationTimelineEventTypeOptions(event && event.eventType) +
+      "</select></label>" +
+      "</div>" +
+      '<div class="pad-station-timeline__summary' +
+      (missingHotspot ? " is-danger" : "") +
+      '">' +
+      escapeHtml(getStationTimelineEventSummary(scene, event)) +
+      "</div>" +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function renderStationTimelineEditor(slot, scene) {
+    const slotKey = String(slot && slot.slotKey ? slot.slotKey : "").trim();
+    const timelineEvents = normalizeStationTimelineEditorEvents(slot && slot.timelineEvents, scene);
+    const hotspotOptions = getStationTimelineHotspotOptions(scene);
+    return (
+      '<div class="pad-station-timeline">' +
+      '<div class="pad-station-timeline__header">' +
+      "<div>" +
+      '<div class="pad-station-timeline__title">站点讲解时间轴</div>' +
+      '<div class="pad-panel__hint">用可视化节点管理讲解过程中的热区切换顺序。</div>' +
+      "</div>" +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="station-timeline-add" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '"' +
+      (hotspotOptions.length ? "" : " disabled") +
+      ">新增节点</button>" +
+      "</div>" +
+      (!hotspotOptions.length
+        ? '<div class="pad-banner pad-banner--warning" style="margin-top:14px;">当前站点还没有可用热区，请先在右侧创建产品热区。</div>'
+        : "") +
+      (timelineEvents.length
+        ? '<div class="pad-station-timeline__list">' +
+          timelineEvents
+            .map((event, index) => renderStationTimelineEventItem(slot, scene, event, index, timelineEvents.length))
+            .join("") +
+          "</div>"
+        : '<div class="pad-station-timeline__empty">暂未配置讲解时间轴，播放时不会自动切换高亮。</div>') +
+      "</div>"
+    );
   }
 
   function renderStationFusionConfigPanelV3() {
@@ -3348,7 +4869,6 @@
     const metaEntry = getRecordingMetaEntry(slot.recordingId);
     const stops = getRecordingStops(slot.recordingId);
     const selectedStopIndex = normalizeStationStopIndex(slot.stopIndex);
-    const timelineEditorValue = formatTimelineEventsForEditor(slot.timelineEvents);
     const recordingOptions = Array.isArray(state.recordingOptions) ? state.recordingOptions.slice() : [];
     if (slot.recordingId && !recordingOptions.find((item) => String(item.recording_id || "") === String(slot.recordingId || ""))) {
       recordingOptions.unshift({
@@ -3438,13 +4958,18 @@
         })
         .join("") +
       "</select></label>" +
-      '<label class="pad-station-config-panel__field"><span>站点讲解时间轴(JSON)</span><textarea class="pad-detail__textarea pad-detail__textarea--compact" data-action="station-timeline-events">' +
-      escapeHtml(timelineEditorValue) +
-      "</textarea></label>" +
+      renderStationTimelineEditor(slot, stationVisual) +
       '<div class="pad-scene-editor__scene-actions">' +
       '<button type="button" class="pad-btn pad-btn--neutral" data-action="save-station-config">保存站点配置</button>' +
       '<button type="button" class="pad-btn pad-btn--neutral" data-action="select-station-background">上传背景图</button>' +
       '<input class="pad-hidden-file-input" data-action="station-background-input" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.gif,.bmp" />' +
+      '<button type="button" class="pad-btn pad-btn--neutral' +
+      (state.sceneEditorCreateMode ? " is-active" : "") +
+      '" data-action="enter-station-hotspot-create" aria-pressed="' +
+      (state.sceneEditorCreateMode ? "true" : "false") +
+      '">' +
+      escapeHtml(state.sceneEditorCreateMode ? "正在新建热区" : "新建产品热区") +
+      "</button>" +
       '<button type="button" class="pad-btn pad-btn--neutral" data-action="select-station-wireframe">上传线框图</button>' +
       '<input class="pad-hidden-file-input" data-action="station-wireframe-input" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.gif,.bmp" />' +
       "</div>" +
@@ -3634,23 +5159,6 @@
       "</div>" +
       "</div>" +
       "</section>" +
-      '<section class="pad-panel pad-ops-entry-panel">' +
-      '<div class="pad-panel__header pad-layout-panel__header">' +
-      "<div>" +
-      '<div class="pad-panel__title">产品热区</div>' +
-      '<div class="pad-panel__hint">默认只编辑已有热区，点按钮后才进入新建状态。</div>' +
-      "</div>" +
-      '<div class="pad-layout-panel__options" role="group" aria-label="产品热区创建">' +
-      '<button type="button" class="pad-layout-panel__btn' +
-      (state.sceneEditorCreateMode ? " is-active" : "") +
-      '" data-action="enter-station-hotspot-create" aria-pressed="' +
-      (state.sceneEditorCreateMode ? "true" : "false") +
-      '">' +
-      escapeHtml(state.sceneEditorCreateMode ? "正在新建热区" : "新建产品热区") +
-      "</button>" +
-      "</div>" +
-      "</div>" +
-      "</section>" +
       renderStationFusionConfigPanelV3() +
       demoLayoutPanel +
       hallSwitcherPanel +
@@ -3824,12 +5332,13 @@
 
     refs.app.innerHTML =
       state.mode === "ops"
-        ? renderOpsShellV3(hallName, productCount, snapshotBadge)
+        ? renderOpsShellV4(hallName, productCount, snapshotBadge)
         : renderDemoShellV4(hallName, productCount, snapshotBadge);
 
     document.body.classList.toggle("pad-body--demo", state.mode === "demo");
     document.body.classList.toggle("pad-body--ops", state.mode === "ops");
     updateAudioDock();
+    hydrateStationTimelinePreviewControls();
     bindDomEvents();
     publishE2eState();
   }
@@ -3865,6 +5374,18 @@
       });
     });
 
+    refs.app.querySelectorAll('[data-action="set-ops-station-tab"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        setOpsStationTab(button.getAttribute("data-tab"));
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="set-ops-annotate-sidebar-tab"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        setOpsAnnotateSidebarTab(button.getAttribute("data-tab"));
+      });
+    });
+
     refs.app.querySelectorAll('[data-action="toggle-demo-station"]').forEach((button) => {
       button.addEventListener("click", () => {
         toggleActiveStationSlot();
@@ -3880,16 +5401,19 @@
     const syncButton = refs.app.querySelector('[data-action="sync-offline"]');
     const reloadButton = refs.app.querySelector('[data-action="reload-live"]');
     const playButton = refs.app.querySelector('[data-action="play-selected"]');
-    const stationPlayButton = refs.app.querySelector('[data-action="play-station-slot"]');
+    const stationPlayButtons = Array.from(refs.app.querySelectorAll('[data-action="play-station-slot"]'));
     const regenerateButton = refs.app.querySelector('[data-action="regenerate-audio"]');
     const uploadButton = refs.app.querySelector('[data-action="select-upload-audio"]');
     const uploadInput = refs.app.querySelector('[data-action="upload-audio-input"]');
     const uploadImageButton = refs.app.querySelector('[data-action="select-upload-image"]');
     const uploadImageInput = refs.app.querySelector('[data-action="upload-image-input"]');
     const audioTextEditor = refs.app.querySelector('[data-action="audio-text-draft"]');
+    const productNameEditor = refs.app.querySelector('[data-action="product-name-draft"]');
+    const productIntroEditor = refs.app.querySelector('[data-action="product-intro-draft"]');
+    const saveProductInfoButton = refs.app.querySelector('[data-action="save-product-info"]');
     const refreshRecordingsButton = refs.app.querySelector('[data-action="refresh-recordings"]');
     const saveStationConfigButton = refs.app.querySelector('[data-action="save-station-config"]');
-    const stationTimelineEventsInput = refs.app.querySelector('[data-action="station-timeline-events"]');
+    const stationTimelineAddButton = refs.app.querySelector('[data-action="station-timeline-add"]');
     const stationBackgroundButton = refs.app.querySelector('[data-action="select-station-background"]');
     const stationBackgroundInput = refs.app.querySelector('[data-action="station-background-input"]');
     const stationWireframeButton = refs.app.querySelector('[data-action="select-station-wireframe"]');
@@ -3897,7 +5421,12 @@
     const saveStationHotspotButton = refs.app.querySelector('[data-action="save-station-hotspot"]');
     const clearStationHotspotDraftButton = refs.app.querySelector('[data-action="clear-station-hotspot-draft"]');
     const deleteStationHotspotButton = refs.app.querySelector('[data-action="delete-station-hotspot"]');
+    const exportStationHotspotsButton = refs.app.querySelector('[data-action="export-station-hotspots"]');
+    const importStationHotspotsButton = refs.app.querySelector('[data-action="import-station-hotspots"]');
+    const importStationHotspotsInput = refs.app.querySelector('[data-action="import-station-hotspots-input"]');
     const stationHotspotProductSelect = refs.app.querySelector('[data-action="station-hotspot-product"]');
+    hydrateStationHotspotSearchField(stationHotspotProductSelect);
+    const stationHotspotProductSearchInput = refs.app.querySelector('[data-action="station-hotspot-product-search"]');
     const stationHotspotSortOrderInput = refs.app.querySelector('[data-action="station-hotspot-sort-order"]');
     const createSceneButton = refs.app.querySelector('[data-action="select-create-scene-image"]');
     const createSceneInput = refs.app.querySelector('[data-action="scene-create-image-input"]');
@@ -3926,12 +5455,29 @@
       });
     }
 
+    if (productNameEditor) {
+      productNameEditor.addEventListener("input", () => {
+        const product = getSelectedProduct();
+        if (!product) return;
+        updateProductInfoDraft(product.product_id, { product_name: String(productNameEditor.value || "") });
+      });
+    }
+
+    if (productIntroEditor) {
+      productIntroEditor.addEventListener("input", () => {
+        const product = getSelectedProduct();
+        if (!product) return;
+        updateProductInfoDraft(product.product_id, { intro_text: String(productIntroEditor.value || "") });
+      });
+    }
+
     if (syncButton) {
       syncButton.addEventListener("click", () => {
         resetAudioPlayback();
         void syncOfflineResources({
           hall: state.hall,
           products: state.products,
+          referencedProducts: state.referencedProducts,
           scenes: state.scenes,
         });
       });
@@ -3950,11 +5496,11 @@
       });
     }
 
-    if (stationPlayButton) {
-      stationPlayButton.addEventListener("click", () => {
-        void toggleStationPlayback(stationPlayButton.getAttribute("data-slot-key"));
+    stationPlayButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        void toggleStationPlayback(button.getAttribute("data-slot-key"));
       });
-    }
+    });
 
     if (regenerateButton) {
       regenerateButton.addEventListener("click", () => {
@@ -3985,6 +5531,12 @@
         void uploadSelectedProductImages(files).finally(() => {
           uploadImageInput.value = "";
         });
+      });
+    }
+
+    if (saveProductInfoButton) {
+      saveProductInfoButton.addEventListener("click", () => {
+        void saveSelectedProductInfo();
       });
     }
 
@@ -4047,19 +5599,137 @@
       });
     }
 
+    if (exportStationHotspotsButton) {
+      exportStationHotspotsButton.addEventListener("click", () => {
+        void exportCurrentStationHotspots();
+      });
+    }
+
+    if (importStationHotspotsButton && importStationHotspotsInput) {
+      importStationHotspotsButton.addEventListener("click", () => {
+        importStationHotspotsInput.click();
+      });
+      importStationHotspotsInput.addEventListener("change", () => {
+        const file = importStationHotspotsInput.files && importStationHotspotsInput.files[0]
+          ? importStationHotspotsInput.files[0]
+          : null;
+        if (!file) return;
+        void importCurrentStationHotspots(file).finally(() => {
+          importStationHotspotsInput.value = "";
+        });
+      });
+    }
+
+    if (stationTimelineAddButton) {
+      stationTimelineAddButton.addEventListener("click", () => {
+        addStationTimelineEvent(stationTimelineAddButton.getAttribute("data-slot-key"));
+      });
+    }
+
+    refs.app.querySelectorAll('[data-action="station-timeline-remove"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        removeStationTimelineEvent(
+          button.getAttribute("data-slot-key"),
+          button.getAttribute("data-index")
+        );
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="station-timeline-move-up"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        moveStationTimelineEvent(
+          button.getAttribute("data-slot-key"),
+          button.getAttribute("data-index"),
+          -1
+        );
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="station-timeline-move-down"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        moveStationTimelineEvent(
+          button.getAttribute("data-slot-key"),
+          button.getAttribute("data-index"),
+          1
+        );
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="station-timeline-time-ms"]').forEach((input) => {
+      input.addEventListener("change", () => {
+        const slotKey = input.getAttribute("data-slot-key");
+        const currentIndex = Number(input.getAttribute("data-index"));
+        updateStationTimelineEvents(slotKey, (events) => {
+          if (currentIndex < 0 || currentIndex >= events.length) return events;
+          const nextEvents = events.slice();
+          nextEvents[currentIndex] = Object.assign({}, nextEvents[currentIndex], {
+            timeMs: normalizeTimelineEventTimeMs(input.value),
+          });
+          return nextEvents;
+        });
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="station-timeline-hotspot"]').forEach((select) => {
+      select.addEventListener("change", () => {
+        const slotKey = select.getAttribute("data-slot-key");
+        const currentIndex = Number(select.getAttribute("data-index"));
+        const scene = findSceneById(slotKey) || getSelectedScene();
+        const hotspotId = String(select.value || "").trim();
+        const hotspot = findStationTimelineHotspot(scene, hotspotId);
+        updateStationTimelineEvents(slotKey, (events) => {
+          if (currentIndex < 0 || currentIndex >= events.length) return events;
+          const nextEvents = events.slice();
+          nextEvents[currentIndex] = Object.assign({}, nextEvents[currentIndex], {
+            hotspotId,
+            productId: hotspot ? String(hotspot.product_id || "").trim() : "",
+          });
+          return nextEvents;
+        });
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="station-timeline-event-type"]').forEach((select) => {
+      select.addEventListener("change", () => {
+        const slotKey = select.getAttribute("data-slot-key");
+        const currentIndex = Number(select.getAttribute("data-index"));
+        updateStationTimelineEvents(slotKey, (events) => {
+          if (currentIndex < 0 || currentIndex >= events.length) return events;
+          const nextEvents = events.slice();
+          nextEvents[currentIndex] = Object.assign({}, nextEvents[currentIndex], {
+            eventType: normalizeTimelineEventType(select.value),
+          });
+          return nextEvents;
+        });
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="station-timeline-use-current-time"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        useCurrentPlaybackTimeForTimelineEvent(
+          button.getAttribute("data-slot-key"),
+          button.getAttribute("data-index")
+        );
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="station-timeline-add-highlight-on"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        addStationTimelineEventFromPlayback(button.getAttribute("data-slot-key"), "highlight_on");
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="station-timeline-add-highlight-off"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        addStationTimelineEventFromPlayback(button.getAttribute("data-slot-key"), "highlight_off");
+      });
+    });
+
     if (saveStationConfigButton) {
       saveStationConfigButton.addEventListener("click", () => {
-        let timelineEvents = null;
-        if (stationTimelineEventsInput) {
-          try {
-            const parsed = JSON.parse(String(stationTimelineEventsInput.value || "[]"));
-            timelineEvents = normalizeTimelineEvents(parsed);
-          } catch (_) {
-            setAssetState("Timeline events JSON is invalid.", "danger", false, "station-config");
-            render();
-            return;
-          }
-        }
+        const activeSlot = getActiveStationSlot();
+        const timelineEvents = readStationTimelineEventsFromDom(activeSlot.slotKey);
+        updateStationSlot(activeSlot.slotKey, () => ({ timelineEvents }));
         void saveSelectedStationConfig({ timelineEvents });
       });
     }
@@ -4090,17 +5760,74 @@
       });
     }
 
-    if (stationHotspotProductSelect) {
-      stationHotspotProductSelect.addEventListener("change", () => {
+    if (stationHotspotProductSearchInput) {
+      stationHotspotProductSearchInput.addEventListener("compositionstart", () => {
+        hotspotSearchComposing = true;
+      });
+      stationHotspotProductSearchInput.addEventListener("compositionend", () => {
+        hotspotSearchComposing = false;
+        const nextText = String(stationHotspotProductSearchInput.value || "");
+        const restoreSnapshot = captureHotspotSearchInputState(stationHotspotProductSearchInput);
         const scene = getSelectedScene();
         const draft = getSceneEditorDraftForScene(scene);
-        const nextProductId = String(stationHotspotProductSelect.value || "").trim();
-        const nextDraft = updateSceneEditorDraft({ product_id: nextProductId });
-        if (draft && !draft.hotspot_id && nextProductId && nextDraft) {
-          void saveSceneEditorHotspot();
+        const currentProduct = draft ? findProductById(draft.product_id) : null;
+        const currentName = currentProduct ? String(currentProduct.product_name || "").trim() : "";
+        updateSceneEditorDraft({
+          product_id: currentName && String(nextText || "").trim() === currentName ? String(draft.product_id || "").trim() : "",
+          product_search_text: nextText,
+        }, { render: false });
+        void searchStationHotspotProducts(nextText, { restoreSnapshot });
+      });
+      stationHotspotProductSearchInput.addEventListener("input", () => {
+        if (hotspotSearchComposing) {
+          return;
         }
+        const scene = getSelectedScene();
+        const draft = getSceneEditorDraftForScene(scene);
+        const nextText = String(stationHotspotProductSearchInput.value || "");
+        const restoreSnapshot = captureHotspotSearchInputState(stationHotspotProductSearchInput);
+        const currentProduct = draft ? findProductById(draft.product_id) : null;
+        const currentName = currentProduct ? String(currentProduct.product_name || "").trim() : "";
+        updateSceneEditorDraft({
+          product_id: currentName && String(nextText || "").trim() === currentName ? String(draft.product_id || "").trim() : "",
+          product_search_text: nextText,
+        }, { render: false });
+        void searchStationHotspotProducts(nextText, { restoreSnapshot });
       });
     }
+
+    refs.app.querySelectorAll('[data-action="station-hotspot-pick"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        const nextProductId = String(button.getAttribute("data-product-id") || "").trim();
+        if (!nextProductId) return;
+        const matched =
+          (Array.isArray(state.hotspotSearchResults) ? state.hotspotSearchResults : []).find(
+            (item) => String(item && item.product_id ? item.product_id : "").trim() === nextProductId
+          ) || null;
+        if (matched) {
+          upsertReferencedProduct({
+            product_id: nextProductId,
+            hall_id: String(matched.hall_id || "").trim(),
+            product_name: String(matched.product_name || "").trim(),
+            product_name_en: String(matched.product_name_en || "").trim(),
+            product_source: String(matched.product_source || "").trim(),
+            has_active_audio: !!matched.has_active_audio,
+          });
+        }
+        const scene = getSelectedScene();
+        const draft = getSceneEditorDraftForScene(scene);
+        const nextDraft = updateSceneEditorDraft({
+          product_id: nextProductId,
+          product_search_text: matched ? String(matched.product_name || "").trim() : nextProductId,
+        });
+        clearHotspotProductSearch();
+        if (draft && !draft.hotspot_id && nextDraft) {
+          void saveSceneEditorHotspot();
+        } else {
+          render();
+        }
+      });
+    });
 
     if (stationHotspotSortOrderInput) {
       stationHotspotSortOrderInput.addEventListener("change", () => {
@@ -4126,6 +5853,7 @@
         state.sceneEditorDraft = null;
         state.sceneEditorActiveHotspotId = "";
         state.sceneEditorCreateMode = false;
+        clearHotspotProductSearch();
         render();
       });
     }
@@ -4571,6 +6299,7 @@
       await syncOfflineResources({
         hall: state.hall,
         products: state.products,
+        referencedProducts: state.referencedProducts,
       });
     }
     const syncSucceeded = state.syncTone !== "danger";
@@ -4593,6 +6322,7 @@
       await syncOfflineResources({
         hall: state.hall,
         products: state.products,
+        referencedProducts: state.referencedProducts,
       });
     }
     const syncSucceeded = state.syncTone !== "danger";
@@ -4603,6 +6333,55 @@
       "upload-image"
     );
     render();
+  }
+
+  async function saveSelectedProductInfo() {
+    const product = getSelectedProduct();
+    if (!product || state.assetBusy) return;
+    const productId = String(product.product_id || "").trim();
+    const nextName = getEditableProductName(product).trim();
+    const nextIntro = getEditableProductIntro(product).trim();
+    if (!nextName) {
+      setAssetState("\u8bf7\u5148\u586b\u5199\u4ea7\u54c1\u540d\u79f0\u3002", "danger", false, "save-product-info");
+      render();
+      return;
+    }
+    setAssetState("\u6b63\u5728\u4fdd\u5b58\u4ea7\u54c1\u4fe1\u606f...", "pending", true, "save-product-info");
+    render();
+    try {
+      await fetchJson("/api/pad/products/" + encodeURIComponent(productId), state.clientId, {
+        method: "PUT",
+        json: {
+          product_name: nextName,
+          intro_text: nextIntro,
+        },
+      });
+      state.selectedProductId = productId;
+      await loadCurrentHall({ forceOnline: true });
+      state.selectedProductId = productId;
+      if (state.hall) {
+        await syncOfflineResources({
+          hall: state.hall,
+          products: state.products,
+          referencedProducts: state.referencedProducts,
+        });
+      }
+      updateProductInfoDraft(productId, {
+        product_name: nextName,
+        intro_text: nextIntro,
+      });
+      const syncSucceeded = state.syncTone !== "danger";
+      setAssetState(
+        syncSucceeded ? "\u4ea7\u54c1\u4fe1\u606f\u5df2\u4fdd\u5b58\u5e76\u540c\u6b65\u79bb\u7ebf\u8d44\u6e90\u3002" : "\u4ea7\u54c1\u4fe1\u606f\u5df2\u4fdd\u5b58\uff0c\u4f46\u79bb\u7ebf\u540c\u6b65\u5931\u8d25\u3002",
+        syncSucceeded ? "ready" : "warning",
+        false,
+        "save-product-info"
+      );
+      render();
+    } catch (error) {
+      setAssetState(describeRequestError(error), "danger", false, "save-product-info");
+      render();
+    }
   }
 
   async function regenerateSelectedProductAudio() {
@@ -4696,12 +6475,136 @@
       await syncOfflineResources({
         hall: state.hall,
         products: state.products,
+        referencedProducts: state.referencedProducts,
         scenes: state.scenes,
       });
     }
     const syncSucceeded = state.syncTone !== "danger";
     setAssetState(successMessage, syncSucceeded ? "ready" : "warning", false, action);
     render();
+  }
+
+  function buildStationHotspotsExportFilename(stationKey, exportedAtMs) {
+    const hallId = String(state.hall && state.hall.hall_id ? state.hall.hall_id : "hall").trim() || "hall";
+    const key = String(stationKey || "station").trim() || "station";
+    const date = new Date(Number(exportedAtMs || Date.now()));
+    const pad = (value) => String(value).padStart(2, "0");
+    const stamp =
+      String(date.getFullYear()) +
+      pad(date.getMonth() + 1) +
+      pad(date.getDate()) +
+      "-" +
+      pad(date.getHours()) +
+      pad(date.getMinutes()) +
+      pad(date.getSeconds());
+    return hallId + "-" + key + "-hotspots-" + stamp + ".json";
+  }
+
+  function triggerJsonDownload(filename, payload) {
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 0);
+  }
+
+  function readJsonFile(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          resolve(JSON.parse(String(reader.result || "")));
+        } catch (error) {
+          reject(error || new Error("invalid_json"));
+        }
+      };
+      reader.onerror = () => {
+        reject(reader.error || new Error("file_read_failed"));
+      };
+      reader.readAsText(file, "utf-8");
+    });
+  }
+
+  async function exportCurrentStationHotspots() {
+    const slot = getActiveStationSlot();
+    if (!slot || state.assetBusy) return;
+    const stationKey = String(slot.slotKey || "").trim();
+    if (!stationKey) {
+      setAssetState("当前站点不存在，无法导出热区配置。", "danger", false, "station-hotspot-export");
+      render();
+      return;
+    }
+    setAssetState("正在导出热区配置...", "pending", true, "station-hotspot-export");
+    render();
+    try {
+      const payload = await fetchJson(
+        "/api/pad/halls/current/stations/" + encodeURIComponent(stationKey) + "/hotspots/export",
+        state.clientId
+      );
+      triggerJsonDownload(
+        buildStationHotspotsExportFilename(
+          payload && payload.station_key ? payload.station_key : stationKey,
+          payload && payload.exported_at_ms
+        ),
+        payload
+      );
+      setAssetState("热区配置已导出。", "ready", false, "station-hotspot-export");
+      render();
+    } catch (error) {
+      setAssetState(describeRequestError(error), "danger", false, "station-hotspot-export");
+      render();
+    }
+  }
+
+  async function importCurrentStationHotspots(file) {
+    const slot = getActiveStationSlot();
+    const selectedScene = getSelectedScene();
+    if (!slot || state.assetBusy) return;
+    const stationKey = String(slot.slotKey || "").trim();
+    if (!stationKey) {
+      setAssetState("当前站点不存在，无法导入热区配置。", "danger", false, "station-hotspot-import");
+      render();
+      return;
+    }
+    setAssetState("正在导入热区配置...", "pending", true, "station-hotspot-import");
+    render();
+    try {
+      const parsed = await readJsonFile(file);
+      if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.hotspots)) {
+        throw new Error("hotspots_must_be_list");
+      }
+      await fetchJson(
+        "/api/pad/halls/current/stations/" + encodeURIComponent(stationKey) + "/hotspots/import",
+        state.clientId,
+        {
+          method: "POST",
+          json: {
+            hotspots: parsed.hotspots,
+          },
+        }
+      );
+      clearHotspotProductSearch();
+      await refreshHallAfterSceneMutation(
+        "热区配置已导入并同步离线资源。",
+        "热区配置已导入，但离线同步需要重试。",
+        "station-hotspot-import",
+        selectedScene ? selectedScene.scene_id : "",
+        ""
+      );
+    } catch (error) {
+      const message =
+        error && error.message === "hotspots_must_be_list"
+          ? "导入文件格式无效，缺少 hotspots 数组。"
+          : describeRequestError(error);
+      setAssetState(message, "danger", false, "station-hotspot-import");
+      render();
+    }
   }
 
   async function saveSelectedStationConfig(options) {
@@ -4927,11 +6830,13 @@
   function buildSceneDraft(scene, geometry, sourceHotspot) {
     const hotspot = sourceHotspot && typeof sourceHotspot === "object" ? sourceHotspot : {};
     const controlAction = getHotspotControlAction(hotspot);
+    const product = getHotspotProduct(hotspot);
     return {
       scene_id: String(scene.scene_id || ""),
       station_key: String(scene.station_key || scene.scene_id || ""),
       hotspot_id: String(hotspot.hotspot_id || "").trim(),
       product_id: String(hotspot.product_id || "").trim(),
+      product_search_text: String(hotspot.product_search_text || hotspot.product_name || (product && product.product_name) || "").trim(),
       target_type: getHotspotTargetType(hotspot),
       control_action: controlAction,
       control_label: controlAction ? getHotspotControlLabel(hotspot) : "",
@@ -4958,6 +6863,7 @@
     if (!scene || !hotspot) return;
     state.sceneEditorDraft = buildSceneDraft(scene, hotspot, hotspot);
     state.sceneEditorActiveHotspotId = String(hotspot.hotspot_id || "");
+    clearHotspotProductSearch();
     render();
   }
 
@@ -4965,13 +6871,11 @@
     const scene = getSelectedScene();
     const draft = getSceneEditorDraftForScene(scene);
     if (!scene || !draft || state.assetBusy) return;
-    if (!String(draft.product_id || "").trim()) {
-      setAssetState("Please choose a product for this hotspot first.", "danger", false, "station-hotspot");
-      render();
-      return;
-    }
+    const productId = String(draft.product_id || "").trim();
+    const manualProductName = productId ? "" : String(draft.product_search_text || "").trim();
     const payload = {
-      product_id: String(draft.product_id || "").trim(),
+      product_id: productId,
+      manual_product_name: manualProductName,
       sort_order: Number(draft.sort_order || 0),
       x_pct: clampPct(draft.x_pct),
       y_pct: clampPct(draft.y_pct),
@@ -5000,6 +6904,7 @@
       const hotspotId = response && response.hotspot ? response.hotspot.hotspot_id : draft.hotspot_id;
       state.sceneEditorDraft = null;
       state.sceneEditorCreateMode = false;
+      clearHotspotProductSearch();
       await refreshHallAfterSceneMutation(
         "Hotspot saved and synced offline.",
         "Hotspot saved, but offline sync needs a retry.",
@@ -5139,6 +7044,9 @@
     const interaction = sceneEditorInteraction;
     if (!interaction) return;
     sceneEditorInteraction = null;
+    if (interaction.kind === "create") {
+      state.sceneEditorCreateMode = false;
+    }
     const scene = getSelectedScene();
     const draft = getSceneEditorDraftForScene(scene);
     const shouldAutoSave =
@@ -5246,7 +7154,14 @@
   async function syncOfflineResources(options) {
     const hall = options && options.hall ? options.hall : state.hall;
     const rawProducts = Array.isArray(options && options.products) ? options.products : state.products;
-    const rawStations = Array.isArray(options && options.stations) ? options.stations : state.scenes;
+    const rawReferencedProducts = Array.isArray(options && options.referencedProducts)
+      ? options.referencedProducts
+      : state.referencedProducts;
+    const rawStations = Array.isArray(options && options.stations)
+      ? options.stations
+      : Array.isArray(options && options.scenes)
+        ? options.scenes
+        : state.scenes;
     if (!hall || !state.clientId) return;
 
     const syncSeq = latestSyncSeq + 1;
@@ -5261,9 +7176,19 @@
 
       const manifestPayload = await fetchJson("/api/pad/offline/manifest", state.clientId);
       const mergedProducts = mergeProducts(rawProducts, manifestPayload.items, state.clientId);
+      const mergedReferencedProducts = mergeProducts(
+        rawReferencedProducts,
+        manifestPayload.referenced_items,
+        state.clientId
+      );
       const mergedStations = normalizeStations(manifestPayload.stations, state.clientId);
-      await cacheAudioAssets(mergedProducts);
-      await cacheImageAssets(mergedProducts);
+      const cacheProducts = mergedProducts.concat(
+        mergedReferencedProducts.filter(
+          (product) => !mergedProducts.find((entry) => String(entry.product_id || "") === String(product.product_id || ""))
+        )
+      );
+      await cacheAudioAssets(cacheProducts);
+      await cacheImageAssets(cacheProducts);
       await cacheStationVisualAssets(mergedStations);
 
       if (syncSeq !== latestSyncSeq) return;
@@ -5274,6 +7199,7 @@
         hall: manifestPayload.hall || hall,
         version: Number(manifestPayload.version || 0),
         products: mergedProducts,
+        referencedProducts: mergedReferencedProducts,
         stations: mergedStations.length ? mergedStations : normalizeStations(rawStations, state.clientId),
         stationCatalog: Array.isArray(state.stationCatalog) ? state.stationCatalog : [],
         syncedAtMs: Date.now(),
@@ -5284,6 +7210,7 @@
       if (syncSeq !== latestSyncSeq) return;
 
       state.products = mergedProducts;
+      state.referencedProducts = mergedReferencedProducts;
       state.display = manifestPayload && manifestPayload.display ? manifestPayload.display : state.display;
       state.scenes = Array.isArray(snapshot.stations) ? snapshot.stations : [];
       state.demoStationSlots = normalizeStationsToSlots(manifestPayload.stations);
@@ -5293,7 +7220,7 @@
       state.offlineReady = true;
       state.lastSyncedAtMs = snapshot.syncedAtMs;
       state.usingOfflineSnapshot = false;
-      setSyncState(buildSyncReadyMessage(mergedProducts), "ready", false);
+      setSyncState(buildSyncReadyMessage(cacheProducts), "ready", false);
       ensureSelectedScene();
       render();
     } catch (error) {
@@ -5317,6 +7244,7 @@
     state.display = snapshot.display || null;
     state.hall = snapshot.hall || null;
     state.products = Array.isArray(snapshot.products) ? snapshot.products : [];
+    state.referencedProducts = Array.isArray(snapshot.referencedProducts) ? snapshot.referencedProducts : [];
     state.scenes = Array.isArray(snapshot.stations) ? snapshot.stations : [];
     state.demoStationSlots = normalizeStationsToSlots(snapshot.stations);
     state.stationCatalog = Array.isArray(snapshot.stationCatalog) ? snapshot.stationCatalog : [];
@@ -5354,6 +7282,7 @@
         state.stationCatalog = Array.isArray(displayPayload && displayPayload.station_catalog) ? displayPayload.station_catalog : [];
         state.hall = bootstrapPayload.hall || (displayPayload && displayPayload.hall) || (productsPayload && productsPayload.hall) || null;
         state.products = mergeProducts(productsPayload.items, null, state.clientId);
+        state.referencedProducts = mergeProducts(productsPayload.referenced_items, null, state.clientId);
         state.scenes = normalizeStations(displayPayload && displayPayload.stations, state.clientId);
         state.demoStationSlots = normalizeStationsToSlots(displayPayload && displayPayload.stations);
         preloadStationSlotRecordingMeta();
@@ -5368,6 +7297,7 @@
         void syncOfflineResources({
           hall: state.hall,
           products: productsPayload.items,
+          referencedProducts: productsPayload.referenced_items,
           stations: displayPayload && displayPayload.stations,
         });
         return;
@@ -5401,6 +7331,7 @@
       if (loadSeq !== latestLoadSeq) return;
       state.loading = false;
       state.products = [];
+      state.referencedProducts = [];
       state.scenes = [];
       state.demoStationSlots = createDefaultStationSlots();
       state.hall = null;
@@ -5496,6 +7427,7 @@
     state.display = null;
     state.hall = null;
     state.products = [];
+    state.referencedProducts = [];
     state.scenes = [];
     state.stationCatalog = [];
     state.selectedProductId = "";
@@ -5504,6 +7436,8 @@
     state.sceneEditorActiveHotspotId = "";
     state.sceneEditorDraft = null;
     state.audioTextDrafts = Object.create(null);
+    state.productInfoDrafts = Object.create(null);
+    clearHotspotProductSearch();
     state.loading = true;
     state.errorMessage = "";
     state.errorDetail = "";
@@ -5610,6 +7544,9 @@
           hallId: state.hall && state.hall.hall_id ? state.hall.hall_id : "",
           hallName: state.hall && state.hall.hall_name ? state.hall.hall_name : "",
           productCount: Array.isArray(state.products) ? state.products.length : 0,
+          referencedProductIds: (Array.isArray(state.referencedProducts) ? state.referencedProducts : []).map((item) =>
+            String(item.product_id || "")
+          ),
           stationCount: stations.length,
           stationIds: stations.map((item) => String(item.station_id || item.scene_id || "")),
           activeStationId: activeStation ? String(activeStation.station_id || activeStation.scene_id || "") : "",
@@ -5668,6 +7605,7 @@
           lastSyncedAtMs: Number(state.lastSyncedAtMs || 0),
           lastPlaybackRequestedUrl: state.lastPlaybackRequestedUrl,
           audioCurrentSrc: refs.audio.currentSrc || "",
+          audioCurrentTimeMs: getStationPlaybackCurrentTimeMs(),
           currentAudioText: selected ? getCurrentAudioText(selected) : "",
           currentAudioDraft: selected ? getEditableAudioText(selected) : "",
           currentAudioSourceType: selected ? String(selected.audio_source_type || "") : "",
