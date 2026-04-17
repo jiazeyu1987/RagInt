@@ -1099,6 +1099,10 @@ body.pad-body--ops {
   overflow: hidden;
 }
 
+.pad-shell--demo-fullscreen {
+  padding: 0;
+}
+
 .pad-demo-workspace {
   display: grid;
   grid-template-columns: 84px minmax(0, 1fr);
@@ -1110,6 +1114,8 @@ body.pad-body--ops {
 
 .pad-demo-workspace--full {
   display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .pad-demo-sidebar {
@@ -1154,6 +1160,18 @@ body.pad-body--ops {
 
 .pad-demo-main--full {
   width: 100%;
+  height: 100%;
+}
+
+.pad-shell--demo-fullscreen .pad-demo-panel--scene {
+  gap: 0;
+}
+
+.pad-shell--demo-fullscreen .pad-scene-stage {
+  margin-top: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
 }
 
 .pad-demo-main__meta {
@@ -2542,6 +2560,23 @@ body.pad-body--demo .pad-scene-stage {
 .pad-demo-panel--scene .pad-scene-hotspot--has-audio:hover,
 .pad-demo-panel--scene .pad-scene-hotspot--has-audio.is-active {
   background: rgba(13, 124, 87, 0.11);
+}
+
+.pad-scene-hotspot--interactive-only,
+.pad-demo-panel--scene .pad-scene-hotspot--interactive-only,
+.pad-scene-hotspot--interactive-only:hover,
+.pad-scene-hotspot--interactive-only.is-active,
+.pad-demo-panel--scene .pad-scene-hotspot--interactive-only:hover,
+.pad-demo-panel--scene .pad-scene-hotspot--interactive-only.is-active {
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: transparent;
+}
+
+.pad-scene-hotspot--interactive-only .pad-scene-hotspot__label {
+  display: none;
 }
 
 .pad-scene-hotspot--editor {

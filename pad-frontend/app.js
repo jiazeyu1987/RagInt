@@ -3254,6 +3254,7 @@
     }
     const opts = options && typeof options === "object" ? options : {};
     const editor = !!opts.editor;
+    const interactiveOnly = !editor && !!opts.interactiveOnly;
     const stretchToFit = !!opts.stretchToFit;
     const extraClassName = String(opts.className || "").trim();
     const hotspots = getSceneHotspotsForRender(item, editor);
@@ -3287,6 +3288,7 @@
           const controlAction = String(hotspot.control_action || "").trim();
           return (
             '<button type="button" class="pad-scene-hotspot' +
+            (interactiveOnly ? " pad-scene-hotspot--interactive-only" : "") +
             (hotspotTone === "control" ? " pad-scene-hotspot--control" : "") +
             (hotspotTone === "has-audio" ? " pad-scene-hotspot--has-audio" : "") +
             (hotspotTone === "missing-audio" ? " pad-scene-hotspot--missing-audio" : "") +
@@ -4706,7 +4708,7 @@
       "</div>" +
       "</div>" +
       (stationVisual
-        ? renderSceneStage(stationVisual, { editor: false, showLabels: false, stretchToFit: true })
+        ? renderSceneStage(stationVisual, { editor: false, showLabels: false, stretchToFit: true, interactiveOnly: true })
         : '<div class="pad-empty">当前站点尚未配置背景图。</div>') +
       '<div class="pad-detail__hint" style="margin-top:12px;">' +
       escapeHtml(
@@ -5206,7 +5208,7 @@
           "</div>") +
       "</div>" +
       (stationVisual
-        ? renderSceneStage(stationVisual, { editor: false, showLabels: mode === "station", stretchToFit: true })
+        ? renderSceneStage(stationVisual, { editor: false, showLabels: mode === "station", stretchToFit: true, interactiveOnly: true })
         : '<div class="pad-empty">当前站点尚未配置背景图。</div>') +
       '<div class="pad-detail__hint" style="margin-top:12px;">' +
       escapeHtml(
@@ -5223,12 +5225,12 @@
 
   function renderDemoShellV4(hallName, productCount, snapshotBadge) {
     return (
-      '<main class="pad-shell pad-shell--demo">' +
+      '<main class="pad-shell pad-shell--demo pad-shell--demo-fullscreen">' +
       '<section class="pad-demo-workspace pad-demo-workspace--full">' +
       '<section class="pad-demo-main pad-demo-main--full">' +
       '<section class="pad-demo-panel pad-demo-panel--scene">' +
       (getSelectedScene()
-        ? renderSceneStage(getSelectedScene(), { editor: false, showLabels: false, stretchToFit: true })
+        ? renderSceneStage(getSelectedScene(), { editor: false, showLabels: false, stretchToFit: true, interactiveOnly: true })
         : '<div class="pad-empty">This station has no background configured yet.</div>') +
       "</section>" +
       "</section>" +
