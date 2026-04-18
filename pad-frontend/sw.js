@@ -1,7 +1,23 @@
 const SHELL_CACHE = "ragint-pad-shell-v12";
 const AUDIO_CACHE = "ragint-pad-audio-v1";
 const IMAGE_CACHE = "ragint-pad-image-v1";
-const SHELL_ASSETS = ["/", "/index.html", "/app.css?v=20260418i", "/app.js?v=20260418i"];
+const SHELL_ASSETS = [
+  "/",
+  "/index.html",
+  "/app.css?v=20260418i",
+  "/modules/app/globals.js?v=20260418i",
+  "/modules/app/selectors.js?v=20260418i",
+  "/modules/core/foundation.js?v=20260418i",
+  "/modules/core/domain.js?v=20260418i",
+  "/modules/render/ops.js?v=20260418i",
+  "/modules/render/demo.js?v=20260418i",
+  "/modules/runtime/dom-events.js?v=20260418i",
+  "/modules/runtime/playback.js?v=20260418i",
+  "/modules/runtime/mutations.js?v=20260418i",
+  "/modules/runtime/data-sync.js?v=20260418i",
+  "/modules/runtime/bootstrap.js?v=20260418i",
+  "/app.js?v=20260418i",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -76,7 +92,8 @@ self.addEventListener("fetch", (event) => {
     url.pathname === "/" ||
     url.pathname === "/index.html" ||
     url.pathname === "/app.css" ||
-    url.pathname === "/app.js"
+    url.pathname === "/app.js" ||
+    url.pathname.startsWith("/modules/")
   ) {
     event.respondWith(networkFirstShell(request));
     return;

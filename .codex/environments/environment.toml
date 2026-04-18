@@ -8,9 +8,4 @@ script = ""
 [[actions]]
 name = "运行"
 icon = "run"
-command = "./start_ragint.cmd"
-
-[[actions]]
-name = "restart_fullstack.bat"
-icon = "run"
 command = "./restart_fullstack.bat"

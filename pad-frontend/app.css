@@ -467,7 +467,8 @@ body.pad-body--ops {
 }
 
 .pad-ops-control-sidebar .pad-ops-annotate-tools {
-  max-height: 42%;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .pad-ops-annotate-tools__body {
