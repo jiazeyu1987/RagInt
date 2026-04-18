@@ -87,6 +87,12 @@ function sendFile(res, filePath, method) {
   res.statusCode = 200;
   res.setHeader('Content-Type', contentTypeFor(filePath));
   res.setHeader('Content-Length', stat.size);
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.html' || ext === '.js' || ext === '.css') {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+  }
   if (method === 'HEAD') {
     res.end();
     return;

@@ -182,6 +182,7 @@
     stationPlaybackTotalDurationMs: 0,
     stationPlaybackAnswerText: "",
     stationPlaybackTimelineEvents: [],
+    stationPlaybackEndedHotspotIds: [],
     highlightedHotspotId: "",
     highlightedProductId: "",
     visibleHotspotIds: [],
@@ -236,8 +237,12 @@
   let stationTimelineInteraction = null;
   let narrationNodeInteraction = null;
   let hotspotSearchComposing = false;
+  let lastFlashLogicLogKey = "";
+  let lastFlashRenderLogKey = "";
   const recordingMetaRequestMap = Object.create(null);
   const stationSegmentDurationCache = Object.create(null);
+  const narrationStopDurationCache = Object.create(null);
+  const narrationStopDurationRequestMap = Object.create(null);
 
   function escapeHtml(value) {
     return String(value == null ? "" : value)
@@ -331,6 +336,20 @@
     return Math.floor(parsed);
   }
 
+  function normalizeNarrationHighlightTimeMs(value) {
+    const normalizedMs = normalizeTimelineEventTimeMs(value);
+    if (normalizedMs < 3600000) return normalizedMs;
+    const normalizedFromNs = Math.round(normalizedMs / 1000000);
+    if (normalizedFromNs < 0 || normalizedFromNs >= 3600000) return normalizedMs;
+    try {
+      console.warn("[pad] narration node highlight time looked like ns, converted to ms", {
+        raw: normalizedMs,
+        normalized: normalizedFromNs,
+      });
+    } catch (_) {}
+    return normalizedFromNs;
+  }
+
   function normalizeTimelineEventType(value) {
     const next = String(value || "focus_switch").trim() || "focus_switch";
     if (next === "focus_switch" || next === "highlight_on" || next === "highlight_off") {
@@ -341,10 +360,10 @@
 
   function normalizeNarrationNode(raw, index) {
     const item = raw && typeof raw === "object" ? raw : {};
-    const startMs = normalizeTimelineEventTimeMs(
+    const startMs = normalizeNarrationHighlightTimeMs(
       item.highlightStartMs != null ? item.highlightStartMs : item.highlight_start_ms
     );
-    const endMs = normalizeTimelineEventTimeMs(
+    const endMs = normalizeNarrationHighlightTimeMs(
       item.highlightEndMs != null ? item.highlightEndMs : item.highlight_end_ms
     );
     const hotspotIds = Array.isArray(item.hotspotIds)
@@ -618,6 +637,20 @@
     return entry.data.stops.map((item) => String(item || "").trim()).filter(Boolean);
   }
 
+  function getNarrationStopDurationCacheKey(recordingId, stopIndex) {
+    const rid = String(recordingId || "").trim();
+    const nextStopIndex = normalizeStationStopIndex(stopIndex);
+    if (!rid || nextStopIndex == null) return "";
+    return rid + "::" + String(nextStopIndex);
+  }
+
+  function getCachedNarrationStopDurationMs(recordingId, stopIndex) {
+    const cacheKey = getNarrationStopDurationCacheKey(recordingId, stopIndex);
+    if (!cacheKey) return 0;
+    const cached = Number(narrationStopDurationCache[cacheKey] || 0);
+    return Number.isFinite(cached) && cached > 0 ? Math.round(cached) : 0;
+  }
+
   function getStationSlotByKey(slotKey) {
     const key = normalizeDemoLeftTabKey(slotKey);
     return (
@@ -726,6 +759,71 @@
     const product = findProductById(hotspot.product_id);
     const productName = String(product && product.product_name ? product.product_name : hotspot.product_id || "").trim();
     return (productName || "\u672a\u7ed1\u5b9a\u4ea7\u54c1") + " \u00b7 " + String(hotspot.hotspot_id || "").trim();
+  }
+
+  function getStationFlashDebugHotspots(scene, hotspotIds) {
+    return (Array.isArray(hotspotIds) ? hotspotIds : [])
+      .map((hotspotId) => String(hotspotId || "").trim())
+      .filter((hotspotId, index, list) => hotspotId && list.indexOf(hotspotId) === index)
+      .map((hotspotId) => ({
+        hotspotId,
+        hotspotName: getStationTimelineHotspotLabel(scene, hotspotId),
+      }));
+  }
+
+  function logStationFlashLogic(slotKey, activeNodes, hotspotIds) {
+    const scene = findSceneById(slotKey) || getSelectedScene();
+    const debugHotspots = getStationFlashDebugHotspots(scene, hotspotIds);
+    const nodes = Array.isArray(activeNodes) ? activeNodes : activeNodes ? [activeNodes] : [];
+    if (!debugHotspots.length) {
+      lastFlashLogicLogKey = "";
+      return;
+    }
+    const nextKey = [
+      String(slotKey || "").trim(),
+      nodes.map((node) => String(node && node.nodeId ? node.nodeId : "").trim()).join(","),
+      debugHotspots.map((item) => item.hotspotId).join(","),
+    ].join("|");
+    if (!nextKey || nextKey === lastFlashLogicLogKey) return;
+    lastFlashLogicLogKey = nextKey;
+    try {
+      console.log("[pad:flash:logic] hotspots should flash", {
+        slotKey: String(slotKey || "").trim(),
+        nodeIds: nodes.map((node) => String(node && node.nodeId ? node.nodeId : "").trim()).filter(Boolean),
+        nodeStopNames: nodes.map((node) => String(node && node.stopName ? node.stopName : "").trim()).filter(Boolean),
+        hotspotNames: debugHotspots.map((item) => item.hotspotName),
+        hotspots: debugHotspots,
+      });
+    } catch (_) {}
+  }
+
+  function logStationFlashRender(scene, hotspotIds, options) {
+    const sceneKey = String(
+      (scene && (scene.slot_key || scene.station_key || scene.scene_id)) || ""
+    ).trim();
+    const debugHotspots = getStationFlashDebugHotspots(scene, hotspotIds);
+    if (!sceneKey || !debugHotspots.length) {
+      lastFlashRenderLogKey = "";
+      return;
+    }
+    const opts = options && typeof options === "object" ? options : {};
+    const nextKey = [
+      sceneKey,
+      String(opts.interactiveOnly ? "interactive" : "normal"),
+      debugHotspots.map((item) => item.hotspotId).join(","),
+    ].join("|");
+    if (nextKey === lastFlashRenderLogKey) return;
+    lastFlashRenderLogKey = nextKey;
+    try {
+      console.log("[pad:flash:render] hotspots rendered with flashing style", {
+        sceneId: sceneKey,
+        interactiveOnly: !!opts.interactiveOnly,
+        activeHotspotId: String(opts.activeHotspotId || "").trim(),
+        visibleHotspotIds: Array.isArray(opts.visibleHotspotIds) ? opts.visibleHotspotIds : [],
+        hotspotNames: debugHotspots.map((item) => item.hotspotName),
+        hotspots: debugHotspots,
+      });
+    } catch (_) {}
   }
 
   function getStationTimelineEventSummary(scene, event) {
@@ -1603,6 +1701,37 @@
     });
   }
 
+  function preloadNarrationStopDurations() {
+    const stopPairs = Array.from(
+      new Set(
+        (Array.isArray(state.demoStationSlots) ? state.demoStationSlots : [])
+          .flatMap((slot) => {
+            const slotPairs = [];
+            const slotRecordingId = String(slot && slot.recordingId ? slot.recordingId : "").trim();
+            const slotStopIndex = normalizeStationStopIndex(slot && slot.stopIndex);
+            if (slotRecordingId && slotStopIndex != null) {
+              slotPairs.push(slotRecordingId + "::" + String(slotStopIndex));
+            }
+            (Array.isArray(slot && slot.narrationNodes) ? slot.narrationNodes : []).forEach((node) => {
+              const nodeRecordingId = String(node && node.recordingId ? node.recordingId : "").trim();
+              const nodeStopIndex = normalizeStationStopIndex(node && node.stopIndex);
+              if (nodeRecordingId && nodeStopIndex != null) {
+                slotPairs.push(nodeRecordingId + "::" + String(nodeStopIndex));
+              }
+            });
+            return slotPairs;
+          })
+          .filter(Boolean)
+      )
+    );
+    stopPairs.forEach((pairKey) => {
+      const [recordingId, rawStopIndex] = String(pairKey || "").split("::");
+      const stopIndex = normalizeStationStopIndex(rawStopIndex);
+      if (!recordingId || stopIndex == null) return;
+      void ensureNarrationStopDurationMs(recordingId, stopIndex);
+    });
+  }
+
   function openDatabase() {
     return new Promise((resolve, reject) => {
       if (!window.indexedDB) {
@@ -2272,6 +2401,7 @@
         narrationNodesError: "",
       };
     });
+    preloadNarrationStopDurations();
   }
 
   function addStationNarrationNode(slotKey) {
@@ -2632,6 +2762,7 @@
     state.stationPlaybackSegmentIndex = -1;
     state.stationPlaybackAnswerText = "";
     state.stationPlaybackTimelineEvents = [];
+    state.stationPlaybackEndedHotspotIds = [];
     state.highlightedHotspotId = "";
     state.highlightedProductId = "";
     state.visibleHotspotIds = [];
@@ -2981,14 +3112,14 @@
   function renderOpsHotspotInspector(draft) {
     if (!draft) {
       return (
-        '<section class="pad-ops-side-card">' +
+        '<section class="pad-ops-side-card pad-ops-side-card--hotspot-inspector">' +
         '<div class="pad-ops-side-card__title">\u70ed\u533a\u7ed1\u5b9a</div>' +
         '<div class="pad-panel__hint">\u5148\u5728\u4e2d\u592e\u753b\u5e03\u4e2d\u9009\u4e2d\u4e00\u4e2a\u70ed\u533a\uff0c\u6216\u70b9\u51fb\u201c\u65b0\u5efa\u70ed\u533a\u201d\u540e\u5728\u753b\u5e03\u4e0a\u62d6\u62fd\u521b\u5efa\u3002</div>' +
         "</section>"
       );
     }
     return (
-      '<section class="pad-ops-side-card">' +
+      '<section class="pad-ops-side-card pad-ops-side-card--hotspot-inspector">' +
       '<div class="pad-ops-side-card__title">\u70ed\u533a\u7ed1\u5b9a</div>' +
       '<label class="pad-station-config-panel__field"><span>\u7ed1\u5b9a\u4ea7\u54c1</span><select data-action="station-hotspot-product">' +
       '<option value="">\u8bf7\u9009\u62e9\u4ea7\u54c1</option>' +
@@ -3501,39 +3632,8 @@
     );
   }
 
-  function renderOpsOtherConfigWorkspace(hallName) {
+  function renderOpsControlOverviewHeader(hallName) {
     return (
-      '<section class="pad-ops-other-workspace">' +
-      '<section class="pad-panel pad-ops-product-panel">' +
-      '<div class="pad-panel__header pad-ops-panel__header">' +
-      "<div>" +
-      '<div class="pad-panel__title">' +
-      escapeHtml(TEXT.hallListTitle) +
-      "</div>" +
-      '<div class="pad-panel__hint" data-testid="hall-name">' +
-      escapeHtml(hallName) +
-      "</div>" +
-      "</div>" +
-      '<div class="pad-panel__hint">\u9009\u4e2d\u4ea7\u54c1\u540e\uff0c\u53f3\u4fa7\u7acb\u5373\u53ef\u7f16\u8f91\u8bb2\u89e3\u4e0e\u4ea7\u54c1\u4fe1\u606f\u3002</div>' +
-      "</div>" +
-      renderProductCards() +
-      "</section>" +
-      '<section class="pad-panel pad-ops-detail-panel">' +
-      renderDetailPanel() +
-      "</section>" +
-      "</section>"
-    );
-  }
-
-  function renderOpsControlSidebar(hallName, sourceBadge, syncSummary, annotateTargetLabel, productCount, audioReadyCount) {
-    const draft = state.sceneEditorDraft && typeof state.sceneEditorDraft === "object" ? state.sceneEditorDraft : null;
-    const slot = getActiveStationSlot();
-    const selectedProduct = getSelectedProduct();
-    const stationStatus = getStationSlotStatus(slot);
-    const opsStationTab = normalizeOpsStationTab(state.opsStationTab);
-    return (
-      '<aside class="pad-ops-control-sidebar">' +
-      '<section class="pad-panel pad-ops-control-overview">' +
       '<div class="pad-panel__header pad-ops-panel__header pad-ops-control-overview__header">' +
       '<div class="pad-ops-control-overview__header-main">' +
       '<div class="pad-ops-topbar__eyebrow">\u8fd0\u7ef4\u5de5\u4f5c\u53f0</div>' +
@@ -3545,7 +3645,15 @@
       renderOpsWorkspaceSection() +
       "</div>" +
       renderOpsDemoEntryButton() +
-      "</div>" +
+      "</div>"
+    );
+  }
+
+  function renderOpsControlOverviewBody(syncSummary, productCount, audioReadyCount) {
+    const slot = getActiveStationSlot();
+    const selectedProduct = getSelectedProduct();
+    const stationStatus = getStationSlotStatus(slot);
+    return (
       '<div class="pad-ops-control-overview__body">' +
       '<div class="pad-ops-control-overview__meta">' +
       '<span>\u8bbe\u5907\uff1a<strong data-testid="client-id">' +
@@ -3597,8 +3705,68 @@
       escapeHtml("\u5f53\u524d\u7ad9\u70b9\uff1a" + (String(slot.stopName || "").trim() || "--")) +
       "</span>" +
       "</div>" +
+      "</div>"
+    );
+  }
+
+  function renderOpsControlOverviewPanel(hallName, syncSummary, productCount, audioReadyCount, extraClassName) {
+    return (
+      '<section class="pad-panel pad-ops-control-overview' +
+      (extraClassName ? " " + extraClassName : "") +
+      '">' +
+      renderOpsControlOverviewHeader(hallName) +
+      renderOpsControlOverviewBody(syncSummary, productCount, audioReadyCount) +
+      "</section>"
+    );
+  }
+
+  function renderOpsControlOverviewBodyPanel(syncSummary, productCount, audioReadyCount, extraClassName) {
+    return (
+      '<section class="pad-panel pad-ops-control-overview' +
+      (extraClassName ? " " + extraClassName : "") +
+      '">' +
+      renderOpsControlOverviewBody(syncSummary, productCount, audioReadyCount) +
+      "</section>"
+    );
+  }
+
+  function renderOpsOtherConfigWorkspace(hallName, embeddedControlPanelHtml) {
+    return (
+      '<section class="pad-ops-other-workspace pad-ops-other-workspace--with-control">' +
+      '<section class="pad-panel pad-ops-product-panel">' +
+      '<div class="pad-panel__header pad-ops-panel__header">' +
+      "<div>" +
+      '<div class="pad-panel__title">' +
+      escapeHtml(TEXT.hallListTitle) +
       "</div>" +
+      '<div class="pad-panel__hint" data-testid="hall-name">' +
+      escapeHtml(hallName) +
+      "</div>" +
+      "</div>" +
+      '<div class="pad-panel__hint">\u9009\u4e2d\u4ea7\u54c1\u540e\uff0c\u53f3\u4fa7\u7acb\u5373\u53ef\u7f16\u8f91\u8bb2\u89e3\u4e0e\u4ea7\u54c1\u4fe1\u606f\u3002</div>' +
+      "</div>" +
+      renderProductCards() +
       "</section>" +
+      '<section class="pad-panel pad-ops-detail-panel">' +
+      renderDetailPanel() +
+      "</section>" +
+      (embeddedControlPanelHtml || "") +
+      "</section>"
+    );
+  }
+
+  function renderOpsControlSidebar(hallName, syncSummary, annotateTargetLabel, productCount, audioReadyCount) {
+    const draft = state.sceneEditorDraft && typeof state.sceneEditorDraft === "object" ? state.sceneEditorDraft : null;
+    const opsStationTab = normalizeOpsStationTab(state.opsStationTab);
+    return (
+      '<aside class="pad-ops-control-sidebar">' +
+      renderOpsControlOverviewPanel(
+        hallName,
+        syncSummary,
+        productCount,
+        audioReadyCount,
+        "pad-ops-control-overview--sidebar pad-ops-control-overview--body-relocated"
+      ) +
       (opsStationTab === "annotate"
         ? '<section class="pad-panel pad-ops-annotate-tools">' +
           '<div class="pad-panel__header pad-ops-panel__header">' +
@@ -3636,9 +3804,6 @@
       : draft
         ? String((draftProduct && draftProduct.product_name) || draft.product_search_text || draft.hotspot_id || "\u672a\u9009\u4e2d").trim() || "\u672a\u9009\u4e2d"
         : "\u672a\u9009\u4e2d";
-    const sourceBadge = state.usingOfflineSnapshot
-      ? '<span class="pad-chip pad-chip--ready">\u79bb\u7ebf\u5feb\u7167</span>'
-      : '<span class="pad-chip pad-chip--pending">\u5b9e\u65f6\u6570\u636e</span>';
     const syncSummary =
       state.syncTone === "danger"
         ? "\u9700\u5904\u7406"
@@ -3647,15 +3812,24 @@
           : state.offlineReady || state.usingOfflineSnapshot
             ? "\u5df2\u540c\u6b65"
             : "\u5f85\u540c\u6b65";
-    const mainWorkspace = opsStationTab === "other" ? renderOpsOtherConfigWorkspace(hallName) : renderOpsStationWorkspace();
+    const embeddedOtherControlPanel =
+      opsStationTab === "other"
+        ? renderOpsControlOverviewBodyPanel(syncSummary, productCount, audioReadyCount, "pad-ops-other-control-panel")
+        : "";
+    const mainWorkspace =
+      opsStationTab === "other"
+        ? renderOpsOtherConfigWorkspace(hallName, embeddedOtherControlPanel)
+        : renderOpsStationWorkspace();
     return (
       '<main class="pad-shell pad-shell--ops">' +
       renderOpsMobileWorkspaceSwitcher() +
-      '<section class="pad-ops-unified-shell">' +
+      '<section class="pad-ops-unified-shell' +
+      (opsStationTab === "other" ? " pad-ops-unified-shell--other" : "") +
+      '">' +
       '<section class="pad-ops-workpane">' +
       mainWorkspace +
       "</section>" +
-      renderOpsControlSidebar(hallName, sourceBadge, syncSummary, annotateTargetLabel, productCount, audioReadyCount) +
+      renderOpsControlSidebar(hallName, syncSummary, annotateTargetLabel, productCount, audioReadyCount) +
       "</section>" +
       "</main>"
     );
@@ -6100,7 +6274,17 @@
       currentNodeId && currentNodeId === String(item.nodeId || "").trim()
         ? Math.max(0, Number((runtimeNode && runtimeNode.durationMs) || state.stationPlaybackTotalDurationMs || 0))
         : 0;
-    return Math.max(1000, currentTotalMs, Number(item.highlightEndMs || 0), Number(item.highlightStartMs || 0) + 500);
+    const cachedStopDurationMs = getCachedNarrationStopDurationMs(item.recordingId, item.stopIndex);
+    if (!cachedStopDurationMs) {
+      void ensureNarrationStopDurationMs(item.recordingId, item.stopIndex);
+    }
+    return Math.max(
+      1000,
+      cachedStopDurationMs,
+      currentTotalMs,
+      Number(item.highlightEndMs || 0),
+      Number(item.highlightStartMs || 0) + 500
+    );
   }
 
   function getNarrationNodeCurrentMs(node) {
@@ -6412,12 +6596,14 @@
     const bindingMode = !!opts.bindingMode;
     const hotspots = getSceneHotspotsForRender(item, editor);
     const selectedBindingIds = new Set((Array.isArray(opts.boundHotspotIds) ? opts.boundHotspotIds : []).map((id) => String(id || "").trim()));
+    const sceneKey = String((item && (item.slot_key || item.station_key || item.scene_id)) || "").trim();
+    const isPlaybackScene = sceneKey && sceneKey === String(state.stationPlaybackSlotKey || "").trim();
     const visibleHotspotIds = new Set((Array.isArray(state.visibleHotspotIds) ? state.visibleHotspotIds : []).map((id) => String(id || "").trim()));
     const flashingHotspotIds = new Set((Array.isArray(state.flashingHotspotIds) ? state.flashingHotspotIds : []).map((id) => String(id || "").trim()));
     const narrationVisibilityActive =
       !editor &&
       !bindingMode &&
-      String(state.stationPlaybackSlotKey || "").trim() === String(item.slot_key || item.station_key || item.scene_id || "").trim() &&
+      isPlaybackScene &&
       Array.isArray(state.stationPlaybackNodes) &&
       state.stationPlaybackNodes.length > 0 &&
       String(state.stationPlaybackState || "").trim() !== "idle";
@@ -6481,6 +6667,7 @@
           );
         }
         if (!editor) {
+          const shouldRenderLabel = !!(controlAction || opts.showLabels || interactiveOnly);
           return (
             '<button type="button" class="' +
             className +
@@ -6493,7 +6680,7 @@
             '" style="' +
             escapeHtml(style) +
             '">' +
-            (controlAction || opts.showLabels
+            (shouldRenderLabel
               ? '<span class="pad-scene-hotspot__label">' + escapeHtml(label) + "</span>"
               : "") +
             "</button>"
@@ -6521,6 +6708,18 @@
         );
       })
       .join("");
+    if (isPlaybackScene) {
+      const renderFlashingIds = Array.from(flashingHotspotIds);
+      if (renderFlashingIds.length) {
+        logStationFlashRender(item, renderFlashingIds, {
+          interactiveOnly,
+          activeHotspotId,
+          visibleHotspotIds: Array.from(visibleHotspotIds),
+        });
+      } else {
+        lastFlashRenderLogKey = "";
+      }
+    }
     return (
       '<div class="pad-scene-stage' +
       (editor ? " is-editor" : "") +
@@ -7278,7 +7477,26 @@
     updateAudioDock();
     hydrateStationTimelinePreviewControls();
     bindDomEvents();
+    syncMobileAnnotateToolsHeight();
     publishE2eState();
+  }
+
+  function syncMobileAnnotateToolsHeight() {
+    const tools = refs.app.querySelector(".pad-ops-annotate-tools");
+    if (!tools) return;
+    const isMobile = typeof window !== "undefined" && window.innerWidth <= 980;
+    const isAnnotateOps = state.mode === "ops" && normalizeOpsStationTab(state.opsStationTab) === "annotate";
+    if (!isMobile || !isAnnotateOps) {
+      tools.style.minHeight = "";
+      tools.style.height = "";
+      return;
+    }
+    const rect = tools.getBoundingClientRect();
+    const viewportHeight = typeof window.innerHeight === "number" ? window.innerHeight : 0;
+    const bottomGap = 16;
+    const availableHeight = Math.max(280, Math.round(viewportHeight - rect.top - bottomGap));
+    tools.style.minHeight = String(availableHeight) + "px";
+    tools.style.height = String(availableHeight) + "px";
   }
 
   function bindDomEvents() {
@@ -7336,8 +7554,8 @@
       });
     });
 
-    const syncButton = refs.app.querySelector('[data-action="sync-offline"]');
-    const reloadButton = refs.app.querySelector('[data-action="reload-live"]');
+    const syncButtons = Array.from(refs.app.querySelectorAll('[data-action="sync-offline"]'));
+    const reloadButtons = Array.from(refs.app.querySelectorAll('[data-action="reload-live"]'));
     const playButton = refs.app.querySelector('[data-action="play-selected"]');
     const stationPlayButtons = Array.from(refs.app.querySelectorAll('[data-action="play-station-slot"]'));
     const stationTimelinePlayButtons = Array.from(refs.app.querySelectorAll('[data-action="play-station-slot-from-start"]'));
@@ -7352,8 +7570,8 @@
     const productNameEditor = refs.app.querySelector('[data-action="product-name-draft"]');
     const productIntroEditor = refs.app.querySelector('[data-action="product-intro-draft"]');
     const saveProductInfoButton = refs.app.querySelector('[data-action="save-product-info"]');
-    const refreshRecordingsButton = refs.app.querySelector('[data-action="refresh-recordings"]');
-    const saveStationConfigButton = refs.app.querySelector('[data-action="save-station-config"]');
+    const refreshRecordingsButtons = Array.from(refs.app.querySelectorAll('[data-action="refresh-recordings"]'));
+    const saveStationConfigButtons = Array.from(refs.app.querySelectorAll('[data-action="save-station-config"]'));
     const stationTimelineAddButton = refs.app.querySelector('[data-action="station-timeline-add"]');
     const stationBackgroundButton = refs.app.querySelector('[data-action="select-station-background"]');
     const stationBackgroundInput = refs.app.querySelector('[data-action="station-background-input"]');
@@ -7412,8 +7630,8 @@
       });
     }
 
-    if (syncButton) {
-      syncButton.addEventListener("click", () => {
+    syncButtons.forEach((button) => {
+      button.addEventListener("click", () => {
         resetAudioPlayback();
         void syncOfflineResources({
           hall: state.hall,
@@ -7422,14 +7640,14 @@
           scenes: state.scenes,
         });
       });
-    }
+    });
 
-    if (reloadButton) {
-      reloadButton.addEventListener("click", () => {
+    reloadButtons.forEach((button) => {
+      button.addEventListener("click", () => {
         resetAudioPlayback();
         void loadCurrentHall({ forceOnline: true });
       });
-    }
+    });
 
     if (playButton) {
       playButton.addEventListener("click", () => {
@@ -7551,12 +7769,12 @@
       });
     });
 
-    if (refreshRecordingsButton) {
-      refreshRecordingsButton.addEventListener("click", () => {
+    refreshRecordingsButtons.forEach((button) => {
+      button.addEventListener("click", () => {
         void refreshRecordingOptions();
         preloadStationSlotRecordingMeta();
       });
-    }
+    });
 
     if (exportStationHotspotsButton) {
       exportStationHotspotsButton.addEventListener("click", () => {
@@ -7842,14 +8060,14 @@
       });
     });
 
-    if (saveStationConfigButton) {
-      saveStationConfigButton.addEventListener("click", () => {
+    saveStationConfigButtons.forEach((button) => {
+      button.addEventListener("click", () => {
         const activeSlot = getActiveStationSlot();
         const narrationNodes = getStationNarrationNodes(activeSlot);
         updateStationSlot(activeSlot.slotKey, () => ({ narrationNodes }));
         void saveSelectedStationConfig({ narrationNodes });
       });
-    }
+    });
 
     if (stationBackgroundButton && stationBackgroundInput) {
       stationBackgroundButton.addEventListener("click", () => {
@@ -8298,6 +8516,50 @@
     });
   }
 
+  async function ensureNarrationStopDurationMs(recordingId, stopIndex, options) {
+    const cacheKey = getNarrationStopDurationCacheKey(recordingId, stopIndex);
+    if (!cacheKey) return 0;
+    const opts = options && typeof options === "object" ? options : {};
+    const cachedDurationMs = getCachedNarrationStopDurationMs(recordingId, stopIndex);
+    if (!opts.force && cachedDurationMs > 0) {
+      return cachedDurationMs;
+    }
+    if (!opts.force && narrationStopDurationRequestMap[cacheKey]) {
+      try {
+        return await narrationStopDurationRequestMap[cacheKey];
+      } catch (_) {
+        return 0;
+      }
+    }
+    const requestPromise = (async () => {
+      try {
+        const payload = await fetchJson(
+          '/api/recordings/' + encodeURIComponent(String(recordingId || '')) + '/stop/' + encodeURIComponent(String(stopIndex)),
+          state.clientId
+        );
+        const baseQueue = normalizeStationSegments(payload);
+        if (!baseQueue.length) return 0;
+        const durations = await Promise.all(baseQueue.map((segment) => loadStationSegmentDurationMs(segment)));
+        const totalDurationMs = durations.reduce((sum, durationMs) => sum + Math.max(0, Number(durationMs || 0)), 0);
+        if (Number(totalDurationMs || 0) > 0) {
+          narrationStopDurationCache[cacheKey] = Math.round(Number(totalDurationMs));
+          render();
+        }
+        return Number(narrationStopDurationCache[cacheKey] || 0);
+      } catch (_) {
+        return 0;
+      }
+    })();
+    narrationStopDurationRequestMap[cacheKey] = requestPromise;
+    try {
+      return await requestPromise;
+    } finally {
+      if (narrationStopDurationRequestMap[cacheKey] === requestPromise) {
+        delete narrationStopDurationRequestMap[cacheKey];
+      }
+    }
+  }
+
   async function hydrateStationPlaybackQueue(queue, playbackSeq) {
     const baseQueue = Array.isArray(queue) ? queue : [];
     const durations = await Promise.all(baseQueue.map((segment) => loadStationSegmentDurationMs(segment)));
@@ -8342,6 +8604,7 @@
     state.stationPlaybackSegmentIndex = -1;
     state.stationPlaybackAnswerText = '';
     state.stationPlaybackTimelineEvents = [];
+    state.stationPlaybackEndedHotspotIds = [];
     state.highlightedHotspotId = '';
     state.highlightedProductId = '';
     state.visibleHotspotIds = [];
@@ -8608,49 +8871,109 @@
   }
 
   async function buildNarrationPlaybackPlan(slotKey, nodes, playbackSeq) {
+    const normalizedNodes = normalizeNarrationNodes(nodes);
+    const groupStats = new Map();
+    normalizedNodes.forEach((node) => {
+      const groupKey = [String(node.recordingId || "").trim(), String(node.stopIndex)].join("::");
+      const current = groupStats.get(groupKey) || { rawMaxEndMs: 0, nodeCount: 0 };
+      current.rawMaxEndMs = Math.max(current.rawMaxEndMs, Number(node.highlightEndMs || 0));
+      current.nodeCount += 1;
+      groupStats.set(groupKey, current);
+    });
     const planNodes = [];
     const planQueue = [];
+    const stopPlanCache = new Map();
+    let activeGroupKey = "";
+    let activeGroup = null;
     let offsetMs = 0;
-    for (const rawNode of Array.isArray(nodes) ? nodes : []) {
+    for (const node of normalizedNodes) {
       if (playbackSeq !== latestStationPlaybackSeq) return null;
-      const node = normalizeNarrationNode(rawNode, planNodes.length);
-      const payload = await fetchJson(
-        '/api/recordings/' + encodeURIComponent(String(node.recordingId || '')) + '/stop/' + encodeURIComponent(String(node.stopIndex)),
-        state.clientId
+      const groupKey = [String(node.recordingId || "").trim(), String(node.stopIndex)].join("::");
+      let stopPlan = stopPlanCache.get(groupKey) || null;
+      if (!stopPlan) {
+        const payload = await fetchJson(
+          '/api/recordings/' + encodeURIComponent(String(node.recordingId || '')) + '/stop/' + encodeURIComponent(String(node.stopIndex)),
+          state.clientId
+        );
+        if (playbackSeq !== latestStationPlaybackSeq) return null;
+        const baseQueue = normalizeStationSegments(payload);
+        if (!baseQueue.length) {
+          throw createError("narration_node_audio_missing");
+        }
+        const hydrated = await hydrateStationPlaybackQueue(baseQueue, playbackSeq);
+        if (!hydrated || !Array.isArray(hydrated.queue) || !hydrated.queue.length || Number(hydrated.totalDurationMs || 0) <= 0) {
+          throw createError("narration_node_duration_missing");
+        }
+        stopPlan = {
+          queue: hydrated.queue,
+          durationMs: Math.round(Number(hydrated.totalDurationMs || 0)),
+          stopName: String(payload && payload.stop_name ? payload.stop_name : node.stopName || "").trim(),
+          answerText: String(payload && payload.answer_text ? payload.answer_text : "").trim(),
+        };
+        const stats = groupStats.get(groupKey) || { rawMaxEndMs: 0, nodeCount: 0 };
+        const rawMaxEndMs = Math.max(0, Number(stats.rawMaxEndMs || 0));
+        const shouldScaleLegacyCompressedMs =
+          Number(stopPlan.durationMs || 0) >= 3000 &&
+          Number(stats.nodeCount || 0) > 1 &&
+          rawMaxEndMs > 0 &&
+          rawMaxEndMs <= Number(stopPlan.durationMs || 0) * 0.5;
+        stopPlan.highlightScale = shouldScaleLegacyCompressedMs
+          ? Number(stopPlan.durationMs || 0) / rawMaxEndMs
+          : 1;
+        if (shouldScaleLegacyCompressedMs) {
+          try {
+            console.warn("[pad] narration node highlight timeline looked compressed, scaled to stop duration", {
+              recordingId: String(node.recordingId || "").trim(),
+              stopIndex: Number(node.stopIndex),
+              rawMaxEndMs,
+              stopDurationMs: Number(stopPlan.durationMs || 0),
+              scale: stopPlan.highlightScale,
+            });
+          } catch (_) {}
+        }
+        stopPlanCache.set(groupKey, stopPlan);
+      }
+      if (!activeGroup || activeGroupKey !== groupKey) {
+        activeGroupKey = groupKey;
+        activeGroup = {
+          key: groupKey,
+          playbackStartMs: offsetMs,
+          playbackEndMs: offsetMs + Number(stopPlan.durationMs || 0),
+          durationMs: Number(stopPlan.durationMs || 0),
+          stopName: String(stopPlan.stopName || "").trim(),
+          answerText: String(stopPlan.answerText || "").trim(),
+        };
+        (Array.isArray(stopPlan.queue) ? stopPlan.queue : []).forEach((segment) => {
+          planQueue.push(
+            Object.assign({}, segment, {
+              nodeId: node.nodeId,
+              groupKey,
+              startMs: activeGroup.playbackStartMs + Number(segment.startMs || 0),
+              endMs: activeGroup.playbackStartMs + Number(segment.endMs || 0),
+            })
+          );
+        });
+        offsetMs += activeGroup.durationMs;
+      }
+      const scaledHighlightStartMs = Math.round(
+        normalizeTimelineEventTimeMs(node.highlightStartMs) * Number(stopPlan.highlightScale || 1)
       );
-      if (playbackSeq !== latestStationPlaybackSeq) return null;
-      const baseQueue = normalizeStationSegments(payload);
-      if (!baseQueue.length) {
-        throw createError("narration_node_audio_missing");
-      }
-      const hydrated = await hydrateStationPlaybackQueue(baseQueue, playbackSeq);
-      if (!hydrated || !Array.isArray(hydrated.queue) || !hydrated.queue.length || Number(hydrated.totalDurationMs || 0) <= 0) {
-        throw createError("narration_node_duration_missing");
-      }
-      const nodeDurationMs = Math.round(Number(hydrated.totalDurationMs || 0));
-      const nodeStartMs = offsetMs;
-      const highlightStartMs = Math.max(0, Math.min(normalizeTimelineEventTimeMs(node.highlightStartMs), nodeDurationMs));
-      const highlightEndMs = Math.max(highlightStartMs, Math.min(normalizeTimelineEventTimeMs(node.highlightEndMs), nodeDurationMs));
+      const scaledHighlightEndMs = Math.round(
+        normalizeTimelineEventTimeMs(node.highlightEndMs) * Number(stopPlan.highlightScale || 1)
+      );
+      const highlightStartMs = Math.max(0, Math.min(scaledHighlightStartMs, activeGroup.durationMs));
+      const highlightEndMs = Math.max(highlightStartMs, Math.min(scaledHighlightEndMs, activeGroup.durationMs));
       const playbackNode = Object.assign({}, node, {
-        playbackStartMs: nodeStartMs,
-        playbackEndMs: nodeStartMs + nodeDurationMs,
-        durationMs: nodeDurationMs,
-        highlightGlobalStartMs: nodeStartMs + highlightStartMs,
-        highlightGlobalEndMs: nodeStartMs + highlightEndMs,
-        stopName: String(payload && payload.stop_name ? payload.stop_name : node.stopName || "").trim(),
-        answerText: String(payload && payload.answer_text ? payload.answer_text : "").trim(),
+        playbackStartMs: activeGroup.playbackStartMs,
+        playbackEndMs: activeGroup.playbackEndMs,
+        durationMs: activeGroup.durationMs,
+        highlightGlobalStartMs: activeGroup.playbackStartMs + highlightStartMs,
+        highlightGlobalEndMs: activeGroup.playbackStartMs + highlightEndMs,
+        stopName: activeGroup.stopName,
+        answerText: activeGroup.answerText,
+        groupKey,
       });
       planNodes.push(playbackNode);
-      hydrated.queue.forEach((segment) => {
-        planQueue.push(
-          Object.assign({}, segment, {
-            nodeId: playbackNode.nodeId,
-            startMs: nodeStartMs + Number(segment.startMs || 0),
-            endMs: nodeStartMs + Number(segment.endMs || 0),
-          })
-        );
-      });
-      offsetMs += nodeDurationMs;
     }
     return {
       nodes: planNodes,
@@ -8661,25 +8984,38 @@
 
   function applyStationTimelineHighlight(elapsedMs) {
     const nodes = Array.isArray(state.stationPlaybackNodes) ? state.stationPlaybackNodes : [];
+    const slotKey = String(state.stationPlaybackSlotKey || "").trim();
     const cursorMs = Math.max(0, Number(elapsedMs || 0));
-    let activeNode = null;
-    let activeNodeIndex = -1;
+    let playbackNode = null;
+    let playbackNodeIndex = -1;
     for (let index = 0; index < nodes.length; index += 1) {
       const node = nodes[index];
-      if (cursorMs < Number(node.playbackEndMs || 0)) {
-        activeNode = node;
-        activeNodeIndex = index;
+      if (
+        cursorMs >= Number(node.playbackStartMs || 0) &&
+        cursorMs < Number(node.playbackEndMs || 0)
+      ) {
+        playbackNode = node;
+        playbackNodeIndex = index;
         break;
       }
     }
-    if (!activeNode && nodes.length && cursorMs >= Number(nodes[nodes.length - 1].playbackEndMs || 0)) {
-      activeNode = nodes[nodes.length - 1];
-      activeNodeIndex = nodes.length - 1;
+    if (!playbackNode && nodes.length && cursorMs >= Number(nodes[nodes.length - 1].playbackEndMs || 0)) {
+      playbackNode = nodes[nodes.length - 1];
+      playbackNodeIndex = nodes.length - 1;
     }
-    state.stationPlaybackNodeIndex = activeNodeIndex;
-    state.stationPlaybackNodeId = activeNode ? String(activeNode.nodeId || "") : "";
-    state.stationPlaybackStopName = activeNode ? String(activeNode.stopName || "") : "";
-    state.stationPlaybackAnswerText = activeNode ? String(activeNode.answerText || "") : "";
+    const activeHighlightNodes = nodes.filter(
+      (node) =>
+        cursorMs >= Number(node.highlightGlobalStartMs || 0) &&
+        cursorMs <= Number(node.highlightGlobalEndMs || 0)
+    );
+    state.stationPlaybackEndedHotspotIds = [];
+    const focusNode = activeHighlightNodes[0] || playbackNode || null;
+    state.stationPlaybackNodeIndex = activeHighlightNodes.length
+      ? nodes.findIndex((node) => String(node.nodeId || "") === String(activeHighlightNodes[0].nodeId || ""))
+      : playbackNodeIndex;
+    state.stationPlaybackNodeId = focusNode ? String(focusNode.nodeId || "") : "";
+    state.stationPlaybackStopName = focusNode ? String(focusNode.stopName || "") : "";
+    state.stationPlaybackAnswerText = focusNode ? String(focusNode.answerText || "") : "";
     if (
       state.stationPlaybackMode === "node-highlight" &&
       state.stationPlaybackRangeEndMs != null &&
@@ -8697,21 +9033,30 @@
       try {
         refs.audio.pause();
       } catch (_) {}
+      logStationFlashLogic(slotKey, activeHighlightNodes, []);
       return;
     }
-    if (
-      !activeNode ||
-      cursorMs < Number(activeNode.highlightGlobalStartMs || 0) ||
-      cursorMs > Number(activeNode.highlightGlobalEndMs || 0)
-    ) {
+    if (!activeHighlightNodes.length) {
       state.visibleHotspotIds = [];
       state.flashingHotspotIds = [];
       state.highlightedHotspotId = "";
+      logStationFlashLogic(slotKey, activeHighlightNodes, []);
       return;
     }
-    state.visibleHotspotIds = Array.isArray(activeNode.hotspotIds) ? activeNode.hotspotIds.slice() : [];
-    state.flashingHotspotIds = Array.isArray(activeNode.hotspotIds) ? activeNode.hotspotIds.slice() : [];
+    const mergedHotspotIds = [];
+    const seenHotspotIds = new Set();
+    activeHighlightNodes.forEach((node) => {
+      (Array.isArray(node.hotspotIds) ? node.hotspotIds : []).forEach((hotspotId) => {
+        const nextHotspotId = String(hotspotId || "").trim();
+        if (!nextHotspotId || seenHotspotIds.has(nextHotspotId)) return;
+        seenHotspotIds.add(nextHotspotId);
+        mergedHotspotIds.push(nextHotspotId);
+      });
+    });
+    state.visibleHotspotIds = mergedHotspotIds.slice();
+    state.flashingHotspotIds = mergedHotspotIds.slice();
     state.highlightedHotspotId = state.visibleHotspotIds[0] || "";
+    logStationFlashLogic(slotKey, activeHighlightNodes, state.flashingHotspotIds);
   }
 
   async function playNarrationNodes(slotKey, nodes, options) {
@@ -8746,6 +9091,7 @@
     state.pendingStationSlotKey = String(slot.slotKey || "");
     state.playingStationSlotKey = "";
     state.stationPlaybackMode = String(opts.mode || "station");
+    state.stationPlaybackEndedHotspotIds = [];
     state.visibleHotspotIds = [];
     state.flashingHotspotIds = [];
     render();
@@ -8767,15 +9113,25 @@
         opts.rangeEndMs == null ? null : Math.min(normalizeTimelineEventTimeMs(opts.rangeEndMs), Number(plan.totalDurationMs || 0));
       state.stationPlaybackSegmentIndex = findStationSegmentIndexForGlobalMs(startCursorMs);
       applyStationTimelineHighlight(startCursorMs);
-      const initialVisibleNode = plan.nodes.find(
+      const initialVisibleNodes = plan.nodes.filter(
         (node) =>
           startCursorMs >= Number(node.highlightGlobalStartMs || 0) &&
           startCursorMs <= Number(node.highlightGlobalEndMs || 0)
       );
-      if (initialVisibleNode) {
-        state.stationPlaybackNodeId = String(initialVisibleNode.nodeId || "");
-        state.visibleHotspotIds = Array.isArray(initialVisibleNode.hotspotIds) ? initialVisibleNode.hotspotIds.slice() : [];
-        state.flashingHotspotIds = Array.isArray(initialVisibleNode.hotspotIds) ? initialVisibleNode.hotspotIds.slice() : [];
+      if (initialVisibleNodes.length) {
+        const mergedHotspotIds = [];
+        const seenHotspotIds = new Set();
+        initialVisibleNodes.forEach((node) => {
+          (Array.isArray(node.hotspotIds) ? node.hotspotIds : []).forEach((hotspotId) => {
+            const nextHotspotId = String(hotspotId || "").trim();
+            if (!nextHotspotId || seenHotspotIds.has(nextHotspotId)) return;
+            seenHotspotIds.add(nextHotspotId);
+            mergedHotspotIds.push(nextHotspotId);
+          });
+        });
+        state.stationPlaybackNodeId = String(initialVisibleNodes[0].nodeId || "");
+        state.visibleHotspotIds = mergedHotspotIds.slice();
+        state.flashingHotspotIds = mergedHotspotIds.slice();
         state.highlightedHotspotId = state.visibleHotspotIds[0] || "";
       }
       await startStationSegment(
@@ -9895,6 +10251,7 @@
         state.scenes = normalizeStations(displayPayload && displayPayload.stations, state.clientId);
         state.demoStationSlots = normalizeStationsToSlots(displayPayload && displayPayload.stations);
         preloadStationSlotRecordingMeta();
+        preloadNarrationStopDurations();
         state.loading = false;
         state.usingOfflineSnapshot = false;
         state.offlineReady = false;
@@ -9932,6 +10289,8 @@
     try {
       await loadFromOfflineSnapshot();
       if (loadSeq !== latestLoadSeq) return;
+      preloadStationSlotRecordingMeta();
+      preloadNarrationStopDurations();
       state.loading = false;
       state.errorMessage = "";
       state.errorDetail = "";
@@ -10132,6 +10491,10 @@
         state.stationPlaybackSegmentIndex = queue.length ? queue.length - 1 : -1;
         state.stationPlaybackCursorMs = getStationPlaybackDurationMs();
         applyStationTimelineHighlight(state.stationPlaybackCursorMs);
+        state.stationPlaybackEndedHotspotIds = [];
+        state.visibleHotspotIds = [];
+        state.flashingHotspotIds = [];
+        state.highlightedHotspotId = "";
         stopStationTimelineSync();
         state.lastPlaybackRequestedUrl = "";
         render();
@@ -10186,6 +10549,7 @@
           displayName: state.display && state.display.display_name ? state.display.display_name : "",
           hallId: state.hall && state.hall.hall_id ? state.hall.hall_id : "",
           hallName: state.hall && state.hall.hall_name ? state.hall.hall_name : "",
+          opsStationTab: normalizeOpsStationTab(state.opsStationTab),
           productCount: Array.isArray(state.products) ? state.products.length : 0,
           referencedProductIds: (Array.isArray(state.referencedProducts) ? state.referencedProducts : []).map((item) =>
             String(item.product_id || "")
@@ -10318,7 +10682,10 @@
       return;
     }
     try {
-      await navigator.serviceWorker.register("/sw.js");
+      const registration = await navigator.serviceWorker.register("/sw.js");
+      try {
+        await registration.update();
+      } catch (_) {}
       await navigator.serviceWorker.ready;
     } catch (_) {
       setSyncState(TEXT.syncDangerOfflineInitFailed, "danger", false);
@@ -10390,6 +10757,12 @@
   window.addEventListener("offline", () => {
     state.online = false;
     render();
+  });
+  window.addEventListener("resize", () => {
+    syncMobileAnnotateToolsHeight();
+  });
+  window.addEventListener("scroll", () => {
+    syncMobileAnnotateToolsHeight();
   });
 
   void bootstrapApp();

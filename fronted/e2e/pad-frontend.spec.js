@@ -452,6 +452,116 @@ function createNarrationNodeFixture() {
   };
 }
 
+function createNarrationNodeNanosecondFixture() {
+  return {
+    stations: {
+      station_a: {
+        hotspots: [
+          {
+            hotspot_id: 'station_hotspot_a_1',
+            product_id: 'product_001',
+            sort_order: 1,
+            x_pct: 0.1,
+            y_pct: 0.15,
+            width_pct: 0.2,
+            height_pct: 0.2,
+            updated_at_ms: 1710000010100,
+          },
+          {
+            hotspot_id: 'station_hotspot_a_2',
+            product_id: 'product_002',
+            sort_order: 2,
+            x_pct: 0.42,
+            y_pct: 0.18,
+            width_pct: 0.2,
+            height_pct: 0.22,
+            updated_at_ms: 1710000010110,
+          },
+        ],
+        narration_nodes: [
+          {
+            node_id: 'narration_node_a_ns_1',
+            sort_order: 0,
+            recording_id: 'recording_station_a',
+            stop_index: 0,
+            stop_name: '鍏ュ彛浠嬬粛',
+            highlight_start_ms: 933478211,
+            highlight_end_ms: 1320412184,
+            hotspot_ids: ['station_hotspot_a_1'],
+            updated_at_ms: 1710000010600,
+          },
+          {
+            node_id: 'narration_node_a_ns_2',
+            sort_order: 1,
+            recording_id: 'recording_station_a',
+            stop_index: 0,
+            stop_name: '鍏ュ彛浠嬬粛',
+            highlight_start_ms: 582586968,
+            highlight_end_ms: 981137409,
+            hotspot_ids: ['station_hotspot_a_2'],
+            updated_at_ms: 1710000010610,
+          },
+        ],
+      },
+    },
+  };
+}
+
+function createDuplicateStopNarrationNodeFixture() {
+  return {
+    stations: {
+      station_a: {
+        hotspots: [
+          {
+            hotspot_id: 'station_hotspot_a_1',
+            product_id: 'product_001',
+            sort_order: 1,
+            x_pct: 0.1,
+            y_pct: 0.15,
+            width_pct: 0.2,
+            height_pct: 0.2,
+            updated_at_ms: 1710000010100,
+          },
+          {
+            hotspot_id: 'station_hotspot_a_2',
+            product_id: 'product_002',
+            sort_order: 2,
+            x_pct: 0.42,
+            y_pct: 0.18,
+            width_pct: 0.2,
+            height_pct: 0.22,
+            updated_at_ms: 1710000010110,
+          },
+        ],
+        narration_nodes: [
+          {
+            node_id: 'narration_node_dup_1',
+            sort_order: 0,
+            recording_id: 'recording_station_a',
+            stop_index: 0,
+            stop_name: '鍏ュ彛浠嬬粛',
+            highlight_start_ms: 120,
+            highlight_end_ms: 360,
+            hotspot_ids: ['station_hotspot_a_1'],
+            updated_at_ms: 1710000010600,
+          },
+          {
+            node_id: 'narration_node_dup_2',
+            sort_order: 1,
+            recording_id: 'recording_station_a',
+            stop_index: 0,
+            stop_name: '鍏ュ彛浠嬬粛',
+            highlight_start_ms: 520,
+            highlight_end_ms: 820,
+            hotspot_ids: ['station_hotspot_a_2'],
+            updated_at_ms: 1710000010610,
+          },
+        ],
+      },
+    },
+  };
+}
+
 function deriveNarrationNodes(station) {
   const rawNodes = Array.isArray(station && station.narration_nodes) ? station.narration_nodes : [];
   if (rawNodes.length) {
@@ -1667,7 +1777,27 @@ test('hotspot click toggles the same product narration off', async ({ page }) =>
 
 test('station narration button toggles playback on and off', async ({ page }) => {
   await installClientIdOnly(page, 'pad-a');
-  await installPadApiMocks(page);
+  await installPadApiMocks(page, {
+    fixtureOverrides: {
+      stations: {
+        station_a: {
+          narration_nodes: [
+            {
+              node_id: 'narration_node_station_button',
+              sort_order: 0,
+              recording_id: 'recording_station_a',
+              stop_index: 0,
+              stop_name: '鍏ュ彛浠嬬粛',
+              highlight_start_ms: 0,
+              highlight_end_ms: 700,
+              hotspot_ids: ['station_hotspot_a_1'],
+              updated_at_ms: 1710000010650,
+            },
+          ],
+        },
+      },
+    },
+  });
 
   await page.goto('/');
   await waitForOfflineReady(page);
@@ -1681,6 +1811,148 @@ test('station narration button toggles playback on and off', async ({ page }) =>
   await expect
     .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().lastPlaybackRequestedUrl || ''), { timeout: 3000 })
     .toBe('');
+});
+
+test('station narration highlight is visible on interactive-only hotspots', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page, { fixtureOverrides: createNarrationNodeFixture() });
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.toggleStationPlayback?.('display_slot_1'));
+
+  await page.evaluate(() => {
+    const audio = document.getElementById('product-audio');
+    if (!audio) throw new Error('product_audio_missing');
+    audio.currentTime = 0.3;
+    audio.dispatchEvent(new Event('timeupdate'));
+  });
+
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const state = window.__RAGINT_PAD_E2E__?.getState?.() || {};
+          return {
+            visibleHotspotIds: Array.isArray(state.visibleHotspotIds) ? state.visibleHotspotIds : [],
+            flashingHotspotIds: Array.isArray(state.flashingHotspotIds) ? state.flashingHotspotIds : [],
+          };
+        }),
+      { timeout: 3000 }
+    )
+    .toEqual({
+      visibleHotspotIds: ['station_hotspot_a_1'],
+      flashingHotspotIds: ['station_hotspot_a_1'],
+    });
+
+  const hotspotStyle = await page.evaluate(() => {
+    const node = document.querySelector(
+      '[data-action="play-product-hotspot"][data-hotspot-id="station_hotspot_a_1"]'
+    );
+    if (!node) return null;
+    const style = window.getComputedStyle(node);
+    return {
+      className: String(node.className || ''),
+      visibility: String(style.visibility || ''),
+      backgroundColor: String(style.backgroundColor || ''),
+      borderTopColor: String(style.borderTopColor || ''),
+    };
+  });
+
+  expect(hotspotStyle).toBeTruthy();
+  expect(hotspotStyle.className).toContain('is-flashing');
+  expect(hotspotStyle.visibility).toBe('visible');
+  expect(hotspotStyle.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+  expect(hotspotStyle.backgroundColor).not.toBe('transparent');
+  expect(hotspotStyle.borderTopColor).not.toBe('rgba(0, 0, 0, 0)');
+  expect(hotspotStyle.borderTopColor).not.toBe('transparent');
+});
+
+test('station narration normalizes nanosecond highlight timestamps to visible hotspot ranges', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page, { fixtureOverrides: createNarrationNodeNanosecondFixture() });
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.toggleStationPlayback?.('display_slot_1'));
+
+  await page.evaluate(() => {
+    const audio = document.getElementById('product-audio');
+    if (!audio) throw new Error('product_audio_missing');
+    audio.currentTime = 0.99;
+    audio.dispatchEvent(new Event('timeupdate'));
+  });
+
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const state = window.__RAGINT_PAD_E2E__?.getState?.() || {};
+          return {
+            visibleHotspotIds: Array.isArray(state.visibleHotspotIds) ? state.visibleHotspotIds : [],
+            flashingHotspotIds: Array.isArray(state.flashingHotspotIds) ? state.flashingHotspotIds : [],
+          };
+        }),
+      { timeout: 3000 }
+    )
+    .toEqual({
+      visibleHotspotIds: ['station_hotspot_a_1'],
+      flashingHotspotIds: ['station_hotspot_a_1'],
+    });
+});
+
+test('station narration does not replay duplicate stop audio for consecutive narration nodes', async ({ page }) => {
+  await installClientIdOnly(page, 'pad-a');
+  await installPadApiMocks(page, { fixtureOverrides: createDuplicateStopNarrationNodeFixture() });
+
+  const stationAudioResponses = [];
+  page.on('response', (response) => {
+    const url = response.url();
+    if (url.includes('/api/pad/offline/audio/recording_station_a_stop_0')) {
+      stationAudioResponses.push({
+        url,
+        status: response.status(),
+      });
+    }
+  });
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.toggleStationPlayback?.('display_slot_1'));
+
+  await expect
+    .poll(() => stationAudioResponses.length, { timeout: 3000 })
+    .toBeGreaterThan(0);
+
+  await page.waitForTimeout(1400);
+
+  const state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(state.stationPlaybackState).toBe('idle');
+  expect(stationAudioResponses).toHaveLength(1);
+});
+
+test('station narration clears flashing hotspots after natural end', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page, { fixtureOverrides: createNarrationNodeFixture() });
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+
+  await page.evaluate(() => window.__RAGINT_PAD_E2E__?.toggleStationPlayback?.('display_slot_1'));
+  await page.evaluate(() => {
+    const audio = document.getElementById('product-audio');
+    if (!audio) throw new Error('product_audio_missing');
+    audio.currentTime = 1;
+    audio.dispatchEvent(new Event('ended'));
+  });
+
+  const state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(state.stationPlaybackState).toBe('idle');
+  expect(state.flashingHotspotIds).toEqual([]);
+  expect(state.highlightedHotspotId).toBe('');
 });
 
 test('single-screen guide page has no main scroll overflow', async ({ page }) => {
@@ -2678,7 +2950,7 @@ test('ops layout fits in a single screen without page scrolling', async ({ page 
   await expect(page.locator('.pad-shell--ops')).toBeVisible();
   await expect(page.locator('.pad-ops-unified-shell')).toBeVisible();
   await expect(page.locator('.pad-ops-control-sidebar')).toBeVisible();
-  await expect(page.locator('.pad-ops-control-sidebar [data-action="save-station-config"]')).toBeVisible();
+  await expect(page.locator('.pad-ops-control-sidebar .pad-ops-control-overview__body')).toBeHidden();
   await expect(page.locator('.pad-ops-control-sidebar [data-action="enter-station-hotspot-create"]')).toBeVisible();
   await expect(page.locator('[data-action="save-product-info"]')).toHaveCount(0);
   await expect(page.locator('[data-action="select-upload-image"]')).toHaveCount(0);
@@ -2742,16 +3014,19 @@ test('ops station area separates hotspot annotation and station settings tabs', 
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
 
+  const controlSidebar = page.locator('.pad-ops-control-sidebar');
   await expect(page.locator('[data-action="set-ops-station-tab"][data-tab="annotate"]').last()).toBeVisible();
   await expect(page.locator('[data-action="set-ops-station-tab"][data-tab="settings"]').last()).toBeVisible();
   await expect(page.locator('[data-action="set-ops-station-tab"][data-tab="other"]').last()).toBeVisible();
   await expect(page.locator('.pad-scene-stage--ops-editor')).toBeVisible();
   await expect(page.locator('.pad-scene-stage--ops-editor')).toHaveClass(/is-stretched/);
+  await expect(controlSidebar.locator('.pad-ops-control-overview__body')).toBeHidden();
   await expect(page.locator('[data-action="enter-station-hotspot-create"]')).toBeVisible();
   await expect(page.locator('.pad-ops-product-panel')).toHaveCount(0);
   await expect(page.locator('.pad-ops-detail-panel')).toHaveCount(0);
 
   await switchOpsStationTab(page, 'settings');
+  await expect(controlSidebar.locator('.pad-ops-control-overview__body')).toBeHidden();
   await expect(page.locator('.pad-ops-product-panel')).toHaveCount(0);
   await expect(page.locator('.pad-ops-detail-panel')).toHaveCount(0);
   await expect(page.getByText('站点讲解节点')).toBeVisible();
@@ -2764,7 +3039,7 @@ test('ops station area separates hotspot annotation and station settings tabs', 
   await expect(page.locator('[data-action="save-product-info"]')).toBeVisible();
 });
 
-test('ops shared control sidebar stays visible while switching workspaces', async ({ page }) => {
+test('ops other-settings control panel stays fixed in the right workspace column on desktop', async ({ page }) => {
   await installClientIdAndAudioStub(page, 'pad-a');
   await installPadApiMocks(page);
 
@@ -2773,16 +3048,22 @@ test('ops shared control sidebar stays visible while switching workspaces', asyn
   await switchToOpsMode(page);
 
   const controlSidebar = page.locator('.pad-ops-control-sidebar');
+  const embeddedOtherControl = page.locator('.pad-ops-other-control-panel');
   await expect(controlSidebar).toBeVisible();
-  await expect(controlSidebar.locator('[data-action="reload-live"]')).toBeVisible();
+  await expect(controlSidebar.locator('.pad-ops-control-overview__body')).toBeHidden();
+  await expect(controlSidebar.locator('[data-action="reload-live"]')).toBeHidden();
   await expect(controlSidebar.locator('[data-action="switch-hall"]')).toHaveCount(8);
 
   await switchOpsStationTab(page, 'settings');
   await expect(controlSidebar).toBeVisible();
-  await expect(page.locator('[data-action="station-slot-recording"]')).toBeVisible();
+  await expect(page.locator('[data-action="add-narration-node"]')).toBeVisible();
 
   await switchOpsStationTab(page, 'other');
   await expect(controlSidebar).toBeVisible();
+  await expect(controlSidebar.locator('.pad-ops-control-overview__body')).toBeHidden();
+  await expect(embeddedOtherControl).toBeVisible();
+  await expect(embeddedOtherControl.locator('[data-action="reload-live"]')).toBeVisible();
+  await expect(embeddedOtherControl.locator('[data-action="switch-hall"]')).toHaveCount(8);
   await expect(page.locator('.pad-ops-product-panel')).toHaveCount(1);
   await expect(page.locator('[data-action="save-product-info"]')).toBeVisible();
 });
@@ -2796,9 +3077,10 @@ test('mobile work area switcher stays embedded below the hall title while switch
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
 
-  const embeddedWorkspace = page.locator('.pad-ops-control-overview__workspace');
-  const legacyWorkspaceSection = page.locator('.pad-ops-control-overview__section--workspace');
-  const controlOverview = page.locator('.pad-ops-control-overview');
+  const controlSidebar = page.locator('.pad-ops-control-sidebar');
+  const controlOverview = controlSidebar.locator('.pad-ops-control-overview');
+  const embeddedWorkspace = controlOverview.locator('.pad-ops-control-overview__workspace');
+  const legacyWorkspaceSection = controlOverview.locator('.pad-ops-control-overview__section--workspace');
   const controlBody = controlOverview.locator('.pad-ops-control-overview__body');
   const headerDemoButton = controlOverview.locator('.pad-panel__header [data-testid="mode-toggle-demo"]');
   const headerLiveBadge = controlOverview.locator('.pad-panel__header').getByText('实时数据');

@@ -459,7 +459,7 @@ body.pad-body--ops {
 }
 
 .pad-ops-annotate-tools {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -478,8 +478,8 @@ body.pad-body--ops {
 }
 
 .pad-ops-annotate-tools__body {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
 }
 
@@ -925,8 +925,14 @@ body.pad-body--ops {
 }
 
 .pad-ops-other-workspace .pad-ops-product-panel,
-.pad-ops-other-workspace .pad-ops-detail-panel {
+.pad-ops-other-workspace .pad-ops-detail-panel,
+.pad-ops-other-workspace .pad-ops-other-control-panel {
   height: 100%;
+  min-height: 0;
+}
+
+.pad-ops-other-control-panel {
+  display: none;
 }
 
 .pad-ops-side-card {
@@ -934,6 +940,14 @@ body.pad-body--ops {
   border-radius: 20px;
   border: 1px solid rgba(15, 140, 99, 0.1);
   background: rgba(255, 255, 255, 0.88);
+}
+
+.pad-ops-side-card--hotspot-inspector {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
 }
 
 .pad-ops-side-card--timeline {
@@ -2697,6 +2711,16 @@ body.pad-body--demo .pad-scene-stage {
   pointer-events: auto;
 }
 
+.pad-scene-hotspot::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 20px;
+  pointer-events: none;
+  opacity: 0;
+  box-shadow: none;
+}
+
 .pad-demo-panel--scene .pad-scene-hotspot {
   padding: 0;
   border: 1px solid rgba(220, 72, 72, 0.28);
@@ -2722,6 +2746,14 @@ body.pad-body--demo .pad-scene-stage {
 
 .pad-scene-hotspot.is-flashing {
   animation: padHotspotFlash 0.8s ease-in-out infinite;
+}
+
+.pad-scene-hotspot.is-active::after,
+.pad-scene-hotspot.is-flashing::after {
+  opacity: 1;
+  box-shadow:
+    0 0 0 3px rgba(255, 214, 79, 0.92),
+    0 0 22px rgba(255, 214, 79, 0.68);
 }
 
 .pad-scene-hotspot--control {
@@ -2771,8 +2803,62 @@ body.pad-body--demo .pad-scene-stage {
   color: transparent;
 }
 
+.pad-scene-hotspot--interactive-only.is-active,
+.pad-demo-panel--scene .pad-scene-hotspot--interactive-only.is-active,
+.pad-scene-hotspot--interactive-only.is-flashing,
+.pad-demo-panel--scene .pad-scene-hotspot--interactive-only.is-flashing {
+  border: 3px solid rgba(255, 214, 79, 0.96);
+  background: rgba(255, 214, 79, 0.26);
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.9),
+    0 0 24px rgba(255, 214, 79, 0.78),
+    inset 0 0 0 1px rgba(73, 42, 0, 0.18);
+  color: #4a2a00;
+}
+
+.pad-scene-hotspot--interactive-only.pad-scene-hotspot--has-audio.is-active,
+.pad-demo-panel--scene .pad-scene-hotspot--interactive-only.pad-scene-hotspot--has-audio.is-active,
+.pad-scene-hotspot--interactive-only.pad-scene-hotspot--has-audio.is-flashing,
+.pad-demo-panel--scene .pad-scene-hotspot--interactive-only.pad-scene-hotspot--has-audio.is-flashing {
+  border: 3px solid rgba(255, 214, 79, 0.96);
+  background: rgba(255, 214, 79, 0.28);
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.9),
+    0 0 24px rgba(255, 214, 79, 0.78),
+    inset 0 0 0 1px rgba(73, 42, 0, 0.18);
+  color: #4a2a00;
+}
+
+.pad-scene-hotspot--interactive-only.pad-scene-hotspot--control.is-active,
+.pad-demo-panel--scene .pad-scene-hotspot--interactive-only.pad-scene-hotspot--control.is-active,
+.pad-scene-hotspot--interactive-only.pad-scene-hotspot--control.is-flashing,
+.pad-demo-panel--scene .pad-scene-hotspot--interactive-only.pad-scene-hotspot--control.is-flashing {
+  border: 3px solid rgba(255, 214, 79, 0.96);
+  background: rgba(255, 214, 79, 0.28);
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.9),
+    0 0 24px rgba(255, 214, 79, 0.78),
+    inset 0 0 0 1px rgba(73, 42, 0, 0.18);
+  color: #4a2a00;
+}
+
 .pad-scene-hotspot--interactive-only .pad-scene-hotspot__label {
   display: none;
+}
+
+.pad-scene-hotspot--interactive-only.is-active .pad-scene-hotspot__label,
+.pad-scene-hotspot--interactive-only.is-flashing .pad-scene-hotspot__label,
+.pad-demo-panel--scene .pad-scene-hotspot--interactive-only.is-active .pad-scene-hotspot__label,
+.pad-demo-panel--scene .pad-scene-hotspot--interactive-only.is-flashing .pad-scene-hotspot__label {
+  display: inline-flex;
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translateY(calc(-100% - 6px));
+  background: rgba(255, 248, 204, 0.96);
+  color: #4a2a00;
+  box-shadow: 0 10px 18px rgba(73, 42, 0, 0.18);
+  white-space: nowrap;
 }
 
 .pad-scene-hotspot--editor {
@@ -3479,6 +3565,29 @@ body.pad-body--demo .pad-audio-dock__title {
 
 body.pad-body--demo .pad-audio-dock__player {
   display: none;
+}
+
+@media (min-width: 981px) {
+  .pad-ops-unified-shell--other .pad-ops-other-workspace {
+    grid-template-columns: 320px minmax(0, 1fr);
+  }
+
+  .pad-ops-unified-shell--other .pad-ops-other-workspace.pad-ops-other-workspace--with-control {
+    grid-template-columns: 320px minmax(0, 1fr) 340px;
+  }
+
+  .pad-ops-unified-shell--other .pad-ops-other-workspace.pad-ops-other-workspace--with-control .pad-ops-other-control-panel {
+    display: flex;
+  }
+
+  .pad-ops-control-overview--body-relocated {
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+
+  .pad-ops-control-overview--body-relocated .pad-ops-control-overview__body {
+    display: none;
+  }
 }
 
 @media (max-width: 980px) {

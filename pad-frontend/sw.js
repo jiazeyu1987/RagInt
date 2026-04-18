@@ -1,7 +1,7 @@
-const SHELL_CACHE = "ragint-pad-shell-v5";
+const SHELL_CACHE = "ragint-pad-shell-v12";
 const AUDIO_CACHE = "ragint-pad-audio-v1";
 const IMAGE_CACHE = "ragint-pad-image-v1";
-const SHELL_ASSETS = ["/", "/index.html", "/app.css", "/app.js"];
+const SHELL_ASSETS = ["/", "/index.html", "/app.css?v=20260418i", "/app.js?v=20260418i"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
