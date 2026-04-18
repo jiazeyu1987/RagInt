@@ -2787,7 +2787,7 @@ test('ops shared control sidebar stays visible while switching workspaces', asyn
   await expect(page.locator('[data-action="save-product-info"]')).toBeVisible();
 });
 
-test('mobile work area switcher stays fixed at the top while switching tabs', async ({ page }) => {
+test('mobile work area switcher stays embedded below the hall title while switching tabs', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 900 });
   await installClientIdAndAudioStub(page, 'pad-a');
   await installPadApiMocks(page);
@@ -2796,27 +2796,40 @@ test('mobile work area switcher stays fixed at the top while switching tabs', as
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
 
-  const mobileSwitcher = page.locator('.pad-ops-mobile-workspace-switcher');
+  const embeddedWorkspace = page.locator('.pad-ops-control-overview__workspace');
   const legacyWorkspaceSection = page.locator('.pad-ops-control-overview__section--workspace');
   const controlOverview = page.locator('.pad-ops-control-overview');
+  const controlBody = controlOverview.locator('.pad-ops-control-overview__body');
+  const headerDemoButton = controlOverview.locator('.pad-panel__header [data-testid="mode-toggle-demo"]');
+  const headerLiveBadge = controlOverview.locator('.pad-panel__header').getByText('实时数据');
+  const toolbarDemoButton = controlOverview.locator('.pad-ops-control-overview__toolbar [data-testid="mode-toggle-demo"]');
+  const toolbarOpsButton = controlOverview.locator('.pad-ops-control-overview__toolbar [data-testid="mode-toggle-ops"]');
 
-  await expect(mobileSwitcher).toBeVisible();
   await expect(controlOverview).toBeVisible();
-  await expect(legacyWorkspaceSection).toBeHidden();
+  await expect(embeddedWorkspace).toBeVisible();
+  await expect(headerDemoButton).toBeVisible();
+  await expect(headerLiveBadge).toHaveCount(0);
+  await expect(toolbarDemoButton).toHaveCount(0);
+  await expect(toolbarOpsButton).toHaveCount(0);
+  await expect(legacyWorkspaceSection).toHaveCount(0);
 
-  const initialTop = await mobileSwitcher.evaluate((node) => Math.round(node.getBoundingClientRect().top));
-  const controlTop = await controlOverview.evaluate((node) => Math.round(node.getBoundingClientRect().top));
-  expect(initialTop).toBeLessThan(controlTop);
+  const initialTop = await embeddedWorkspace.evaluate((node) => Math.round(node.getBoundingClientRect().top));
+  const initialControlTop = await controlOverview.evaluate((node) => Math.round(node.getBoundingClientRect().top));
+  const bodyTop = await controlBody.evaluate((node) => Math.round(node.getBoundingClientRect().top));
+  expect(initialTop).toBeLessThan(bodyTop);
+  const initialOffset = initialTop - initialControlTop;
 
   await switchOpsStationTab(page, 'settings');
-  await expect(page.locator('[data-action="station-slot-recording"]')).toBeVisible();
-  const settingsTop = await mobileSwitcher.evaluate((node) => Math.round(node.getBoundingClientRect().top));
-  expect(settingsTop).toBe(initialTop);
+  await expect(page.locator('[data-action="add-narration-node"]')).toBeVisible();
+  const settingsTop = await embeddedWorkspace.evaluate((node) => Math.round(node.getBoundingClientRect().top));
+  const settingsControlTop = await controlOverview.evaluate((node) => Math.round(node.getBoundingClientRect().top));
+  expect(settingsTop - settingsControlTop).toBe(initialOffset);
 
   await switchOpsStationTab(page, 'other');
   await expect(page.locator('[data-action="save-product-info"]')).toBeVisible();
-  const otherTop = await mobileSwitcher.evaluate((node) => Math.round(node.getBoundingClientRect().top));
-  expect(otherTop).toBe(initialTop);
+  const otherTop = await embeddedWorkspace.evaluate((node) => Math.round(node.getBoundingClientRect().top));
+  const otherControlTop = await controlOverview.evaluate((node) => Math.round(node.getBoundingClientRect().top));
+  expect(otherTop - otherControlTop).toBe(initialOffset);
 });
 
 test('offline snapshot preserves station visuals and hotspot playback', async ({ page }, testInfo) => {

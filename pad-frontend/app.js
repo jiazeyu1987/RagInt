@@ -2921,14 +2921,16 @@
     );
   }
 
-  function renderOpsStationModeTabs() {
+  function renderOpsStationModeTabs(extraClassName) {
     const tabs = [
       { key: "annotate", label: "\u70ed\u533a\u6807\u6ce8" },
       { key: "settings", label: "\u7ad9\u70b9\u914d\u7f6e" },
       { key: "other", label: "\u5176\u4ed6\u914d\u7f6e" },
     ];
     return (
-      '<div class="pad-ops-mode-tabs" role="tablist" aria-label="\u8fd0\u7ef4\u7ad9\u70b9\u529f\u80fd">' +
+      '<div class="pad-ops-mode-tabs' +
+      (extraClassName ? " " + extraClassName : "") +
+      '" role="tablist" aria-label="\u8fd0\u7ef4\u7ad9\u70b9\u529f\u80fd">' +
       tabs
         .map((tab) => {
           const active = normalizeOpsStationTab(state.opsStationTab) === tab.key;
@@ -3132,7 +3134,7 @@
       '<div class="pad-panel__header pad-ops-panel__header">' +
       "<div>" +
       '<div class="pad-panel__title">\u5de5\u4f5c\u533a</div>' +
-      '<div class="pad-panel__hint">\u5207\u6362\u5de5\u4f5c\u533a\u65f6\uff0c\u4e0b\u65b9\u5de5\u4f5c\u533a\u57df\u4f4d\u7f6e\u4fdd\u6301\u4e0d\u53d8\u3002</div>' +
+      '<div class="pad-panel__hint">\u5207\u6362\u70ed\u533a\u6807\u6ce8\u3001\u7ad9\u70b9\u914d\u7f6e\u3001\u5176\u4ed6\u914d\u7f6e\u65f6\uff0c\u5de5\u4f5c\u533a\u4f4d\u7f6e\u4fdd\u6301\u4e0d\u53d8\u3002</div>' +
       "</div>" +
       "</div>" +
       '<div class="pad-ops-mobile-workspace-switcher__body">' +
@@ -3145,6 +3147,15 @@
       "</div>" +
       "</div>" +
       "</section>"
+    );
+  }
+
+  function renderOpsWorkspaceSection() {
+    return (
+      '<div class="pad-ops-control-overview__workspace">' +
+      '<div class="pad-ops-control-overview__label">\u5de5\u4f5c\u533a</div>' +
+      renderOpsStationModeTabs("pad-ops-mode-tabs--sidebar") +
+      "</div>"
     );
   }
 
@@ -3523,17 +3534,17 @@
     return (
       '<aside class="pad-ops-control-sidebar">' +
       '<section class="pad-panel pad-ops-control-overview">' +
-      '<div class="pad-panel__header pad-ops-panel__header">' +
-      "<div>" +
+      '<div class="pad-panel__header pad-ops-panel__header pad-ops-control-overview__header">' +
+      '<div class="pad-ops-control-overview__header-main">' +
       '<div class="pad-ops-topbar__eyebrow">\u8fd0\u7ef4\u5de5\u4f5c\u53f0</div>' +
       '<div class="pad-ops-control-overview__title-row">' +
       '<div class="pad-panel__title">' +
       escapeHtml(hallName) +
       "</div>" +
-      sourceBadge +
       "</div>" +
-      '<div class="pad-panel__hint">\u53f3\u4fa7\u56fa\u5b9a\u4e3a\u63a7\u5236\u533a\uff0c\u8d1f\u8d23\u6a21\u5f0f\u5207\u6362\u3001\u516c\u5171\u64cd\u4f5c\u4e0e\u5f53\u524d\u7ad9\u70b9\u72b6\u6001\u67e5\u770b\u3002</div>' +
+      renderOpsWorkspaceSection() +
       "</div>" +
+      renderOpsDemoEntryButton() +
       "</div>" +
       '<div class="pad-ops-control-overview__body">' +
       '<div class="pad-ops-control-overview__meta">' +
@@ -3554,7 +3565,6 @@
       renderOpsSummaryStat("\u5f53\u524d\u4ea7\u54c1", selectedProduct ? String(selectedProduct.product_name || "") : TEXT.notSelected) +
       "</div>" +
       '<div class="pad-ops-control-overview__toolbar">' +
-      renderModeToggle() +
       '<div class="pad-ops-inline-actions pad-ops-inline-actions--column pad-ops-control-overview__actions">' +
       '<button type="button" class="pad-btn pad-btn--neutral" data-action="reload-live">' +
       escapeHtml(TEXT.refreshOnline) +
@@ -3580,10 +3590,6 @@
       '<div class="pad-ops-control-overview__section">' +
       '<div class="pad-ops-control-overview__label">\u7ad9\u4f4d\u5207\u6362</div>' +
       renderOpsStationTabs() +
-      "</div>" +
-      '<div class="pad-ops-control-overview__section pad-ops-control-overview__section--workspace">' +
-      '<div class="pad-ops-control-overview__label">\u5de5\u4f5c\u533a</div>' +
-      renderOpsStationModeTabs() +
       "</div>" +
       '<div class="pad-ops-station-card__status">' +
       renderToneChip(stationStatus.text, stationStatus.tone) +
@@ -3694,25 +3700,47 @@
     );
   }
 
-  function renderModeToggle() {
+  function renderOpsDemoEntryButton() {
     return (
-      '<div class="pad-mode-toggle" role="group" aria-label="' +
-      escapeHtml(TEXT.modeLabel) +
-      '">' +
-      '<button type="button" class="pad-mode-toggle__btn' +
+      '<button type="button" class="pad-btn pad-btn--neutral pad-ops-control-overview__demo-entry' +
       (state.mode === "demo" ? " is-active" : "") +
       '" data-action="set-mode" data-mode="demo" data-testid="mode-toggle-demo" aria-pressed="' +
       (state.mode === "demo" ? "true" : "false") +
       '">' +
       escapeHtml(TEXT.modeDemo) +
-      "</button>" +
-      '<button type="button" class="pad-mode-toggle__btn' +
-      (state.mode === "ops" ? " is-active" : "") +
-      '" data-action="set-mode" data-mode="ops" data-testid="mode-toggle-ops" aria-pressed="' +
-      (state.mode === "ops" ? "true" : "false") +
+      "</button>"
+    );
+  }
+
+  function renderModeToggle(options) {
+    const opts = options && typeof options === "object" ? options : {};
+    const modeKeys = Array.isArray(opts.modes) && opts.modes.length ? opts.modes : ["demo", "ops"];
+    const extraClassName = String(opts.extraClassName || "").trim();
+    return (
+      '<div class="pad-mode-toggle' +
+      (extraClassName ? " " + extraClassName : "") +
+      '" role="group" aria-label="' +
+      escapeHtml(TEXT.modeLabel) +
       '">' +
-      escapeHtml(TEXT.modeOps) +
-      "</button>" +
+      modeKeys
+        .map((modeKey) => {
+          const normalizedMode = String(modeKey || "").trim() === "ops" ? "ops" : "demo";
+          const isActive = state.mode === normalizedMode;
+          return (
+            '<button type="button" class="pad-mode-toggle__btn' +
+            (isActive ? " is-active" : "") +
+            '" data-action="set-mode" data-mode="' +
+            normalizedMode +
+            '" data-testid="mode-toggle-' +
+            normalizedMode +
+            '" aria-pressed="' +
+            (isActive ? "true" : "false") +
+            '">' +
+            escapeHtml(normalizedMode === "ops" ? TEXT.modeOps : TEXT.modeDemo) +
+            "</button>"
+          );
+        })
+        .join("") +
       "</div>"
     );
   }

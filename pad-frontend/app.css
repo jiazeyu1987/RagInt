@@ -315,12 +315,24 @@ body.pad-body--ops {
   overflow: hidden;
 }
 
+.pad-ops-control-overview__header-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .pad-ops-control-overview__title-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 10px;
+}
+
+.pad-ops-control-overview__demo-entry {
+  min-height: 38px;
+  padding: 0 14px;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .pad-ops-control-overview__meta {
@@ -374,6 +386,12 @@ body.pad-body--ops {
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.pad-ops-control-overview__workspace {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .pad-ops-control-overview .pad-ops-inline-switch {
@@ -3504,10 +3522,6 @@ body.pad-body--demo .pad-audio-dock__player {
   .pad-ops-workpane,
   .pad-ops-control-sidebar {
     overflow: visible;
-  }
-
-  .pad-ops-control-overview__section--workspace {
-    display: none;
   }
 
   .pad-station-config-panel__body,
