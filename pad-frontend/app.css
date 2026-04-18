@@ -3633,6 +3633,10 @@ body.pad-body--demo .pad-audio-dock__player {
     overflow: visible;
   }
 
+  .pad-ops-control-sidebar .pad-ops-annotate-tools {
+    max-height: none;
+  }
+
   .pad-station-config-panel__body,
   .pad-station-playback__meta {
     grid-template-columns: 1fr;
