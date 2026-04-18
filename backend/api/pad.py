@@ -306,6 +306,25 @@ def _station_hotspot_export_payload(hotspot: dict) -> dict:
     }
 
 
+def _station_narration_node_response_payload(node: dict) -> dict:
+    item = node if isinstance(node, dict) else {}
+    return {
+        "node_id": str(item.get("node_id") or ""),
+        "sort_order": int(item.get("sort_order") or 0),
+        "recording_id": str(item.get("recording_id") or ""),
+        "stop_index": item.get("stop_index"),
+        "stop_name": str(item.get("stop_name") or ""),
+        "highlight_start_ms": int(item.get("highlight_start_ms") or 0),
+        "highlight_end_ms": int(item.get("highlight_end_ms") or 0),
+        "hotspot_ids": [
+            str(hotspot_id or "")
+            for hotspot_id in (item.get("hotspot_ids") if isinstance(item.get("hotspot_ids"), list) else [])
+            if str(hotspot_id or "").strip()
+        ],
+        "updated_at_ms": int(item.get("updated_at_ms") or 0),
+    }
+
+
 def _station_response_payload(*, station: dict, hotspots: list[dict], offline: bool = False) -> dict:
     item = station if isinstance(station, dict) else {}
     slot_key = str(item.get("slot_key") or item.get("station_key") or "")
@@ -320,18 +339,11 @@ def _station_response_payload(*, station: dict, hotspots: list[dict], offline: b
         "background": _station_asset_response_payload(station=item, asset_kind="background", offline=offline),
         "wireframe": _station_asset_response_payload(station=item, asset_kind="wireframe", offline=offline),
         "hotspots": [_station_hotspot_response_payload(hotspot, slot_key=slot_key) for hotspot in hotspots],
-        "timeline_events": [
-            {
-                "event_id": str(event.get("event_id") or ""),
-                "time_ms": int(event.get("time_ms") or 0),
-                "product_id": str(event.get("product_id") or ""),
-                "station_hotspot_id": str(event.get("station_hotspot_id") or ""),
-                "event_type": str(event.get("event_type") or "focus_switch"),
-                "sort_order": int(event.get("sort_order") or 0),
-                "updated_at_ms": int(event.get("updated_at_ms") or 0),
-            }
-            for event in (item.get("timeline_events") if isinstance(item.get("timeline_events"), list) else [])
+        "narration_nodes": [
+            _station_narration_node_response_payload(node)
+            for node in (item.get("narration_nodes") if isinstance(item.get("narration_nodes"), list) else [])
         ],
+        "narration_nodes_error": str(item.get("narration_nodes_error") or ""),
         "updated_at_ms": int(item.get("updated_at_ms") or 0),
     }
 
@@ -378,6 +390,17 @@ def _require_station_in_binding(*, deps, binding: dict, station_key: str):
     return station, None
 
 
+def _attach_station_narration_state(*, deps, station: dict, hall_id: str, station_id: str) -> dict:
+    item = station if isinstance(station, dict) else {}
+    narration_state = deps.pad_product_store.get_station_narration_nodes_state(
+        hall_id=str(hall_id or ""),
+        station_id=str(station_id or ""),
+    )
+    item["narration_nodes"] = narration_state["narration_nodes"]
+    item["narration_nodes_error"] = narration_state["narration_nodes_error"]
+    return item
+
+
 def create_blueprint(deps):
     bp = Blueprint("pad_api", __name__)
 
@@ -419,10 +442,7 @@ def create_blueprint(deps):
         for station in deps.pad_product_store.list_display_station_configs(client_id=ctx["client_id"]):
             station_id = str(station.get("station_id") or station.get("station_key") or "")
             hotspots = deps.pad_product_store.list_station_hotspots(hall_id=hall_id, station_key=station_id)
-            station["timeline_events"] = deps.pad_product_store.list_station_narration_timeline_events(
-                hall_id=hall_id,
-                station_id=station_id,
-            )
+            _attach_station_narration_state(deps=deps, station=station, hall_id=hall_id, station_id=station_id)
             items.append(_station_response_payload(station=station, hotspots=hotspots))
         return jsonify(
             {
@@ -762,7 +782,9 @@ def create_blueprint(deps):
             return jsonify({"ok": False, "error": str(exc)}), 400
         updated["station_id"] = str(updated.get("station_key") or "")
         updated["slot_key"] = str(station.get("slot_key") or station_key)
-        updated["timeline_events"] = deps.pad_product_store.list_station_narration_timeline_events(
+        _attach_station_narration_state(
+            deps=deps,
+            station=updated,
             hall_id=str(binding.get("hall_id") or ""),
             station_id=str(updated.get("station_id") or ""),
         )
@@ -826,7 +848,9 @@ def create_blueprint(deps):
             return jsonify({"ok": False, "error": "station_background_update_failed", "detail": str(exc)}), 500
         updated["station_id"] = str(updated.get("station_key") or "")
         updated["slot_key"] = str(station.get("slot_key") or station_key)
-        updated["timeline_events"] = deps.pad_product_store.list_station_narration_timeline_events(
+        _attach_station_narration_state(
+            deps=deps,
+            station=updated,
             hall_id=str(binding.get("hall_id") or ""),
             station_id=str(updated.get("station_id") or ""),
         )
@@ -890,7 +914,9 @@ def create_blueprint(deps):
             return jsonify({"ok": False, "error": "station_wireframe_update_failed", "detail": str(exc)}), 500
         updated["station_id"] = str(updated.get("station_key") or "")
         updated["slot_key"] = str(station.get("slot_key") or station_key)
-        updated["timeline_events"] = deps.pad_product_store.list_station_narration_timeline_events(
+        _attach_station_narration_state(
+            deps=deps,
+            station=updated,
             hall_id=str(binding.get("hall_id") or ""),
             station_id=str(updated.get("station_id") or ""),
         )
@@ -1039,15 +1065,24 @@ def create_blueprint(deps):
         if station_err is not None:
             return station_err
         data = request.get_json(silent=True) or {}
+        if "timeline_events" in data or "events" in data:
+            return jsonify({"ok": False, "error": "timeline_events_not_supported"}), 400
+        narration_nodes = data.get("narration_nodes")
         try:
-            events = deps.pad_product_store.replace_station_narration_timeline_events(
+            nodes = deps.pad_product_store.replace_station_narration_nodes(
                 hall_id=str(binding.get("hall_id") or ""),
                 station_id=str(station.get("station_id") or station_key),
-                events=data.get("timeline_events") or data.get("events") or [],
+                nodes=narration_nodes,
             )
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
-        return jsonify({"ok": True, "client_id": ctx["client_id"], "timeline_events": events})
+        return jsonify(
+            {
+                "ok": True,
+                "client_id": ctx["client_id"],
+                "narration_nodes": [_station_narration_node_response_payload(node) for node in nodes],
+            }
+        )
 
     @bp.route("/api/pad/products/<product_id>/audio/current", methods=["GET"])
     def pad_current_product_audio(product_id: str):

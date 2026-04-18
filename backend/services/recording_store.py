@@ -7,6 +7,7 @@ import sqlite3
 import threading
 import time
 import shutil
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -495,6 +496,7 @@ class RecordingStore:
                 for r in tts_rows:
                     rel = str(r["rel_path"] or "").replace("\\", "/").lstrip("/")
                     v = int(r["updated_at_ms"] or r["created_at_ms"] or 0)
+                    duration_ms = self._audio_duration_ms_for_rel_path(rid, rel)
                     if str(base_url or "").strip():
                         url = f"{str(base_url).rstrip('/')}/api/recordings/{rid}/audio/{rel}"
                     else:
@@ -504,16 +506,17 @@ class RecordingStore:
                     seg_text = str(r["text"] or "")
                     if seg_text.strip():
                         segment_text_chunks.append(seg_text)
-                    segments.append(
-                        {
-                            "segment_id": int(r["id"]),
-                            "segment_index": int(r["segment_index"]) if r["segment_index"] is not None else None,
-                            "seq": int(r["seq"]),
-                            "text": seg_text,
-                            "audio_url": url,
-                            "updated_at_ms": v if v > 0 else None,
-                        }
-                    )
+                    segment = {
+                        "segment_id": int(r["id"]),
+                        "segment_index": int(r["segment_index"]) if r["segment_index"] is not None else None,
+                        "seq": int(r["seq"]),
+                        "text": seg_text,
+                        "audio_url": url,
+                        "updated_at_ms": v if v > 0 else None,
+                    }
+                    if duration_ms is not None:
+                        segment["duration_ms"] = int(duration_ms)
+                    segments.append(segment)
 
                 effective_chunks = segment_text_chunks if segment_text_chunks else chunks
                 answer_text = "".join(effective_chunks).strip()
@@ -557,3 +560,24 @@ class RecordingStore:
         if str(p).lower().startswith(str(base).lower() + os.sep.lower()) or str(p).lower() == str(base).lower():
             return p
         raise ValueError("path_outside_audio_dir")
+
+    def _audio_duration_ms_for_rel_path(self, recording_id: str, rel_path: str) -> int | None:
+        rel = str(rel_path or "").replace("\\", "/").lstrip("/")
+        if not rel:
+            return None
+        try:
+            path = self.safe_rel_audio_path(recording_id, rel)
+            path = self.ensure_within_audio_dir(recording_id, path)
+        except Exception:
+            return None
+        if not path.exists() or not path.is_file():
+            return None
+        try:
+            with wave.open(str(path), "rb") as wf:
+                frames = int(wf.getnframes() or 0)
+                sample_rate = int(wf.getframerate() or 0)
+        except Exception:
+            return None
+        if sample_rate <= 0 or frames < 0:
+            return None
+        return max(0, round((float(frames) / float(sample_rate)) * 1000))

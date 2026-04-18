@@ -356,6 +356,41 @@ class PadProductStore:
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_pad_station_narration_timeline_events_station ON pad_station_narration_timeline_events(hall_id, station_id, sort_order, time_ms, event_id);"
                 )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS pad_station_narration_nodes (
+                        node_id TEXT PRIMARY KEY,
+                        hall_id TEXT NOT NULL,
+                        station_id TEXT NOT NULL,
+                        sort_order INTEGER NOT NULL DEFAULT 0,
+                        recording_id TEXT NOT NULL,
+                        stop_index INTEGER,
+                        stop_name TEXT NOT NULL DEFAULT '',
+                        highlight_start_ms INTEGER NOT NULL,
+                        highlight_end_ms INTEGER NOT NULL,
+                        created_at_ms INTEGER NOT NULL,
+                        updated_at_ms INTEGER NOT NULL
+                    );
+                    """
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_pad_station_narration_nodes_station ON pad_station_narration_nodes(hall_id, station_id, sort_order, highlight_start_ms, node_id);"
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS pad_station_narration_node_hotspots (
+                        node_id TEXT NOT NULL,
+                        hall_id TEXT NOT NULL,
+                        station_id TEXT NOT NULL,
+                        station_hotspot_id TEXT NOT NULL,
+                        sort_order INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY (node_id, station_hotspot_id)
+                    );
+                    """
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_pad_station_narration_node_hotspots_station ON pad_station_narration_node_hotspots(hall_id, station_id, node_id, sort_order, station_hotspot_id);"
+                )
                 self._migrate_hall_products_table(conn)
                 self._migrate_station_hotspots_table(conn)
                 conn.commit()
@@ -1414,11 +1449,15 @@ class PadProductStore:
                         WHERE hall_id=?
                         UNION ALL
                         SELECT updated_at_ms
+                        FROM pad_station_narration_nodes
+                        WHERE hall_id=?
+                        UNION ALL
+                        SELECT updated_at_ms
                         FROM pad_display_bindings
                         WHERE hall_id=?
                     )
                     """,
-                    (hid, hid, hid, hid, hid, hid, hid, hid, hid, hid, hid, hid, hid, hid, hid, hid),
+                    (hid, hid, hid, hid, hid, hid, hid, hid, hid, hid, hid, hid, hid, hid, hid, hid, hid),
                 ).fetchone()
                 return {
                     "product_count": int(product_count_row["product_count"] or 0) if product_count_row else 0,
@@ -2196,7 +2235,9 @@ class PadProductStore:
             station = self.get_station_config(hall_id=hall_id, station_key=station_id)
             station["slot_key"] = slot_key
             station["station_id"] = station_id
-            station["timeline_events"] = self.list_station_narration_timeline_events(hall_id=hall_id, station_id=station_id)
+            narration_state = self.get_station_narration_nodes_state(hall_id=hall_id, station_id=station_id)
+            station["narration_nodes"] = narration_state["narration_nodes"]
+            station["narration_nodes_error"] = narration_state["narration_nodes_error"]
             items.append(station)
         return items
 
@@ -2793,6 +2834,305 @@ class PadProductStore:
             finally:
                 conn.close()
         return hotspot
+
+    def _list_station_narration_nodes_direct(self, *, hall_id: str, station_id: str) -> list[dict]:
+        hid = str(hall_id or "").strip()
+        sid = _normalize_station_id(station_id)
+        if not hid:
+            raise ValueError("hall_id_required")
+        with self._lock:
+            conn = self._connect()
+            try:
+                node_rows = conn.execute(
+                    """
+                    SELECT
+                      node_id,
+                      hall_id,
+                      station_id,
+                      sort_order,
+                      recording_id,
+                      stop_index,
+                      stop_name,
+                      highlight_start_ms,
+                      highlight_end_ms,
+                      created_at_ms,
+                      updated_at_ms
+                    FROM pad_station_narration_nodes
+                    WHERE hall_id=? AND station_id=?
+                    ORDER BY sort_order ASC, highlight_start_ms ASC, node_id ASC
+                    """,
+                    (hid, sid),
+                ).fetchall()
+                hotspot_rows = conn.execute(
+                    """
+                    SELECT
+                      node_id,
+                      station_hotspot_id,
+                      sort_order
+                    FROM pad_station_narration_node_hotspots
+                    WHERE hall_id=? AND station_id=?
+                    ORDER BY node_id ASC, sort_order ASC, station_hotspot_id ASC
+                    """,
+                    (hid, sid),
+                ).fetchall()
+            finally:
+                conn.close()
+        hotspot_map: dict[str, list[str]] = {}
+        for row in hotspot_rows:
+            node_id = str(row["node_id"] or "")
+            if not node_id:
+                continue
+            hotspot_map.setdefault(node_id, []).append(str(row["station_hotspot_id"] or ""))
+        items: list[dict] = []
+        for row in node_rows:
+            item = dict(row)
+            item["hotspot_ids"] = [hid for hid in hotspot_map.get(str(item.get("node_id") or ""), []) if hid]
+            items.append(item)
+        return items
+
+    def _delete_station_narration_nodes(self, *, conn: sqlite3.Connection, hall_id: str, station_id: str) -> None:
+        conn.execute(
+            "DELETE FROM pad_station_narration_node_hotspots WHERE hall_id=? AND station_id=?",
+            (hall_id, station_id),
+        )
+        conn.execute(
+            "DELETE FROM pad_station_narration_nodes WHERE hall_id=? AND station_id=?",
+            (hall_id, station_id),
+        )
+
+    def _build_narration_nodes_from_legacy_events(self, *, hall_id: str, station_id: str, events: list[dict]) -> list[dict]:
+        if not isinstance(events, list) or not events:
+            return []
+        station_cfg = self.get_station_config(hall_id=hall_id, station_key=station_id)
+        recording_id = str(station_cfg.get("recording_id") or "").strip()
+        stop_index = station_cfg.get("stop_index")
+        stop_name = str(station_cfg.get("stop_name") or "").strip()
+        if not recording_id or stop_index is None or str(stop_index).strip() == "":
+            raise ValueError("legacy_timeline_station_audio_missing")
+        sorted_events = sorted(
+            [item if isinstance(item, dict) else {} for item in events],
+            key=lambda item: (
+                int(item.get("sort_order") if item.get("sort_order") is not None else 0),
+                int(item.get("time_ms") if item.get("time_ms") is not None else 0),
+                str(item.get("event_id") or ""),
+            ),
+        )
+        pending: dict[str, dict] = {}
+        grouped: dict[tuple[int, int], dict] = {}
+        for raw in sorted_events:
+            event_type = str(raw.get("event_type") or "focus_switch").strip() or "focus_switch"
+            if event_type == "focus_switch":
+                raise ValueError("legacy_timeline_focus_switch_unsupported")
+            if event_type not in {"highlight_on", "highlight_off"}:
+                raise ValueError("legacy_timeline_event_type_invalid")
+            hotspot_id = str(raw.get("station_hotspot_id") or raw.get("hotspot_id") or "").strip()
+            if not hotspot_id:
+                raise ValueError("legacy_timeline_station_hotspot_missing")
+            try:
+                time_ms = int(raw.get("time_ms"))
+            except Exception as exc:
+                raise ValueError("legacy_timeline_time_ms_invalid") from exc
+            if time_ms < 0:
+                raise ValueError("legacy_timeline_time_ms_invalid")
+            if event_type == "highlight_on":
+                if hotspot_id in pending:
+                    raise ValueError("legacy_timeline_highlight_unpaired")
+                pending[hotspot_id] = {"hotspot_id": hotspot_id, "start_ms": time_ms}
+                continue
+            start = pending.pop(hotspot_id, None)
+            if not start:
+                raise ValueError("legacy_timeline_highlight_unpaired")
+            start_ms = int(start["start_ms"])
+            if time_ms <= start_ms:
+                raise ValueError("legacy_timeline_highlight_invalid")
+            group_key = (start_ms, time_ms)
+            grouped_item = grouped.get(group_key)
+            if not grouped_item:
+                grouped_item = {
+                    "recording_id": recording_id,
+                    "stop_index": int(stop_index),
+                    "stop_name": stop_name,
+                    "highlight_start_ms": start_ms,
+                    "highlight_end_ms": time_ms,
+                    "hotspot_ids": [],
+                }
+                grouped[group_key] = grouped_item
+            if hotspot_id not in grouped_item["hotspot_ids"]:
+                grouped_item["hotspot_ids"].append(hotspot_id)
+        if pending:
+            raise ValueError("legacy_timeline_highlight_unpaired")
+        items: list[dict] = []
+        for index, group_key in enumerate(sorted(grouped.keys(), key=lambda item: (item[0], item[1]))):
+            item = grouped[group_key]
+            items.append(
+                {
+                    "node_id": f"narration_node_{uuid.uuid4().hex}",
+                    "hall_id": hall_id,
+                    "station_id": station_id,
+                    "sort_order": index,
+                    "recording_id": item["recording_id"],
+                    "stop_index": int(item["stop_index"]),
+                    "stop_name": item["stop_name"],
+                    "highlight_start_ms": int(item["highlight_start_ms"]),
+                    "highlight_end_ms": int(item["highlight_end_ms"]),
+                    "hotspot_ids": list(item["hotspot_ids"]),
+                    "created_at_ms": 0,
+                    "updated_at_ms": 0,
+                }
+            )
+        return items
+
+    def _persist_station_narration_nodes(self, *, hall_id: str, station_id: str, nodes: list[dict]) -> list[dict]:
+        hid = str(hall_id or "").strip()
+        sid = _normalize_station_id(station_id)
+        if not hid:
+            raise ValueError("hall_id_required")
+        now_ms = self._now_ms()
+        normalized: list[dict] = []
+        hotspot_map = {
+            str(item.get("hotspot_id") or ""): item
+            for item in self.list_station_hotspots(hall_id=hid, station_key=sid)
+        }
+        for index, raw in enumerate(nodes):
+            item = raw if isinstance(raw, dict) else {}
+            node_id = str(item.get("node_id") or "").strip() or f"narration_node_{uuid.uuid4().hex}"
+            recording_id = str(item.get("recording_id") or "").strip()
+            if not recording_id:
+                raise ValueError("narration_node_recording_required")
+            try:
+                stop_index = int(item.get("stop_index"))
+            except Exception as exc:
+                raise ValueError("narration_node_stop_index_invalid") from exc
+            if stop_index < 0:
+                raise ValueError("narration_node_stop_index_invalid")
+            try:
+                start_ms = int(item.get("highlight_start_ms"))
+                end_ms = int(item.get("highlight_end_ms"))
+            except Exception as exc:
+                raise ValueError("narration_node_highlight_invalid") from exc
+            if start_ms < 0 or end_ms <= start_ms:
+                raise ValueError("narration_node_highlight_invalid")
+            raw_hotspot_ids = item.get("hotspot_ids")
+            if not isinstance(raw_hotspot_ids, list):
+                raise ValueError("narration_node_hotspots_required")
+            deduped_hotspot_ids: list[str] = []
+            seen_hotspots: set[str] = set()
+            for hotspot_id in raw_hotspot_ids:
+                next_hotspot_id = str(hotspot_id or "").strip()
+                if not next_hotspot_id or next_hotspot_id in seen_hotspots:
+                    continue
+                seen_hotspots.add(next_hotspot_id)
+                hotspot = hotspot_map.get(next_hotspot_id)
+                if not hotspot:
+                    raise ValueError("station_hotspot_not_found")
+                deduped_hotspot_ids.append(next_hotspot_id)
+            if not deduped_hotspot_ids:
+                raise ValueError("narration_node_hotspots_required")
+            normalized.append(
+                {
+                    "node_id": node_id,
+                    "hall_id": hid,
+                    "station_id": sid,
+                    "sort_order": int(item.get("sort_order") if item.get("sort_order") is not None else index),
+                    "recording_id": recording_id,
+                    "stop_index": stop_index,
+                    "stop_name": str(item.get("stop_name") or "").strip(),
+                    "highlight_start_ms": start_ms,
+                    "highlight_end_ms": end_ms,
+                    "hotspot_ids": deduped_hotspot_ids,
+                    "created_at_ms": int(item.get("created_at_ms") or now_ms),
+                    "updated_at_ms": int(now_ms),
+                }
+            )
+        with self._lock:
+            conn = self._connect()
+            try:
+                self._delete_station_narration_nodes(conn=conn, hall_id=hid, station_id=sid)
+                conn.execute(
+                    "DELETE FROM pad_station_narration_timeline_events WHERE hall_id=? AND station_id=?",
+                    (hid, sid),
+                )
+                for node in normalized:
+                    conn.execute(
+                        """
+                        INSERT INTO pad_station_narration_nodes (
+                            node_id, hall_id, station_id, sort_order, recording_id, stop_index,
+                            stop_name, highlight_start_ms, highlight_end_ms, created_at_ms, updated_at_ms
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            node["node_id"],
+                            node["hall_id"],
+                            node["station_id"],
+                            node["sort_order"],
+                            node["recording_id"],
+                            node["stop_index"],
+                            node["stop_name"],
+                            node["highlight_start_ms"],
+                            node["highlight_end_ms"],
+                            node["created_at_ms"],
+                            node["updated_at_ms"],
+                        ),
+                    )
+                    for hotspot_index, hotspot_id in enumerate(node["hotspot_ids"]):
+                        conn.execute(
+                            """
+                            INSERT INTO pad_station_narration_node_hotspots (
+                                node_id, hall_id, station_id, station_hotspot_id, sort_order
+                            )
+                            VALUES (?, ?, ?, ?, ?)
+                            """,
+                            (
+                                node["node_id"],
+                                node["hall_id"],
+                                node["station_id"],
+                                hotspot_id,
+                                hotspot_index,
+                            ),
+                        )
+                conn.commit()
+            finally:
+                conn.close()
+        return self._list_station_narration_nodes_direct(hall_id=hid, station_id=sid)
+
+    def get_station_narration_nodes_state(self, *, hall_id: str, station_id: str) -> dict:
+        hid = str(hall_id or "").strip()
+        sid = _normalize_station_id(station_id)
+        if not hid:
+            raise ValueError("hall_id_required")
+        direct_nodes = self._list_station_narration_nodes_direct(hall_id=hid, station_id=sid)
+        if direct_nodes:
+            return {"narration_nodes": direct_nodes, "narration_nodes_error": ""}
+        legacy_events = self.list_station_narration_timeline_events(hall_id=hid, station_id=sid)
+        if not legacy_events:
+            return {"narration_nodes": [], "narration_nodes_error": ""}
+        try:
+            migrated_nodes = self._build_narration_nodes_from_legacy_events(
+                hall_id=hid,
+                station_id=sid,
+                events=legacy_events,
+            )
+        except ValueError as exc:
+            return {"narration_nodes": [], "narration_nodes_error": str(exc)}
+        persisted = self._persist_station_narration_nodes(hall_id=hid, station_id=sid, nodes=migrated_nodes)
+        return {"narration_nodes": persisted, "narration_nodes_error": ""}
+
+    def list_station_narration_nodes(self, *, hall_id: str, station_id: str) -> list[dict]:
+        return self.get_station_narration_nodes_state(hall_id=hall_id, station_id=station_id)["narration_nodes"]
+
+    def replace_station_narration_nodes(self, *, hall_id: str, station_id: str, nodes: list[dict]) -> list[dict]:
+        hid = str(hall_id or "").strip()
+        sid = _normalize_station_id(station_id)
+        if not hid:
+            raise ValueError("hall_id_required")
+        if not isinstance(nodes, list):
+            raise ValueError("narration_nodes_must_be_list")
+        if not nodes:
+            narration_state = self.get_station_narration_nodes_state(hall_id=hid, station_id=sid)
+            if str(narration_state.get("narration_nodes_error") or "").strip():
+                raise ValueError(str(narration_state.get("narration_nodes_error") or "legacy_timeline_manual_cleanup_required"))
+        return self._persist_station_narration_nodes(hall_id=hid, station_id=sid, nodes=nodes)
 
     def list_station_narration_timeline_events(self, *, hall_id: str, station_id: str) -> list[dict]:
         hid = str(hall_id or "").strip()

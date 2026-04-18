@@ -171,6 +171,11 @@
     stationPlaybackSlotKey: "",
     stationPlaybackStopName: "",
     stationPlaybackQueue: [],
+    stationPlaybackNodes: [],
+    stationPlaybackNodeIndex: -1,
+    stationPlaybackNodeId: "",
+    stationPlaybackMode: "idle",
+    stationPlaybackRangeEndMs: null,
     stationPlaybackSegmentIndex: -1,
     stationPlaybackState: "idle",
     stationPlaybackCursorMs: 0,
@@ -179,6 +184,9 @@
     stationPlaybackTimelineEvents: [],
     highlightedHotspotId: "",
     highlightedProductId: "",
+    visibleHotspotIds: [],
+    flashingHotspotIds: [],
+    activeNarrationNodeId: "",
     stationTimelineSelections: Object.create(null),
     lastPlaybackRequestedUrl: "",
     assetBusy: false,
@@ -226,6 +234,7 @@
   let latestStationPlaybackSeq = 0;
   let sceneEditorInteraction = null;
   let stationTimelineInteraction = null;
+  let narrationNodeInteraction = null;
   let hotspotSearchComposing = false;
   const recordingMetaRequestMap = Object.create(null);
   const stationSegmentDurationCache = Object.create(null);
@@ -299,6 +308,8 @@
       stopIndex: null,
       stopName: "",
       timelineEvents: [],
+      narrationNodes: [],
+      narrationNodesError: "",
     };
   }
 
@@ -328,6 +339,50 @@
     return "focus_switch";
   }
 
+  function normalizeNarrationNode(raw, index) {
+    const item = raw && typeof raw === "object" ? raw : {};
+    const startMs = normalizeTimelineEventTimeMs(
+      item.highlightStartMs != null ? item.highlightStartMs : item.highlight_start_ms
+    );
+    const endMs = normalizeTimelineEventTimeMs(
+      item.highlightEndMs != null ? item.highlightEndMs : item.highlight_end_ms
+    );
+    const hotspotIds = Array.isArray(item.hotspotIds)
+      ? item.hotspotIds
+      : Array.isArray(item.hotspot_ids)
+        ? item.hotspot_ids
+        : [];
+    return {
+      nodeId: String(item.nodeId || item.node_id || "").trim(),
+      sortOrder:
+        item.sortOrder != null
+          ? Number(item.sortOrder)
+          : item.sort_order != null
+            ? Number(item.sort_order)
+            : index,
+      recordingId: String(item.recordingId || item.recording_id || "").trim(),
+      stopIndex: normalizeStationStopIndex(item.stopIndex != null ? item.stopIndex : item.stop_index),
+      stopName: String(item.stopName || item.stop_name || "").trim(),
+      highlightStartMs: Math.min(startMs, endMs),
+      highlightEndMs: Math.max(startMs, endMs),
+      hotspotIds: hotspotIds
+        .map((hotspotId) => String(hotspotId || "").trim())
+        .filter((hotspotId, hotspotIndex, arr) => hotspotId && arr.indexOf(hotspotId) === hotspotIndex),
+      updatedAtMs: Number(item.updatedAtMs != null ? item.updatedAtMs : item.updated_at_ms || 0),
+    };
+  }
+
+  function normalizeNarrationNodes(rawNodes) {
+    return (Array.isArray(rawNodes) ? rawNodes : [])
+      .map((raw, index) => normalizeNarrationNode(raw, index))
+      .filter((item) => String(item.nodeId || "").trim() || item.recordingId || item.hotspotIds.length)
+      .sort((left, right) => {
+        const orderDiff = Number(left.sortOrder || 0) - Number(right.sortOrder || 0);
+        if (orderDiff !== 0) return orderDiff;
+        return Number(left.highlightStartMs || 0) - Number(right.highlightStartMs || 0);
+      });
+  }
+
   function normalizeStationSlot(raw, index) {
     const base = getDefaultStationSlot("", index);
     const item = raw && typeof raw === "object" ? raw : {};
@@ -335,12 +390,16 @@
       slotKey: base.slotKey,
       stationId: String(item.stationId || item.station_id || "").trim(),
       label: String(item.label || "").trim(),
-      recordingId: String(item.recordingId || "").trim(),
-      stopIndex: normalizeStationStopIndex(item.stopIndex),
-      stopName: String(item.stopName || "").trim(),
+      recordingId: String(item.recordingId || item.recording_id || "").trim(),
+      stopIndex: normalizeStationStopIndex(item.stopIndex != null ? item.stopIndex : item.stop_index),
+      stopName: String(item.stopName || item.stop_name || "").trim(),
       timelineEvents: normalizeTimelineEvents(
         Array.isArray(item.timelineEvents) ? item.timelineEvents : item.timeline_events
       ),
+      narrationNodes: normalizeNarrationNodes(
+        Array.isArray(item.narrationNodes) ? item.narrationNodes : item.narration_nodes
+      ),
+      narrationNodesError: String(item.narrationNodesError || item.narration_nodes_error || "").trim(),
     };
   }
 
@@ -824,27 +883,88 @@
     return queue.length - 1;
   }
 
-  function getStationTimelineSelection(slotKey) {
-    const key = String(slotKey || "").trim();
-    if (!key || !state.stationTimelineSelections || !state.stationTimelineSelections[key]) return null;
-    const raw = state.stationTimelineSelections[key];
+  function normalizeStationTimelineSelection(rawSelection) {
+    const raw = rawSelection && typeof rawSelection === "object" ? rawSelection : null;
+    if (!raw) return null;
+    const hotspotId = String(raw.hotspotId || "").trim();
+    if (!hotspotId) return null;
     const startMs = normalizeTimelineEventTimeMs(raw.startMs);
     const endMs = normalizeTimelineEventTimeMs(raw.endMs);
     return {
       startMs: Math.min(startMs, endMs),
       endMs: Math.max(startMs, endMs),
+      hotspotId,
+      productId: String(raw.productId || "").trim(),
     };
   }
 
-  function setStationTimelineSelection(slotKey, startMs, endMs) {
+  function getStationTimelineSelectionFromEvents(slotKey) {
+    const key = String(slotKey || "").trim();
+    if (!key) return null;
+    const scene = findSceneById(key) || getSelectedScene();
+    const allEvents = normalizeStationTimelineEditorEvents(getStationSlotByKey(key).timelineEvents, scene);
+    const highlightEvents = allEvents
+      .filter((event) => {
+        const type = normalizeTimelineEventType(event && event.eventType);
+        return type === "highlight_on" || type === "highlight_off";
+      })
+      .sort((left, right) => normalizeTimelineEventTimeMs(left.timeMs) - normalizeTimelineEventTimeMs(right.timeMs));
+    for (let index = 0; index < highlightEvents.length; index += 1) {
+      const startEvent = highlightEvents[index];
+      if (normalizeTimelineEventType(startEvent && startEvent.eventType) !== "highlight_on") continue;
+      const startMs = normalizeTimelineEventTimeMs(startEvent && startEvent.timeMs);
+      const hotspotId = String(startEvent && startEvent.hotspotId ? startEvent.hotspotId : "").trim();
+      if (!hotspotId) continue;
+      const endEvent =
+        highlightEvents.find((candidate) => {
+          if (normalizeTimelineEventType(candidate && candidate.eventType) !== "highlight_off") return false;
+          if (String(candidate && candidate.hotspotId ? candidate.hotspotId : "").trim() !== hotspotId) return false;
+          return normalizeTimelineEventTimeMs(candidate.timeMs) >= startMs;
+        }) || null;
+      if (!endEvent) continue;
+      return normalizeStationTimelineSelection({
+        startMs,
+        endMs: endEvent.timeMs,
+        hotspotId,
+        productId: String(startEvent && startEvent.productId ? startEvent.productId : "").trim(),
+      });
+    }
+    return null;
+  }
+
+  function getStationTimelineSelection(slotKey) {
+    const key = String(slotKey || "").trim();
+    if (!key) return null;
+    const fromState =
+      state.stationTimelineSelections && state.stationTimelineSelections[key]
+        ? normalizeStationTimelineSelection(state.stationTimelineSelections[key])
+        : null;
+    if (fromState) return fromState;
+    return getStationTimelineSelectionFromEvents(key);
+  }
+
+  function getStationTimelineSelectionFromStateOnly(slotKey) {
+    const key = String(slotKey || "").trim();
+    if (!key || !state.stationTimelineSelections || !state.stationTimelineSelections[key]) return null;
+    return normalizeStationTimelineSelection(state.stationTimelineSelections[key]);
+  }
+
+  function setStationTimelineSelection(slotKey, startMs, endMs, options) {
     const key = String(slotKey || "").trim();
     if (!key) return;
-    const startValue = normalizeTimelineEventTimeMs(startMs);
-    const endValue = normalizeTimelineEventTimeMs(endMs);
-    state.stationTimelineSelections[key] = {
-      startMs: Math.min(startValue, endValue),
-      endMs: Math.max(startValue, endValue),
-    };
+    const current = getStationTimelineSelection(key);
+    const opts = options && typeof options === "object" ? options : {};
+    const nextSelection = normalizeStationTimelineSelection({
+      startMs,
+      endMs,
+      hotspotId: opts.hotspotId != null ? opts.hotspotId : current && current.hotspotId,
+      productId: opts.productId != null ? opts.productId : current && current.productId,
+    });
+    if (!nextSelection) {
+      clearStationTimelineSelection(key);
+      return;
+    }
+    state.stationTimelineSelections[key] = nextSelection;
   }
 
   function clearStationTimelineSelection(slotKey) {
@@ -883,6 +1003,8 @@
     const key = String(slotKey || "").trim();
     if (!key) return;
     const anchorMs = getTimelineTimeMsFromPointer(key, clientX);
+    const scene = findSceneById(key) || getSelectedScene();
+    const targetHotspot = getTimelineSelectedTargetHotspot(scene);
     stationTimelineInteraction = {
       mode: "selection",
       slotKey: key,
@@ -890,7 +1012,10 @@
       currentMs: anchorMs,
       moved: false,
     };
-    setStationTimelineSelection(key, anchorMs, anchorMs);
+    setStationTimelineSelection(key, anchorMs, anchorMs, {
+      hotspotId: targetHotspot ? String(targetHotspot.hotspot_id || "").trim() : "",
+      productId: targetHotspot ? String(targetHotspot.product_id || "").trim() : "",
+    });
     render();
   }
 
@@ -906,11 +1031,42 @@
       render();
       return;
     }
+    if (stationTimelineInteraction.mode === "highlight-start" || stationTimelineInteraction.mode === "highlight-end") {
+      stationTimelineInteraction.currentMs = nextMs;
+      stationTimelineInteraction.moved =
+        stationTimelineInteraction.moved ||
+        Math.abs(nextMs - stationTimelineInteraction.anchorMs) > 20;
+      const currentSelection = getStationTimelineSelection(stationTimelineInteraction.slotKey);
+      if (!currentSelection) return;
+      if (stationTimelineInteraction.mode === "highlight-start") {
+        setStationTimelineSelection(
+          stationTimelineInteraction.slotKey,
+          nextMs,
+          currentSelection.endMs,
+          currentSelection
+        );
+      } else {
+        setStationTimelineSelection(
+          stationTimelineInteraction.slotKey,
+          currentSelection.startMs,
+          nextMs,
+          currentSelection
+        );
+      }
+      render();
+      return;
+    }
     stationTimelineInteraction.currentMs = nextMs;
     stationTimelineInteraction.moved =
       stationTimelineInteraction.moved ||
       Math.abs(nextMs - stationTimelineInteraction.anchorMs) > 40;
-    setStationTimelineSelection(stationTimelineInteraction.slotKey, stationTimelineInteraction.anchorMs, nextMs);
+    const currentSelection = getStationTimelineSelection(stationTimelineInteraction.slotKey);
+    setStationTimelineSelection(
+      stationTimelineInteraction.slotKey,
+      stationTimelineInteraction.anchorMs,
+      nextMs,
+      currentSelection || {}
+    );
     render();
   }
 
@@ -932,6 +1088,21 @@
     render();
   }
 
+  function beginStationTimelineHighlightHandleDrag(slotKey, edge, clientX) {
+    const key = String(slotKey || "").trim();
+    if (!key) return;
+    const selection = getStationTimelineSelection(key);
+    if (!selection) return;
+    stationTimelineInteraction = {
+      mode: edge === "start" ? "highlight-start" : "highlight-end",
+      slotKey: key,
+      anchorMs: getTimelineTimeMsFromPointer(key, clientX),
+      currentMs: getTimelineTimeMsFromPointer(key, clientX),
+      moved: false,
+    };
+    render();
+  }
+
   function endStationTimelineSelection() {
     if (!stationTimelineInteraction) return;
     const interaction = stationTimelineInteraction;
@@ -940,24 +1111,87 @@
       render();
       return;
     }
+    if (interaction.mode === "highlight-start" || interaction.mode === "highlight-end") {
+      if (interaction.moved) {
+        applyStationTimelineSelection(interaction.slotKey);
+        return;
+      }
+      render();
+      return;
+    }
     if (!interaction.moved) {
       seekStationPlaybackToMs(interaction.currentMs);
       return;
     }
-    render();
+    applyStationTimelineSelection(interaction.slotKey);
   }
 
-  function setStationTimelineSelectionEdge(slotKey, edge) {
+  function getStationTimelineEditableEvents(events) {
+    return (Array.isArray(events) ? events : []).filter((event) => {
+      const type = normalizeTimelineEventType(event && event.eventType);
+      return type !== "highlight_on" && type !== "highlight_off";
+    });
+  }
+
+  function buildStationTimelineEventsWithSelection(events, selection) {
+    const baseEvents = getStationTimelineEditableEvents(events).map((event, index) =>
+      Object.assign({}, event, {
+        sortOrder: index,
+      })
+    );
+    const normalizedSelection = normalizeStationTimelineSelection(selection);
+    if (!normalizedSelection) {
+      return normalizeStationTimelineEditorEvents(baseEvents, findSceneById(state.demoLeftTabKey) || getSelectedScene());
+    }
+    baseEvents.push(
+      {
+        eventId: "",
+        sortOrder: baseEvents.length,
+        timeMs: normalizedSelection.startMs,
+        productId: normalizedSelection.productId,
+        hotspotId: normalizedSelection.hotspotId,
+        eventType: "highlight_on",
+        updatedAtMs: 0,
+      },
+      {
+        eventId: "",
+        sortOrder: baseEvents.length + 1,
+        timeMs: normalizedSelection.endMs,
+        productId: normalizedSelection.productId,
+        hotspotId: normalizedSelection.hotspotId,
+        eventType: "highlight_off",
+        updatedAtMs: 0,
+      }
+    );
+    return baseEvents.sort((left, right) => {
+      const timeDiff = normalizeTimelineEventTimeMs(left.timeMs) - normalizeTimelineEventTimeMs(right.timeMs);
+      if (timeDiff !== 0) return timeDiff;
+      return String(left.hotspotId || "").localeCompare(String(right.hotspotId || ""));
+    });
+  }
+
+  function syncStationTimelineSelectionToSlot(slotKey, selectionOverride) {
     const key = String(slotKey || "").trim();
     if (!key) return;
-    const selection = getStationTimelineSelection(key);
-    const currentMs = getStationPlaybackCurrentTimeMs();
-    const nextSelection = selection || { startMs: currentMs, endMs: currentMs };
-    if (edge === "start") {
-      setStationTimelineSelection(key, currentMs, nextSelection.endMs);
-    } else {
-      setStationTimelineSelection(key, nextSelection.startMs, currentMs);
-    }
+    const nextSelection =
+      selectionOverride === undefined
+        ? getStationTimelineSelectionFromStateOnly(key)
+        : normalizeStationTimelineSelection(selectionOverride);
+    updateStationSlot(key, (slot) => {
+      const scene = findSceneById(key) || getSelectedScene();
+      const allEvents = normalizeStationTimelineEditorEvents(slot.timelineEvents, scene);
+      const focusEvents = getStationTimelineEditableEvents(allEvents);
+      return {
+        timelineEvents: buildStationTimelineEventsWithSelection(focusEvents, nextSelection),
+      };
+    });
+  }
+
+  function deleteStationTimelineSelection(slotKey) {
+    const key = String(slotKey || "").trim();
+    if (!key) return;
+    clearStationTimelineSelection(key);
+    syncStationTimelineSelectionToSlot(key, null);
     render();
   }
 
@@ -965,7 +1199,9 @@
     const key = String(slotKey || "").trim();
     const scene = findSceneById(key) || getSelectedScene();
     const selection = getStationTimelineSelection(key);
-    const targetHotspot = getTimelineSelectedTargetHotspot(scene);
+    const targetHotspot =
+      (selection && selection.hotspotId ? findStationTimelineHotspot(scene, selection.hotspotId) : null) ||
+      getTimelineSelectedTargetHotspot(scene);
     if (!selection) {
       setAssetState("Select a range on the timeline first.", "warning", false, "station-timeline");
       render();
@@ -976,44 +1212,11 @@
       render();
       return;
     }
-    updateStationTimelineEvents(key, (events) => {
-      const baseEvents = events.filter((event) => {
-        const eventType = normalizeTimelineEventType(event && event.eventType);
-        const sameHotspot =
-          String(event && event.hotspotId ? event.hotspotId : "").trim() ===
-          String(targetHotspot.hotspot_id || "").trim();
-        const eventTime = normalizeTimelineEventTimeMs(event && event.timeMs);
-        if (!sameHotspot) return true;
-        if (eventTime !== selection.startMs && eventTime !== selection.endMs) return true;
-        return eventType !== "highlight_on" && eventType !== "highlight_off";
-      });
-      baseEvents.push(
-        {
-          eventId: "",
-          sortOrder: baseEvents.length,
-          timeMs: selection.startMs,
-          productId: String(targetHotspot.product_id || "").trim(),
-          hotspotId: String(targetHotspot.hotspot_id || "").trim(),
-          eventType: "highlight_on",
-          updatedAtMs: 0,
-        },
-        {
-          eventId: "",
-          sortOrder: baseEvents.length + 1,
-          timeMs: selection.endMs,
-          productId: String(targetHotspot.product_id || "").trim(),
-          hotspotId: String(targetHotspot.hotspot_id || "").trim(),
-          eventType: "highlight_off",
-          updatedAtMs: 0,
-        }
-      );
-      return baseEvents.sort((left, right) => {
-        const timeDiff = normalizeTimelineEventTimeMs(left.timeMs) - normalizeTimelineEventTimeMs(right.timeMs);
-        if (timeDiff !== 0) return timeDiff;
-        return String(left.hotspotId || "").localeCompare(String(right.hotspotId || ""));
-      });
+    setStationTimelineSelection(key, selection.startMs, selection.endMs, {
+      hotspotId: String(targetHotspot.hotspot_id || "").trim(),
+      productId: String(targetHotspot.product_id || "").trim(),
     });
-    setAssetState("Created highlight_on and highlight_off from the selected range.", "success", false, "station-timeline");
+    syncStationTimelineSelectionToSlot(key);
     render();
   }
 
@@ -1041,17 +1244,19 @@
     const key = normalizeDemoLeftTabKey(slotKey);
     const scene = findSceneById(key) || getSelectedScene();
     if (!refs.app) {
-      return normalizeStationTimelineEditorEvents(getStationSlotByKey(key).timelineEvents, scene);
+      const allEvents = normalizeStationTimelineEditorEvents(getStationSlotByKey(key).timelineEvents, scene);
+      return buildStationTimelineEventsWithSelection(
+        getStationTimelineEditableEvents(allEvents),
+        getStationTimelineSelection(key)
+      );
     }
-    const rowNodes = Array.from(refs.app.querySelectorAll(".pad-station-timeline__item"));
-    if (!rowNodes.length) {
-      return [];
-    }
-    return normalizeStationTimelineEditorEvents(
+    const rowNodes = Array.from(
+      refs.app.querySelectorAll(".pad-station-timeline__item, .pad-ops-timeline-row")
+    );
+    const focusEvents = normalizeStationTimelineEditorEvents(
       rowNodes.map((node, index) => {
         const timeInput = node.querySelector('[data-action="station-timeline-time-ms"]');
         const hotspotSelect = node.querySelector('[data-action="station-timeline-hotspot"]');
-        const eventTypeSelect = node.querySelector('[data-action="station-timeline-event-type"]');
         const hotspotId = String(hotspotSelect && hotspotSelect.value ? hotspotSelect.value : "").trim();
         const hotspot = findStationTimelineHotspot(scene, hotspotId);
         return {
@@ -1059,22 +1264,26 @@
           timeMs: normalizeTimelineEventTimeMs(timeInput ? timeInput.value : 0),
           hotspotId,
           productId: hotspot ? String(hotspot.product_id || "").trim() : "",
-          eventType: normalizeTimelineEventType(eventTypeSelect ? eventTypeSelect.value : "focus_switch"),
+          eventType: "focus_switch",
         };
       }),
       scene
     );
+    return buildStationTimelineEventsWithSelection(focusEvents, getStationTimelineSelection(key));
   }
 
   function updateStationTimelineEvents(slotKey, updater) {
     const key = normalizeDemoLeftTabKey(slotKey);
     const scene = findSceneById(key) || getSelectedScene();
     updateStationSlot(key, (slot) => {
-      const prevEvents = normalizeStationTimelineEditorEvents(slot.timelineEvents, scene);
+      const prevEvents = getStationTimelineEditableEvents(normalizeStationTimelineEditorEvents(slot.timelineEvents, scene));
       const draftEvents =
         typeof updater === "function" ? updater(prevEvents.map((event) => Object.assign({}, event))) : prevEvents;
       return {
-        timelineEvents: normalizeStationTimelineEditorEvents(draftEvents, scene),
+        timelineEvents: buildStationTimelineEventsWithSelection(
+          normalizeStationTimelineEditorEvents(draftEvents, scene),
+          getStationTimelineSelection(key)
+        ),
       };
     });
   }
@@ -1200,6 +1409,8 @@
     state.sceneEditorActiveHotspotId = "";
     state.sceneEditorDraft = null;
     state.sceneEditorCreateMode = false;
+    const nextActiveNode = getActiveNarrationNode(nextTab);
+    state.activeNarrationNodeId = nextActiveNode ? String(nextActiveNode.nodeId || "") : "";
     persistStationSlotsState();
     render();
   }
@@ -1377,7 +1588,13 @@
     const uniqueRecordingIds = Array.from(
       new Set(
         (Array.isArray(state.demoStationSlots) ? state.demoStationSlots : [])
-          .map((slot) => String(slot && slot.recordingId ? slot.recordingId : "").trim())
+          .flatMap((slot) => {
+            const slotRecordingId = String(slot && slot.recordingId ? slot.recordingId : "").trim();
+            const nodeRecordingIds = (Array.isArray(slot && slot.narrationNodes) ? slot.narrationNodes : []).map((node) =>
+              String(node && node.recordingId ? node.recordingId : "").trim()
+            );
+            return [slotRecordingId].concat(nodeRecordingIds);
+          })
           .filter(Boolean)
       )
     );
@@ -1550,6 +1767,8 @@
           sort_order: index,
           updated_at_ms: updatedAtMs,
           timeline_events: normalizeTimelineEvents(item.timeline_events),
+          narration_nodes: normalizeNarrationNodes(item.narration_nodes),
+          narration_nodes_error: String(item.narration_nodes_error || "").trim(),
           background: backgroundUrl
             ? {
                 image_url: buildUrlWithClient(backgroundUrl, clientId, background.updated_at_ms || updatedAtMs),
@@ -1604,6 +1823,8 @@
           stopIndex: item.stop_index,
           stopName: String(item.stop_name || "").trim(),
           timelineEvents: normalizeTimelineEvents(item.timeline_events),
+          narrationNodes: normalizeNarrationNodes(item.narration_nodes),
+          narrationNodesError: String(item.narration_nodes_error || "").trim(),
         },
         index
       );
@@ -1991,9 +2212,276 @@
     return !!(slot && String(slot.slotKey || "") === String(state.pendingStationSlotKey || ""));
   }
 
+  function getStationNarrationNodes(slotKey) {
+    const slot = typeof slotKey === "string" ? getStationSlotByKey(slotKey) : slotKey;
+    return normalizeNarrationNodes(slot && slot.narrationNodes);
+  }
+
+  function findStationNarrationNode(slotKey, nodeId) {
+    const nextNodeId = String(nodeId || "").trim();
+    if (!nextNodeId) return null;
+    return (
+      getStationNarrationNodes(slotKey).find((node) => String(node.nodeId || "").trim() === nextNodeId) || null
+    );
+  }
+
+  function getActiveNarrationNode(slotKey) {
+    const nodes = getStationNarrationNodes(slotKey);
+    if (!nodes.length) return null;
+    const activeNodeId = String(state.activeNarrationNodeId || "").trim();
+    if (activeNodeId) {
+      const matched = nodes.find((node) => String(node.nodeId || "").trim() === activeNodeId);
+      if (matched) return matched;
+    }
+    state.activeNarrationNodeId = String((nodes[0] && nodes[0].nodeId) || "");
+    return nodes[0] || null;
+  }
+
+  function setActiveNarrationNode(slotKey, nodeId) {
+    const node = findStationNarrationNode(slotKey, nodeId);
+    state.activeNarrationNodeId = node ? String(node.nodeId || "") : "";
+  }
+
+  function createEmptyNarrationNode(slotKey) {
+    const slot = getStationSlotByKey(slotKey);
+    const nodes = getStationNarrationNodes(slot);
+    return normalizeNarrationNode(
+      {
+        node_id: "narration_node_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8),
+        sort_order: nodes.length,
+        recording_id: String(slot.recordingId || "").trim(),
+        stop_index: normalizeStationStopIndex(slot.stopIndex),
+        stop_name: String(slot.stopName || "").trim(),
+        highlight_start_ms: 0,
+        highlight_end_ms: 0,
+        hotspot_ids: [],
+      },
+      nodes.length
+    );
+  }
+
+  function updateStationNarrationNodes(slotKey, updater) {
+    const key = normalizeDemoLeftTabKey(slotKey);
+    updateStationSlot(key, (slot) => {
+      const prevNodes = getStationNarrationNodes(slot);
+      const draftNodes =
+        typeof updater === "function" ? updater(prevNodes.map((node) => Object.assign({}, node))) : prevNodes;
+      return {
+        narrationNodes: (Array.isArray(draftNodes) ? draftNodes : [])
+          .map((node, index) => normalizeNarrationNode(Object.assign({}, node, { sortOrder: index }), index)),
+        narrationNodesError: "",
+      };
+    });
+  }
+
+  function addStationNarrationNode(slotKey) {
+    const key = normalizeDemoLeftTabKey(slotKey);
+    updateStationNarrationNodes(key, (nodes) => nodes.concat(createEmptyNarrationNode(key)));
+    const nextNodes = getStationNarrationNodes(key);
+    const activeNode = nextNodes[nextNodes.length - 1] || null;
+    state.activeNarrationNodeId = activeNode ? String(activeNode.nodeId || "") : "";
+    render();
+  }
+
+  function removeStationNarrationNode(slotKey, nodeId) {
+    const key = normalizeDemoLeftTabKey(slotKey);
+    updateStationNarrationNodes(key, (nodes) => nodes.filter((node) => String(node.nodeId || "") !== String(nodeId || "")));
+    const nextActive = getActiveNarrationNode(key);
+    state.activeNarrationNodeId = nextActive ? String(nextActive.nodeId || "") : "";
+    render();
+  }
+
+  function moveStationNarrationNode(slotKey, nodeId, delta) {
+    const key = normalizeDemoLeftTabKey(slotKey);
+    const moveDelta = Number(delta);
+    updateStationNarrationNodes(key, (nodes) => {
+      const currentIndex = nodes.findIndex((node) => String(node.nodeId || "") === String(nodeId || ""));
+      const nextIndex = currentIndex + moveDelta;
+      if (currentIndex < 0 || nextIndex < 0 || nextIndex >= nodes.length) return nodes;
+      const nextNodes = nodes.slice();
+      const moved = nextNodes.splice(currentIndex, 1)[0];
+      nextNodes.splice(nextIndex, 0, moved);
+      return nextNodes;
+    });
+    render();
+  }
+
+  function updateStationNarrationNode(slotKey, nodeId, patch) {
+    const nextPatch = patch && typeof patch === "object" ? patch : {};
+    updateStationNarrationNodes(slotKey, (nodes) =>
+      nodes.map((node) =>
+        String(node.nodeId || "") === String(nodeId || "")
+          ? normalizeNarrationNode(Object.assign({}, node, nextPatch), node.sortOrder || 0)
+          : node
+      )
+    );
+  }
+
+  function toggleNarrationNodeHotspotBinding(slotKey, nodeId, hotspotId) {
+    const nextHotspotId = String(hotspotId || "").trim();
+    if (!nextHotspotId) return;
+    updateStationNarrationNodes(slotKey, (nodes) =>
+      nodes.map((node) => {
+        if (String(node.nodeId || "") !== String(nodeId || "")) return node;
+        const hasHotspot = node.hotspotIds.includes(nextHotspotId);
+        return Object.assign({}, node, {
+          hotspotIds: hasHotspot
+            ? node.hotspotIds.filter((item) => item !== nextHotspotId)
+            : node.hotspotIds.concat(nextHotspotId),
+        });
+      })
+    );
+    state.activeNarrationNodeId = String(nodeId || "");
+    render();
+  }
+
+  function getNarrationNodeValidation(slotKey, node) {
+    const item = node && typeof node === "object" ? node : {};
+    const scene = findSceneById(slotKey) || getSelectedScene();
+    const recordingId = String(item.recordingId || "").trim();
+    const stopIndex = normalizeStationStopIndex(item.stopIndex);
+    const hotspotIds = Array.isArray(item.hotspotIds) ? item.hotspotIds : [];
+    if (!recordingId) {
+      return { valid: false, tone: "warning", message: "请选择音轨存档。" };
+    }
+    const stops = getRecordingStops(recordingId);
+    if (stopIndex == null) {
+      return { valid: false, tone: "warning", message: "请选择音轨站台。" };
+    }
+    if (stops.length && (stopIndex < 0 || stopIndex >= stops.length)) {
+      return { valid: false, tone: "danger", message: "节点音轨站台无效。" };
+    }
+    if (Number(item.highlightEndMs || 0) <= Number(item.highlightStartMs || 0)) {
+      return { valid: false, tone: "warning", message: "请拖出有效的高亮区间。" };
+    }
+    if (!hotspotIds.length) {
+      return { valid: false, tone: "warning", message: "请绑定至少一个高亮热区。" };
+    }
+    const missingHotspot = hotspotIds.find((hotspotId) => !findStationTimelineHotspot(scene, hotspotId));
+    if (missingHotspot) {
+      return { valid: false, tone: "danger", message: "节点绑定了不存在的热区，请重新选择。" };
+    }
+    return { valid: true, tone: "ready", message: "节点配置完整，可以参与全站讲解。" };
+  }
+
+  function getNarrationNodeTimeMsFromPointer(slotKey, nodeId, clientX) {
+    if (!refs.app) return 0;
+    const track = refs.app.querySelector(
+      '[data-role="narration-node-track"][data-slot-key="' +
+        String(slotKey || "").trim() +
+        '"][data-node-id="' +
+        String(nodeId || "").trim() +
+        '"]'
+    );
+    if (!track) return 0;
+    const rect = track.getBoundingClientRect();
+    if (!rect || rect.width <= 0) return 0;
+    const ratio = Math.min(1, Math.max(0, (Number(clientX) - rect.left) / rect.width));
+    const node = findStationNarrationNode(slotKey, nodeId);
+    return Math.round(getNarrationNodeVisualMaxMs(slotKey, node) * ratio);
+  }
+
+  function setNarrationNodeHighlightRange(slotKey, nodeId, startMs, endMs) {
+    updateStationNarrationNode(slotKey, nodeId, {
+      highlightStartMs: Math.min(normalizeTimelineEventTimeMs(startMs), normalizeTimelineEventTimeMs(endMs)),
+      highlightEndMs: Math.max(normalizeTimelineEventTimeMs(startMs), normalizeTimelineEventTimeMs(endMs)),
+    });
+  }
+
+  function beginNarrationNodeSelection(slotKey, nodeId, clientX) {
+    narrationNodeInteraction = {
+      mode: "selection",
+      slotKey: String(slotKey || "").trim(),
+      nodeId: String(nodeId || "").trim(),
+      anchorMs: getNarrationNodeTimeMsFromPointer(slotKey, nodeId, clientX),
+      currentMs: getNarrationNodeTimeMsFromPointer(slotKey, nodeId, clientX),
+    };
+    setActiveNarrationNode(slotKey, nodeId);
+    setNarrationNodeHighlightRange(slotKey, nodeId, narrationNodeInteraction.anchorMs, narrationNodeInteraction.currentMs);
+    render();
+  }
+
+  function beginNarrationNodeHandleDrag(slotKey, nodeId, edge, clientX) {
+    narrationNodeInteraction = {
+      mode: edge === "start" ? "highlight-start" : "highlight-end",
+      slotKey: String(slotKey || "").trim(),
+      nodeId: String(nodeId || "").trim(),
+      anchorMs: getNarrationNodeTimeMsFromPointer(slotKey, nodeId, clientX),
+      currentMs: getNarrationNodeTimeMsFromPointer(slotKey, nodeId, clientX),
+    };
+    setActiveNarrationNode(slotKey, nodeId);
+    render();
+  }
+
+  function beginNarrationNodePlayheadDrag(slotKey, nodeId, clientX) {
+    narrationNodeInteraction = {
+      mode: "playhead",
+      slotKey: String(slotKey || "").trim(),
+      nodeId: String(nodeId || "").trim(),
+      anchorMs: getNarrationNodeTimeMsFromPointer(slotKey, nodeId, clientX),
+      currentMs: getNarrationNodeTimeMsFromPointer(slotKey, nodeId, clientX),
+    };
+    setActiveNarrationNode(slotKey, nodeId);
+    render();
+  }
+
+  function updateNarrationNodeInteraction(clientX) {
+    if (!narrationNodeInteraction) return;
+    const nextMs = getNarrationNodeTimeMsFromPointer(
+      narrationNodeInteraction.slotKey,
+      narrationNodeInteraction.nodeId,
+      clientX
+    );
+    narrationNodeInteraction.currentMs = nextMs;
+    const node = findStationNarrationNode(narrationNodeInteraction.slotKey, narrationNodeInteraction.nodeId);
+    if (!node) return;
+    if (narrationNodeInteraction.mode === "highlight-start") {
+      setNarrationNodeHighlightRange(
+        narrationNodeInteraction.slotKey,
+        narrationNodeInteraction.nodeId,
+        nextMs,
+        node.highlightEndMs
+      );
+    } else if (narrationNodeInteraction.mode === "highlight-end") {
+      setNarrationNodeHighlightRange(
+        narrationNodeInteraction.slotKey,
+        narrationNodeInteraction.nodeId,
+        node.highlightStartMs,
+        nextMs
+      );
+    } else if (narrationNodeInteraction.mode === "playhead") {
+      const playbackNode =
+        (Array.isArray(state.stationPlaybackNodes) ? state.stationPlaybackNodes : []).find(
+          (entry) => String(entry && entry.nodeId ? entry.nodeId : "").trim() === String(node.nodeId || "").trim()
+        ) || null;
+      if (playbackNode && String(state.stationPlaybackState || "").trim() === "playing") {
+        try {
+          refs.audio.pause();
+        } catch (_) {}
+        state.stationPlaybackState = "paused";
+      }
+      state.stationPlaybackCursorMs = playbackNode ? Number(playbackNode.playbackStartMs || 0) + nextMs : nextMs;
+      applyStationTimelineHighlight(state.stationPlaybackCursorMs);
+    } else {
+      setNarrationNodeHighlightRange(
+        narrationNodeInteraction.slotKey,
+        narrationNodeInteraction.nodeId,
+        narrationNodeInteraction.anchorMs,
+        nextMs
+      );
+    }
+    render();
+  }
+
+  function endNarrationNodeInteraction() {
+    if (!narrationNodeInteraction) return;
+    narrationNodeInteraction = null;
+    render();
+  }
+
   function isStationSlotConfigured(slot) {
     const item = slot && typeof slot === "object" ? slot : {};
-    return !!String(item.recordingId || "").trim() && normalizeStationStopIndex(item.stopIndex) != null;
+    return getStationNarrationNodes(item).some((node) => getNarrationNodeValidation(item.slotKey, node).valid);
   }
 
   function getStationSlotStatus(slot) {
@@ -2027,6 +2515,26 @@
     return { tone: "ready", text: "可以播放", playable: true };
   }
 
+  function getStationSlotStatus(slot) {
+    const item = slot && typeof slot === "object" ? slot : getActiveStationSlot();
+    const slotKey = String(item.slotKey || "").trim();
+    if (String(item.narrationNodesError || "").trim()) {
+      return { tone: "danger", text: "旧时间轴数据需要人工整理", playable: false };
+    }
+    const nodes = getStationNarrationNodes(item);
+    if (!nodes.length) {
+      return { tone: "pending", text: "请先新增讲解节点", playable: false };
+    }
+    const invalidNode = nodes.find((node) => !getNarrationNodeValidation(slotKey, node).valid);
+    if (invalidNode) {
+      return { tone: "warning", text: getNarrationNodeValidation(slotKey, invalidNode).message, playable: false };
+    }
+    if (isStationSlotPending(item) || isStationSlotPlaying(item)) {
+      return { tone: "ready", text: "正在播放全站讲解", playable: true };
+    }
+    return { tone: "ready", text: "可以播放全站讲解", playable: true };
+  }
+
   function setMode(mode) {
     const nextMode = String(mode || "").trim() === "ops" ? "ops" : DEFAULT_MODE;
     if (state.mode === nextMode) return;
@@ -2055,7 +2563,8 @@
   }
 
   function normalizeOpsStationTab(value) {
-    return String(value || "").trim() === "settings" ? "settings" : "annotate";
+    const key = String(value || "").trim();
+    return key === "settings" || key === "other" ? key : "annotate";
   }
 
   function normalizeOpsAnnotateSidebarTab(value) {
@@ -2115,11 +2624,18 @@
     state.stationPlaybackSlotKey = "";
     state.stationPlaybackStopName = "";
     state.stationPlaybackQueue = [];
+    state.stationPlaybackNodes = [];
+    state.stationPlaybackNodeIndex = -1;
+    state.stationPlaybackNodeId = "";
+    state.stationPlaybackMode = "idle";
+    state.stationPlaybackRangeEndMs = null;
     state.stationPlaybackSegmentIndex = -1;
     state.stationPlaybackAnswerText = "";
     state.stationPlaybackTimelineEvents = [];
     state.highlightedHotspotId = "";
     state.highlightedProductId = "";
+    state.visibleHotspotIds = [];
+    state.flashingHotspotIds = [];
     if (!opts.preserveRequestUrl) {
       state.lastPlaybackRequestedUrl = "";
     }
@@ -2409,6 +2925,7 @@
     const tabs = [
       { key: "annotate", label: "\u70ed\u533a\u6807\u6ce8" },
       { key: "settings", label: "\u7ad9\u70b9\u914d\u7f6e" },
+      { key: "other", label: "\u5176\u4ed6\u914d\u7f6e" },
     ];
     return (
       '<div class="pad-ops-mode-tabs" role="tablist" aria-label="\u8fd0\u7ef4\u7ad9\u70b9\u529f\u80fd">' +
@@ -2529,11 +3046,6 @@
   }
 
   function renderOpsTimelineEventRow(slot, scene, event, index, total) {
-    const labels = {
-      focus_switch: "\u5207\u6362\u7126\u70b9",
-      highlight_on: "\u5f00\u542f\u9ad8\u4eae",
-      highlight_off: "\u53d6\u6d88\u9ad8\u4eae",
-    };
     const slotKey = String(slot && slot.slotKey ? slot.slotKey : "").trim();
     const currentIndex = Number(index);
     const hotspotOptions = getStationTimelineHotspotOptions(scene, event && event.hotspotId);
@@ -2601,25 +3113,7 @@
         })
         .join("") +
       "</select></label>" +
-      '<label class="pad-station-config-panel__field"><span>\u4e8b\u4ef6\u7c7b\u578b</span><select data-action="station-timeline-event-type" data-slot-key="' +
-      escapeHtml(slotKey) +
-      '" data-index="' +
-      escapeHtml(String(currentIndex)) +
-      '">' +
-      Object.keys(labels)
-        .map((key) => {
-          return (
-            '<option value="' +
-            escapeHtml(key) +
-            '"' +
-            (normalizeTimelineEventType(event && event.eventType) === key ? " selected" : "") +
-            ">" +
-            escapeHtml(labels[key]) +
-            "</option>"
-          );
-        })
-        .join("") +
-      "</select></label>" +
+      '<div class="pad-station-config-panel__field"><span>\u4e8b\u4ef6\u7c7b\u578b</span><strong>\u5207\u6362\u7126\u70b9</strong></div>' +
       "</div>" +
       '<div class="pad-ops-timeline-row__summary' +
       (missingHotspot ? " is-danger" : "") +
@@ -2627,6 +3121,30 @@
       escapeHtml(getStationTimelineEventSummary(scene, event)) +
       "</div>" +
       "</div>"
+    );
+  }
+
+  function renderOpsMobileWorkspaceSwitcher() {
+    const slot = getActiveStationSlot();
+    const stationStatus = getStationSlotStatus(slot);
+    return (
+      '<section class="pad-panel pad-ops-mobile-workspace-switcher">' +
+      '<div class="pad-panel__header pad-ops-panel__header">' +
+      "<div>" +
+      '<div class="pad-panel__title">\u5de5\u4f5c\u533a</div>' +
+      '<div class="pad-panel__hint">\u5207\u6362\u5de5\u4f5c\u533a\u65f6\uff0c\u4e0b\u65b9\u5de5\u4f5c\u533a\u57df\u4f4d\u7f6e\u4fdd\u6301\u4e0d\u53d8\u3002</div>' +
+      "</div>" +
+      "</div>" +
+      '<div class="pad-ops-mobile-workspace-switcher__body">' +
+      renderOpsStationModeTabs() +
+      '<div class="pad-ops-station-card__status">' +
+      renderToneChip(stationStatus.text, stationStatus.tone) +
+      '<span class="pad-ops-station-card__status-text">' +
+      escapeHtml("\u5f53\u524d\u7ad9\u70b9\uff1a" + (String(slot.stopName || "").trim() || "--")) +
+      "</span>" +
+      "</div>" +
+      "</div>" +
+      "</section>"
     );
   }
 
@@ -2659,19 +3177,15 @@
       '<span class="pad-station-timeline__preview-time">当前播放 ' +
       escapeHtml(currentTimeText) +
       "</span>" +
-      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-add-highlight-on" data-slot-key="' +
-      escapeHtml(slotKey) +
-      '">插入高亮开始</button>' +
-      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-add-highlight-off" data-slot-key="' +
-      escapeHtml(slotKey) +
-      '">插入高亮结束</button>' +
       "</div>"
     );
   }
 
   function renderOpsStationTimeline(slot, scene) {
     const slotKey = String(slot && slot.slotKey ? slot.slotKey : "").trim();
-    const timelineEvents = normalizeStationTimelineEditorEvents(slot && slot.timelineEvents, scene);
+    const timelineEvents = getStationTimelineEditableEvents(
+      normalizeStationTimelineEditorEvents(slot && slot.timelineEvents, scene)
+    );
     const hotspotOptions = getStationTimelineHotspotOptions(scene);
     return (
       '<section class="pad-ops-side-card pad-ops-side-card--timeline">' +
@@ -2700,7 +3214,6 @@
   function renderOpsStationWorkspace() {
     const slot = getActiveStationSlot();
     const stationVisual = getSelectedScene();
-    const draft = getSceneEditorDraftForScene(stationVisual);
     const metaEntry = getRecordingMetaEntry(slot.recordingId);
     const stops = getRecordingStops(slot.recordingId);
     const selectedStopIndex = normalizeStationStopIndex(slot.stopIndex);
@@ -2709,6 +3222,10 @@
     const stationButtonActive = isStationSlotPlaying(slot) || isStationSlotPending(slot);
     const stationButtonDisabled = !stationButtonActive && !stationStatus.playable ? " disabled" : "";
     const opsStationTab = normalizeOpsStationTab(state.opsStationTab);
+
+    if (opsStationTab === "settings") {
+      return renderStationFusionConfigPanelV3();
+    }
 
     if (slot.recordingId && !recordingOptions.find((item) => String(item.recording_id || "") === String(slot.recordingId || ""))) {
       recordingOptions.unshift({
@@ -2799,14 +3316,14 @@
 
     const settingsMain =
       '<div class="pad-ops-station-card__toolbar">' +
-      renderOpsStationTabs() +
-      renderOpsStationModeTabs() +
+      '<div class="pad-ops-station-card__section-head">' +
+      '<div class="pad-ops-station-card__section-title">\u7ad9\u70b9\u878d\u5408\u914d\u7f6e</div>' +
+      '<div class="pad-panel__hint">\u5728\u5de6\u4fa7\u5927\u5de5\u4f5c\u533a\u5185\u7ef4\u62a4\u7ad9\u4f4d\u3001\u8bb2\u89e3\u5f55\u97f3\u3001\u80cc\u666f\u56fe\u548c\u65f6\u95f4\u8f74\u3002</div>' +
+      "</div>" +
       stationFields +
-      '<div class="pad-ops-station-card__status">' +
-      renderToneChip(stationStatus.text, stationStatus.tone) +
-      '<span class="pad-ops-station-card__status-text">' +
-      escapeHtml("\u5f53\u524d\u7ad9\u70b9\uff1a" + (String(slot.stopName || "").trim() || "--")) +
-      "</span>" +
+      '<div class="pad-ops-inline-actions">' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="select-station-background">\u4e0a\u4f20\u80cc\u666f\u56fe</button>' +
+      '<input class="pad-hidden-file-input" data-action="station-background-input" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.gif,.bmp" />' +
       "</div>" +
       "</div>" +
       renderOpsStationTimeline(slot, stationVisual);
@@ -2815,9 +3332,14 @@
       '<div class="pad-ops-station-card__side pad-ops-station-card__side--settings">' +
       '<section class="pad-ops-side-card">' +
       '<div class="pad-ops-side-card__title">\u7ad9\u70b9\u64ad\u653e</div>' +
-      '<div class="pad-panel__hint">\u5728\u4e0d\u8fdb\u5165\u6807\u6ce8\u7684\u60c5\u51b5\u4e0b\uff0c\u7ef4\u62a4\u7ad9\u4f4d\u3001\u5f55\u97f3\u548c\u65f6\u95f4\u8f74\u8bbe\u7f6e\u3002</div>' +
+      '<div class="pad-panel__hint">\u5728\u4e0d\u8fdb\u5165\u70ed\u533a\u6807\u6ce8\u7684\u60c5\u51b5\u4e0b\uff0c\u4ecd\u53ef\u76f4\u63a5\u9884\u89c8\u5f53\u524d\u7ad9\u70b9\u8bb2\u89e3\u3002</div>' +
+      '<div class="pad-ops-station-card__status" style="margin-top:12px;">' +
+      renderToneChip(stationStatus.text, stationStatus.tone) +
+      '<span class="pad-ops-station-card__status-text">' +
+      escapeHtml("\u5f53\u524d\u7ad9\u70b9\uff1a" + (String(slot.stopName || "").trim() || "--")) +
+      "</span>" +
+      "</div>" +
       '<div class="pad-ops-inline-actions" style="margin-top:12px;">' +
-      '<button type="button" class="pad-btn pad-btn--neutral" data-action="refresh-recordings">\u5237\u65b0\u5f55\u97f3</button>' +
       '<button type="button" class="pad-btn pad-btn--neutral" data-action="play-station-slot" data-slot-key="' +
       escapeHtml(String(slot.slotKey || "")) +
       '"' +
@@ -2825,7 +3347,6 @@
       ">" +
       escapeHtml(stationButtonActive ? "\u505c\u6b62\u7ad9\u53f0\u8bb2\u89e3" : "\u64ad\u653e\u7ad9\u53f0\u8bb2\u89e3") +
       "</button>" +
-      '<button type="button" class="pad-btn pad-btn--neutral" data-action="save-station-config">\u4fdd\u5b58\u7ad9\u70b9</button>' +
       "</div>" +
       "</section>" +
       (stationVisual
@@ -2847,10 +3368,6 @@
         "<div>" +
         '<div class="pad-panel__title">\u7ad9\u70b9\u878d\u5408</div>' +
         '<div class="pad-panel__hint">\u7ad9\u4f4d\u3001\u5f55\u97f3\u3001\u70ed\u533a\u548c\u65f6\u95f4\u8f74\u5168\u90e8\u5728\u540c\u4e00\u5757\u5de5\u4f5c\u533a\u5185\u5b8c\u6210\u3002</div>' +
-        "</div>" +
-        '<div class="pad-ops-inline-actions">' +
-        '<button type="button" class="pad-btn pad-btn--neutral" data-action="refresh-recordings">\u5237\u65b0\u5f55\u97f3</button>' +
-        '<button type="button" class="pad-btn pad-btn--neutral" data-action="save-station-config">\u4fdd\u5b58\u7ad9\u70b9</button>' +
         "</div>" +
         "</div>" +
         '<div class="pad-ops-station-card__body">' +
@@ -2973,12 +3490,139 @@
     );
   }
 
-  function renderOpsShellV4(hallName, productCount, snapshotBadge) {
+  function renderOpsOtherConfigWorkspace(hallName) {
+    return (
+      '<section class="pad-ops-other-workspace">' +
+      '<section class="pad-panel pad-ops-product-panel">' +
+      '<div class="pad-panel__header pad-ops-panel__header">' +
+      "<div>" +
+      '<div class="pad-panel__title">' +
+      escapeHtml(TEXT.hallListTitle) +
+      "</div>" +
+      '<div class="pad-panel__hint" data-testid="hall-name">' +
+      escapeHtml(hallName) +
+      "</div>" +
+      "</div>" +
+      '<div class="pad-panel__hint">\u9009\u4e2d\u4ea7\u54c1\u540e\uff0c\u53f3\u4fa7\u7acb\u5373\u53ef\u7f16\u8f91\u8bb2\u89e3\u4e0e\u4ea7\u54c1\u4fe1\u606f\u3002</div>' +
+      "</div>" +
+      renderProductCards() +
+      "</section>" +
+      '<section class="pad-panel pad-ops-detail-panel">' +
+      renderDetailPanel() +
+      "</section>" +
+      "</section>"
+    );
+  }
+
+  function renderOpsControlSidebar(hallName, sourceBadge, syncSummary, annotateTargetLabel, productCount, audioReadyCount) {
+    const draft = state.sceneEditorDraft && typeof state.sceneEditorDraft === "object" ? state.sceneEditorDraft : null;
+    const slot = getActiveStationSlot();
     const selectedProduct = getSelectedProduct();
-    const activeStation = getActiveStationSlot();
+    const stationStatus = getStationSlotStatus(slot);
+    const opsStationTab = normalizeOpsStationTab(state.opsStationTab);
+    return (
+      '<aside class="pad-ops-control-sidebar">' +
+      '<section class="pad-panel pad-ops-control-overview">' +
+      '<div class="pad-panel__header pad-ops-panel__header">' +
+      "<div>" +
+      '<div class="pad-ops-topbar__eyebrow">\u8fd0\u7ef4\u5de5\u4f5c\u53f0</div>' +
+      '<div class="pad-ops-control-overview__title-row">' +
+      '<div class="pad-panel__title">' +
+      escapeHtml(hallName) +
+      "</div>" +
+      sourceBadge +
+      "</div>" +
+      '<div class="pad-panel__hint">\u53f3\u4fa7\u56fa\u5b9a\u4e3a\u63a7\u5236\u533a\uff0c\u8d1f\u8d23\u6a21\u5f0f\u5207\u6362\u3001\u516c\u5171\u64cd\u4f5c\u4e0e\u5f53\u524d\u7ad9\u70b9\u72b6\u6001\u67e5\u770b\u3002</div>' +
+      "</div>" +
+      "</div>" +
+      '<div class="pad-ops-control-overview__body">' +
+      '<div class="pad-ops-control-overview__meta">' +
+      '<span>\u8bbe\u5907\uff1a<strong data-testid="client-id">' +
+      escapeHtml(state.clientId || "--") +
+      "</strong></span>" +
+      '<span>\u6700\u8fd1\u540c\u6b65\uff1a<strong data-testid="last-sync-at">' +
+      escapeHtml(formatTimestamp(state.lastSyncedAtMs)) +
+      "</strong></span>" +
+      '<span>\u79bb\u7ebf\u72b6\u6001\uff1a<strong>' +
+      escapeHtml(syncSummary) +
+      "</strong></span>" +
+      "</div>" +
+      '<div class="pad-ops-control-overview__stats">' +
+      renderOpsSummaryStat(TEXT.statProductCount, String(productCount), "product-count") +
+      renderOpsSummaryStat("\u6709\u97f3\u9891", String(audioReadyCount)) +
+      renderOpsSummaryStat("\u5f53\u524d\u7ad9\u4f4d", getStationSlotDisplayName(slot)) +
+      renderOpsSummaryStat("\u5f53\u524d\u4ea7\u54c1", selectedProduct ? String(selectedProduct.product_name || "") : TEXT.notSelected) +
+      "</div>" +
+      '<div class="pad-ops-control-overview__toolbar">' +
+      renderModeToggle() +
+      '<div class="pad-ops-inline-actions pad-ops-inline-actions--column pad-ops-control-overview__actions">' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="reload-live">' +
+      escapeHtml(TEXT.refreshOnline) +
+      "</button>" +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="sync-offline"' +
+      (state.syncBusy ? " disabled" : "") +
+      ">" +
+      escapeHtml(TEXT.syncOffline) +
+      "</button>" +
+      '<a class="pad-btn pad-btn--primary" data-testid="goto-ragint" href="/ragint/?entry=tour" style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center;">' +
+      escapeHtml(TEXT.gotoRagint) +
+      "</a>" +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="refresh-recordings">\u5237\u65b0\u5f55\u97f3</button>' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="save-station-config">\u4fdd\u5b58\u7ad9\u70b9</button>' +
+      "</div>" +
+      "</div>" +
+      '<div class="pad-ops-control-overview__section">' +
+      '<div class="pad-ops-control-overview__label">' +
+      escapeHtml(TEXT.quickSwitchTitle) +
+      "</div>" +
+      renderOpsHallQuickSwitchInline() +
+      "</div>" +
+      '<div class="pad-ops-control-overview__section">' +
+      '<div class="pad-ops-control-overview__label">\u7ad9\u4f4d\u5207\u6362</div>' +
+      renderOpsStationTabs() +
+      "</div>" +
+      '<div class="pad-ops-control-overview__section pad-ops-control-overview__section--workspace">' +
+      '<div class="pad-ops-control-overview__label">\u5de5\u4f5c\u533a</div>' +
+      renderOpsStationModeTabs() +
+      "</div>" +
+      '<div class="pad-ops-station-card__status">' +
+      renderToneChip(stationStatus.text, stationStatus.tone) +
+      '<span class="pad-ops-station-card__status-text">' +
+      escapeHtml("\u5f53\u524d\u7ad9\u70b9\uff1a" + (String(slot.stopName || "").trim() || "--")) +
+      "</span>" +
+      "</div>" +
+      "</div>" +
+      "</section>" +
+      (opsStationTab === "annotate"
+        ? '<section class="pad-panel pad-ops-annotate-tools">' +
+          '<div class="pad-panel__header pad-ops-panel__header">' +
+          "<div>" +
+          '<div class="pad-panel__title">\u70ed\u533a\u6807\u6ce8\u5de5\u5177</div>' +
+          '<div class="pad-panel__hint">\u5f53\u524d\u6807\u6ce8\u5bf9\u8c61\uff1a' +
+          escapeHtml(annotateTargetLabel) +
+          "\u3002</div>" +
+          "</div>" +
+          '<button type="button" class="pad-btn pad-btn--neutral' +
+          (state.sceneEditorCreateMode ? " is-active" : "") +
+          '" data-action="enter-station-hotspot-create" aria-pressed="' +
+          (state.sceneEditorCreateMode ? "true" : "false") +
+          '">' +
+          escapeHtml(state.sceneEditorCreateMode ? "\u6b63\u5728\u65b0\u5efa\u70ed\u533a" : "\u65b0\u5efa\u70ed\u533a") +
+          "</button>" +
+          "</div>" +
+          '<div class="pad-ops-annotate-tools__body">' +
+          renderOpsHotspotTransferActions() +
+          renderOpsHotspotInspector(draft) +
+          "</div>" +
+          "</section>"
+        : "") +
+      "</aside>"
+    );
+  }
+
+  function renderOpsShellV4(hallName, productCount, snapshotBadge) {
     const audioReadyCount = countProductsWithActiveAudio();
     const opsStationTab = normalizeOpsStationTab(state.opsStationTab);
-    const annotateMode = opsStationTab === "annotate";
     const draft = state.sceneEditorDraft && typeof state.sceneEditorDraft === "object" ? state.sceneEditorDraft : null;
     const draftProduct = draft ? findProductById(draft.product_id) : null;
     const annotateTargetLabel = state.sceneEditorCreateMode
@@ -2997,84 +3641,16 @@
           : state.offlineReady || state.usingOfflineSnapshot
             ? "\u5df2\u540c\u6b65"
             : "\u5f85\u540c\u6b65";
+    const mainWorkspace = opsStationTab === "other" ? renderOpsOtherConfigWorkspace(hallName) : renderOpsStationWorkspace();
     return (
       '<main class="pad-shell pad-shell--ops">' +
-      (annotateMode
-        ? '<section class="pad-ops-annotate-shell">' +
-          '<section class="pad-ops-annotate-main">' +
-          renderOpsStationWorkspace() +
-          "</section>" +
-          renderOpsAnnotateSidebar(hallName, sourceBadge, syncSummary, annotateTargetLabel) +
-          "</section>"
-        : '<section class="pad-ops-topbar">' +
-          '<div class="pad-ops-topbar__main">' +
-          '<div class="pad-ops-topbar__eyebrow">\u8fd0\u7ef4\u5de5\u4f5c\u53f0</div>' +
-          '<div class="pad-ops-topbar__title-row">' +
-          '<h1 class="pad-ops-topbar__title">' +
-          escapeHtml(hallName) +
-          "</h1>" +
-          sourceBadge +
-          "</div>" +
-          '<div class="pad-ops-topbar__meta">' +
-          '<span>\u8bbe\u5907\uff1a<strong data-testid="client-id">' +
-          escapeHtml(state.clientId || "--") +
-          "</strong></span>" +
-          '<span>\u6700\u8fd1\u540c\u6b65\uff1a<strong data-testid="last-sync-at">' +
-          escapeHtml(formatTimestamp(state.lastSyncedAtMs)) +
-          "</strong></span>" +
-          '<span>\u79bb\u7ebf\u72b6\u6001\uff1a' +
-          escapeHtml(syncSummary) +
-          "</span>" +
-          "</div>" +
-          "</div>" +
-          '<div class="pad-ops-topbar__stats">' +
-          renderOpsSummaryStat(TEXT.statProductCount, String(productCount), "product-count") +
-          renderOpsSummaryStat("\u6709\u97f3\u9891", String(audioReadyCount)) +
-          renderOpsSummaryStat("\u5f53\u524d\u7ad9\u4f4d", getStationSlotDisplayName(activeStation)) +
-          renderOpsSummaryStat("\u5f53\u524d\u4ea7\u54c1", selectedProduct ? String(selectedProduct.product_name || "") : TEXT.notSelected) +
-          "</div>" +
-          '<div class="pad-ops-topbar__actions">' +
-          renderModeToggle() +
-          '<button type="button" class="pad-btn pad-btn--neutral" data-action="reload-live">' +
-          escapeHtml(TEXT.refreshOnline) +
-          "</button>" +
-          '<button type="button" class="pad-btn pad-btn--neutral" data-action="sync-offline"' +
-          (state.syncBusy ? " disabled" : "") +
-          ">" +
-          escapeHtml(TEXT.syncOffline) +
-          "</button>" +
-          '<a class="pad-btn pad-btn--primary" data-testid="goto-ragint" href="/ragint/?entry=tour" style="text-decoration:none;display:inline-flex;align-items:center;">' +
-          escapeHtml(TEXT.gotoRagint) +
-          "</a>" +
-          renderOpsHallQuickSwitchInline() +
-          "</div>" +
-          "</section>" +
-          '<section class="pad-ops-workspace">' +
-          '<aside class="pad-ops-sidebar">' +
-          '<section class="pad-panel pad-ops-product-panel">' +
-          '<div class="pad-panel__header pad-ops-panel__header">' +
-          "<div>" +
-          '<div class="pad-panel__title">' +
-          escapeHtml(TEXT.hallListTitle) +
-          "</div>" +
-          '<div class="pad-panel__hint" data-testid="hall-name">' +
-          escapeHtml(hallName) +
-          "</div>" +
-          "</div>" +
-          '<div class="pad-panel__hint">\u9009\u4e2d\u4ea7\u54c1\u540e\uff0c\u53f3\u4fa7\u7acb\u5373\u53ef\u7f16\u8f91\u8bb2\u89e3\u4e0e\u4ea7\u54c1\u4fe1\u606f\u3002</div>' +
-          "</div>" +
-          renderProductCards() +
-          "</section>" +
-          "</aside>" +
-          '<section class="pad-ops-stage-column">' +
-          renderOpsStationWorkspace() +
-          "</section>" +
-          '<aside class="pad-ops-detail-column">' +
-          '<section class="pad-panel pad-ops-detail-panel">' +
-          renderDetailPanel() +
-          "</section>" +
-          "</aside>" +
-          "</section>") +
+      renderOpsMobileWorkspaceSwitcher() +
+      '<section class="pad-ops-unified-shell">' +
+      '<section class="pad-ops-workpane">' +
+      mainWorkspace +
+      "</section>" +
+      renderOpsControlSidebar(hallName, sourceBadge, syncSummary, annotateTargetLabel, productCount, audioReadyCount) +
+      "</section>" +
       "</main>"
     );
   }
@@ -3299,15 +3875,9 @@
       '继续</button>' +
       '<span class="pad-station-timeline__preview-time">当前播放 ' +
       escapeHtml(currentTimeText) +
-      "</span>" +
-      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-add-highlight-on" data-slot-key="' +
-      escapeHtml(String(slot.slotKey || "")) +
-      '">插入高亮开始</button>' +
-      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-add-highlight-off" data-slot-key="' +
-      escapeHtml(String(slot.slotKey || "")) +
-      '">插入高亮结束</button>';
+      "</span>";
 
-    refs.app.querySelectorAll('.pad-station-timeline__item').forEach((itemNode) => {
+    refs.app.querySelectorAll('.pad-station-timeline__item, .pad-ops-timeline-row').forEach((itemNode) => {
       const actions = itemNode.querySelector(".pad-station-timeline__actions");
       const removeButton = itemNode.querySelector('[data-action="station-timeline-remove"]');
       if (!actions || !removeButton || actions.querySelector('[data-action="station-timeline-use-current-time"]')) return;
@@ -4213,6 +4783,7 @@
           ? "\u91cd\u751f TTS"
           : "\u751f\u6210 TTS";
     const uploadLabel = state.assetBusy && state.assetAction === "upload" ? "\u6b63\u5728\u4e0a\u4f20..." : "\u4e0a\u4f20\u5f55\u97f3";
+    const uploadImageLabel = state.assetBusy && state.assetAction === "upload-image" ? IMAGE_TEXT.uploading : IMAGE_TEXT.upload;
     const actionDisabled = state.assetBusy ? " disabled" : "";
     const assetToneClass =
       state.assetTone === "danger"
@@ -4275,6 +4846,12 @@
       escapeHtml(uploadLabel) +
       "</button>" +
       '<input class="pad-hidden-file-input" data-action="upload-audio-input" type="file" accept="audio/*,.wav,.mp3,.ogg,.flac" />' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="select-upload-image"' +
+      actionDisabled +
+      ">" +
+      escapeHtml(uploadImageLabel) +
+      "</button>" +
+      '<input class="pad-hidden-file-input" data-action="upload-image-input" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.gif,.bmp" multiple />' +
       '<button type="button" class="pad-btn pad-btn--neutral" data-action="save-product-info"' +
       actionDisabled +
       ">" +
@@ -4304,6 +4881,7 @@
       "</section>" +
       '<section class="pad-ops-detail__card">' +
       '<div class="pad-detail__section-title">' + escapeHtml(TEXT.introTitle) + "</div>" +
+      renderProductImageSection(product) +
       '<div class="pad-detail__field-label">\u4ea7\u54c1\u540d\u79f0</div>' +
       '<input class="pad-detail__input" data-action="product-name-draft" type="text" value="' +
       escapeHtml(editableProductName) +
@@ -5190,13 +5768,7 @@
         })
         .join("") +
       "</select></label>" +
-      '<label class="pad-station-config-panel__field"><span>事件类型</span><select data-action="station-timeline-event-type" data-slot-key="' +
-      escapeHtml(slotKey) +
-      '" data-index="' +
-      escapeHtml(String(currentIndex)) +
-      '">' +
-      renderStationTimelineEventTypeOptions(event && event.eventType) +
-      "</select></label>" +
+      '<div class="pad-station-config-panel__field"><span>事件类型</span><strong>切换焦点</strong></div>' +
       "</div>" +
       '<div class="pad-station-timeline__summary' +
       (missingHotspot ? " is-danger" : "") +
@@ -5236,7 +5808,14 @@
           escapeHtml(String(selectionStartPct)) +
           "%;width:" +
           escapeHtml(String(selectionWidthPct)) +
-          '%;"></div>'
+          '%;">' +
+          '<button type="button" class="pad-station-timeline__selection-handle is-start" data-action="station-timeline-drag-highlight-start" data-slot-key="' +
+          escapeHtml(slotKey) +
+          '" aria-label="拖动高亮开始"></button>' +
+          '<button type="button" class="pad-station-timeline__selection-handle is-end" data-action="station-timeline-drag-highlight-end" data-slot-key="' +
+          escapeHtml(slotKey) +
+          '" aria-label="拖动高亮结束"></button>' +
+          "</div>"
         : "") +
       timelineEvents
         .map((event) => {
@@ -5261,27 +5840,16 @@
       '%;" aria-label="拖动播放位置"></button>' +
       "</div>" +
       '<div class="pad-station-timeline__selection-tools">' +
-      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-set-selection-start" data-slot-key="' +
-      escapeHtml(slotKey) +
-      '">Set start</button>' +
-      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-set-selection-end" data-slot-key="' +
-      escapeHtml(slotKey) +
-      '">Set end</button>' +
-      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-apply-selection" data-slot-key="' +
+      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-delete-highlight" data-slot-key="' +
       escapeHtml(slotKey) +
       '"' +
       (selection ? "" : " disabled") +
-      '>Create highlight range</button>' +
-      '<button type="button" class="pad-station-timeline__action" data-action="station-timeline-clear-selection" data-slot-key="' +
-      escapeHtml(slotKey) +
-      '"' +
-      (selection ? "" : " disabled") +
-      '>Clear range</button>' +
+      '>删除高亮区间</button>' +
       '<div class="pad-station-timeline__selection-hint">' +
       escapeHtml(
         targetHotspot
-          ? "Current target: " + getStationTimelineHotspotLabel(scene, targetHotspot.hotspot_id) + ". Drag on the timeline to select a range."
-          : "Select a product hotspot before creating a highlight range."
+          ? "Current target: " + getStationTimelineHotspotLabel(scene, targetHotspot.hotspot_id) + ". Drag on the timeline to create or overwrite the highlight range."
+          : "Select a product hotspot before dragging a highlight range."
       ) +
       "</div>" +
       "</div>" +
@@ -5291,7 +5859,9 @@
 
   function renderStationTimelineEditor(slot, scene) {
     const slotKey = String(slot && slot.slotKey ? slot.slotKey : "").trim();
-    const timelineEvents = normalizeStationTimelineEditorEvents(slot && slot.timelineEvents, scene);
+    const timelineEvents = getStationTimelineEditableEvents(
+      normalizeStationTimelineEditorEvents(slot && slot.timelineEvents, scene)
+    );
     const hotspotOptions = getStationTimelineHotspotOptions(scene);
     return (
       '<div class="pad-station-timeline">' +
@@ -5486,6 +6056,884 @@
       (state.recordingOptionsError
         ? '<div class="pad-banner pad-banner--danger" style="margin: 0 22px 22px;">' + escapeHtml(state.recordingOptionsError) + "</div>"
         : "") +
+      "</section>"
+    );
+  }
+
+  function getNarrationNodeVisualMaxMs(slotKey, node) {
+    const item = node && typeof node === "object" ? node : null;
+    if (!item) return 1000;
+    const runtimeNode =
+      (Array.isArray(state.stationPlaybackNodes) ? state.stationPlaybackNodes : []).find(
+        (entry) => String(entry && entry.nodeId ? entry.nodeId : "").trim() === String(item.nodeId || "").trim()
+      ) || null;
+    const currentNodeId = String(state.stationPlaybackNodeId || "").trim();
+    const currentTotalMs =
+      currentNodeId && currentNodeId === String(item.nodeId || "").trim()
+        ? Math.max(0, Number((runtimeNode && runtimeNode.durationMs) || state.stationPlaybackTotalDurationMs || 0))
+        : 0;
+    return Math.max(1000, currentTotalMs, Number(item.highlightEndMs || 0), Number(item.highlightStartMs || 0) + 500);
+  }
+
+  function getNarrationNodeCurrentMs(node) {
+    const currentNodeId = String(state.stationPlaybackNodeId || "").trim();
+    if (currentNodeId && currentNodeId === String(node && node.nodeId ? node.nodeId : "").trim()) {
+      const runtimeNode =
+        (Array.isArray(state.stationPlaybackNodes) ? state.stationPlaybackNodes : []).find(
+          (entry) => String(entry && entry.nodeId ? entry.nodeId : "").trim() === currentNodeId
+        ) || null;
+      const offsetMs = runtimeNode ? Number(runtimeNode.playbackStartMs || 0) : 0;
+      return Math.max(0, Number(state.stationPlaybackCursorMs || 0) - offsetMs);
+    }
+    return 0;
+  }
+
+  function getNarrationNodeHotspotLabel(scene, hotspotId) {
+    return getStationTimelineHotspotLabel(scene, hotspotId);
+  }
+
+  function renderNarrationNodeHotspotChips(scene, node) {
+    const hotspotIds = Array.isArray(node && node.hotspotIds) ? node.hotspotIds : [];
+    if (!hotspotIds.length) {
+      return '<div class="pad-panel__hint">未绑定热区。先选中一个节点，再点击中间画布上的热区进行绑定。</div>';
+    }
+    return (
+      '<div class="pad-hotspot-search__selection" style="flex-wrap:wrap; gap:8px;">' +
+      hotspotIds
+        .map((hotspotId) => {
+          const missing = !findStationTimelineHotspot(scene, hotspotId);
+          return (
+            '<span class="pad-hotspot-search__selection-name' +
+            (missing ? '" style="color:#b64133;' : '"') +
+            '>' +
+            escapeHtml(getNarrationNodeHotspotLabel(scene, hotspotId)) +
+            "</span>"
+          );
+        })
+        .join("") +
+      "</div>"
+    );
+  }
+
+  function renderNarrationNodeScrubber(slot, node) {
+    const slotKey = String(slot && slot.slotKey ? slot.slotKey : "").trim();
+    const nodeId = String(node && node.nodeId ? node.nodeId : "").trim();
+    const totalMs = Math.max(1, getNarrationNodeVisualMaxMs(slotKey, node));
+    const startPct = Math.min(100, Math.max(0, (Number(node.highlightStartMs || 0) / totalMs) * 100));
+    const widthPct = Math.min(
+      100,
+      Math.max(0, ((Number(node.highlightEndMs || 0) - Number(node.highlightStartMs || 0)) / totalMs) * 100)
+    );
+    const playheadPct = Math.min(100, Math.max(0, (getNarrationNodeCurrentMs(node) / totalMs) * 100));
+    return (
+      '<div class="pad-station-timeline__scrubber">' +
+      '<div class="pad-station-timeline__scrubber-meta">' +
+      '<span>音轨长度 ' + escapeHtml(formatTimelineOffset(totalMs)) + '</span>' +
+      '<span>高亮区间 ' +
+      escapeHtml(formatTimelineOffset(node.highlightStartMs || 0) + " - " + formatTimelineOffset(node.highlightEndMs || 0)) +
+      "</span>" +
+      "</div>" +
+      '<div class="pad-station-timeline__track" data-role="narration-node-track" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-node-id="' +
+      escapeHtml(nodeId) +
+      '">' +
+      '<div class="pad-station-timeline__selection" style="left:' +
+      escapeHtml(String(startPct)) +
+      "%;width:" +
+      escapeHtml(String(widthPct)) +
+      '%;">' +
+      '<button type="button" class="pad-station-timeline__selection-handle is-start" data-action="narration-node-drag-highlight-start" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-node-id="' +
+      escapeHtml(nodeId) +
+      '" aria-label="拖动节点高亮开始"></button>' +
+      '<button type="button" class="pad-station-timeline__selection-handle is-end" data-action="narration-node-drag-highlight-end" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-node-id="' +
+      escapeHtml(nodeId) +
+      '" aria-label="拖动节点高亮结束"></button>' +
+      "</div>" +
+      '<button type="button" class="pad-station-timeline__playhead" data-action="narration-node-drag-playhead" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-node-id="' +
+      escapeHtml(nodeId) +
+      '" style="left:' +
+      escapeHtml(String(playheadPct)) +
+      '%;" aria-label="拖动节点播放位置"></button>' +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function getNarrationBindableHotspots(scene) {
+    return getStationTimelineHotspotOptions(scene).filter((hotspot) => String(hotspot && hotspot.target_type || "product") !== "control");
+  }
+
+  function renderNarrationNodePlaybackControls(slot, node) {
+    const slotKey = String(slot && slot.slotKey ? slot.slotKey : "").trim();
+    const nodeId = String(node && node.nodeId ? node.nodeId : "").trim();
+    const isCurrentNode =
+      String(state.stationPlaybackSlotKey || "").trim() === slotKey &&
+      String(state.stationPlaybackNodeId || "").trim() === nodeId;
+    const playbackState = isCurrentNode ? String(state.stationPlaybackState || "idle") : "idle";
+    const currentTimeText = formatTimelineOffset(getNarrationNodeCurrentMs(node));
+    return (
+      '<div class="pad-station-timeline__preview-tools" style="margin-top:12px;">' +
+      '<button type="button" class="pad-station-timeline__action" data-action="play-narration-node" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-node-id="' +
+      escapeHtml(nodeId) +
+      '"' +
+      (playbackState === "playing" ? " disabled" : "") +
+      ">播放</button>" +
+      '<button type="button" class="pad-station-timeline__action" data-action="pause-station-playback" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '"' +
+      (playbackState === "playing" ? "" : " disabled") +
+      ">暂停</button>" +
+      '<button type="button" class="pad-station-timeline__action" data-action="resume-station-playback" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '"' +
+      (playbackState === "paused" ? "" : " disabled") +
+      ">继续</button>" +
+      '<button type="button" class="pad-station-timeline__action" data-action="play-narration-node-highlight" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-node-id="' +
+      escapeHtml(nodeId) +
+      '">播放高亮区间</button>' +
+      '<span class="pad-station-timeline__preview-time">当前播放 ' +
+      escapeHtml(currentTimeText) +
+      "</span>" +
+      "</div>"
+    );
+  }
+
+  function renderNarrationNodeHotspotOptions(scene, slot, node) {
+    const slotKey = String(slot && slot.slotKey ? slot.slotKey : "").trim();
+    const nodeId = String(node && node.nodeId ? node.nodeId : "").trim();
+    const options = getNarrationBindableHotspots(scene);
+    if (!options.length) {
+      return '<div class="pad-panel__hint">当前站点还没有可绑定的产品热区。</div>';
+    }
+    return (
+      '<div class="pad-node-hotspot-list">' +
+      options
+        .map((hotspot) => {
+          const hotspotId = String(hotspot && hotspot.hotspot_id ? hotspot.hotspot_id : "").trim();
+          const active = Array.isArray(node && node.hotspotIds) && node.hotspotIds.includes(hotspotId);
+          return (
+            '<button type="button" class="pad-node-hotspot-pill' +
+            (active ? " is-active" : "") +
+            '" data-action="toggle-narration-node-hotspot" data-slot-key="' +
+            escapeHtml(slotKey) +
+            '" data-node-id="' +
+            escapeHtml(nodeId) +
+            '" data-hotspot-id="' +
+            escapeHtml(hotspotId) +
+            '">' +
+            escapeHtml(getNarrationNodeHotspotLabel(scene, hotspotId)) +
+            "</button>"
+          );
+        })
+        .join("") +
+      "</div>"
+    );
+  }
+
+  function renderNarrationNodeCard(slot, scene, node, index, total) {
+    const slotKey = String(slot && slot.slotKey ? slot.slotKey : "").trim();
+    const nodeId = String(node && node.nodeId ? node.nodeId : "").trim();
+    const currentValidation = getNarrationNodeValidation(slotKey, node);
+    const isActive = String(state.activeNarrationNodeId || "").trim() === nodeId;
+    const recordingOptions = Array.isArray(state.recordingOptions) ? state.recordingOptions.slice() : [];
+    if (node.recordingId && !recordingOptions.find((item) => String(item.recording_id || "") === String(node.recordingId || ""))) {
+      recordingOptions.unshift({
+        recording_id: String(node.recordingId || ""),
+        display_name: "当前节点音轨",
+      });
+    }
+    const metaEntry = node.recordingId ? getRecordingMetaEntry(node.recordingId) : null;
+    const stops = getRecordingStops(node.recordingId);
+    return (
+      '<div class="pad-station-timeline__item' +
+      (isActive ? " is-preview-active" : "") +
+      (!currentValidation.valid ? " is-invalid" : "") +
+      '">' +
+      '<div class="pad-station-timeline__rail" aria-hidden="true">' +
+      '<span class="pad-station-timeline__dot"></span>' +
+      '<span class="pad-station-timeline__line' +
+      (index >= total - 1 ? " is-hidden" : "") +
+      '"></span>' +
+      "</div>" +
+      '<div class="pad-station-timeline__card">' +
+      '<div class="pad-station-timeline__card-top">' +
+      "<div>" +
+      '<div class="pad-station-timeline__card-title">节点 ' +
+      escapeHtml(String(index + 1)) +
+      "</div>" +
+      '<div class="pad-station-timeline__card-subtitle">' +
+      escapeHtml(isActive ? "当前绑定节点" : "点击设为当前节点后，可在画布上绑定多个热区") +
+      "</div>" +
+      "</div>" +
+      '<div class="pad-station-timeline__actions">' +
+      '<button type="button" class="pad-station-timeline__action" data-action="select-narration-node" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-node-id="' +
+      escapeHtml(nodeId) +
+      '">' +
+      escapeHtml(isActive ? "当前节点" : "设为当前") +
+      "</button>" +
+      '<button type="button" class="pad-station-timeline__action" data-action="move-narration-node-up" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-node-id="' +
+      escapeHtml(nodeId) +
+      '"' +
+      (index <= 0 ? " disabled" : "") +
+      ">上移</button>" +
+      '<button type="button" class="pad-station-timeline__action" data-action="move-narration-node-down" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-node-id="' +
+      escapeHtml(nodeId) +
+      '"' +
+      (index >= total - 1 ? " disabled" : "") +
+      ">下移</button>" +
+      '<button type="button" class="pad-station-timeline__action" data-action="remove-narration-node" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-node-id="' +
+      escapeHtml(nodeId) +
+      '">删除</button>' +
+      "</div>" +
+      "</div>" +
+      '<div class="pad-station-timeline__grid">' +
+      '<label class="pad-station-config-panel__field"><span>音轨存档</span><select data-action="narration-node-recording" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-node-id="' +
+      escapeHtml(nodeId) +
+      '">' +
+      '<option value="">请选择存档</option>' +
+      recordingOptions
+        .map((item) => {
+          const recordingId = String(item && item.recording_id ? item.recording_id : "").trim();
+          return (
+            '<option value="' +
+            escapeHtml(recordingId) +
+            '"' +
+            (recordingId === String(node.recordingId || "") ? " selected" : "") +
+            ">" +
+            escapeHtml(formatRecordingLabel(item)) +
+            "</option>"
+          );
+        })
+        .join("") +
+      "</select></label>" +
+      '<label class="pad-station-config-panel__field"><span>音轨站台</span><select data-action="narration-node-stop" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-node-id="' +
+      escapeHtml(nodeId) +
+      '"' +
+      (!node.recordingId || (metaEntry && metaEntry.loading) || (metaEntry && metaEntry.error) ? " disabled" : "") +
+      ">" +
+      '<option value="">' +
+      escapeHtml(metaEntry && metaEntry.loading ? "正在加载站台..." : "请选择站台") +
+      "</option>" +
+      stops
+        .map((stopName, stopIndex) => {
+          return (
+            '<option value="' +
+            escapeHtml(String(stopIndex)) +
+            '"' +
+            (normalizeStationStopIndex(node.stopIndex) === stopIndex ? " selected" : "") +
+            ">" +
+            escapeHtml(stopName) +
+            "</option>"
+          );
+        })
+        .join("") +
+      "</select></label>" +
+      '<div class="pad-station-config-panel__field"><span>已绑热区</span><strong>' +
+      escapeHtml(String((Array.isArray(node.hotspotIds) ? node.hotspotIds.length : 0)) + " 个") +
+      "</strong></div>" +
+      '<div class="pad-station-config-panel__field"><span>操作</span><strong>点击中间画布热区进行绑定/解绑</strong></div>' +
+      "</div>" +
+      renderNarrationNodePlaybackControls(slot, node) +
+      renderNarrationNodeScrubber(slot, node) +
+      '<div class="pad-station-timeline__summary' +
+      (!currentValidation.valid ? " is-danger" : "") +
+      '">' +
+      escapeHtml(currentValidation.message) +
+      "</div>" +
+      '<div class="pad-panel__hint" style="margin-top:12px;">点击下面的热区按钮进行绑定/解绑，一个高亮区间可绑定多个热区。</div>' +
+      renderNarrationNodeHotspotOptions(scene, slot, node) +
+      renderNarrationNodeHotspotChips(scene, node) +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function renderSceneStage(scene, options) {
+    const item = scene && typeof scene === "object" ? scene : null;
+    if (!item || !item.background || !item.background.image_url) {
+      return '<div class="pad-empty">This station has no background configured yet.</div>';
+    }
+    const opts = options && typeof options === "object" ? options : {};
+    const editor = !!opts.editor;
+    const interactiveOnly = !editor && !!opts.interactiveOnly;
+    const stretchToFit = !!opts.stretchToFit;
+    const extraClassName = String(opts.className || "").trim();
+    const bindingMode = !!opts.bindingMode;
+    const hotspots = getSceneHotspotsForRender(item, editor);
+    const selectedBindingIds = new Set((Array.isArray(opts.boundHotspotIds) ? opts.boundHotspotIds : []).map((id) => String(id || "").trim()));
+    const visibleHotspotIds = new Set((Array.isArray(state.visibleHotspotIds) ? state.visibleHotspotIds : []).map((id) => String(id || "").trim()));
+    const flashingHotspotIds = new Set((Array.isArray(state.flashingHotspotIds) ? state.flashingHotspotIds : []).map((id) => String(id || "").trim()));
+    const narrationVisibilityActive =
+      !editor &&
+      !bindingMode &&
+      String(state.stationPlaybackSlotKey || "").trim() === String(item.slot_key || item.station_key || item.scene_id || "").trim() &&
+      Array.isArray(state.stationPlaybackNodes) &&
+      state.stationPlaybackNodes.length > 0 &&
+      String(state.stationPlaybackState || "").trim() !== "idle";
+    const activeHotspotId =
+      editor && state.sceneEditorDraft && !state.sceneEditorDraft.hotspot_id
+        ? "__draft__"
+        : String(
+            editor
+              ? state.sceneEditorActiveHotspotId || ""
+              : state.highlightedHotspotId || state.sceneDialogHotspotId || ""
+          );
+    const width = Number(item.background.width || 0) || 1;
+    const height = Number(item.background.height || 0) || 1;
+    const hotspotHtml = hotspots
+      .map((hotspot, index) => {
+        const hotspotId = String(hotspot.hotspot_id || "");
+        const controlAction = String(hotspot.control_action || "").trim();
+        const isControl = !!controlAction;
+        const tone = getHotspotVisualTone(hotspot);
+        const style =
+          "left:" +
+          String(clampPct(hotspot.x_pct) * 100) +
+          "%;top:" +
+          String(clampPct(hotspot.y_pct) * 100) +
+          "%;width:" +
+          String(clampPct(hotspot.width_pct) * 100) +
+          "%;height:" +
+          String(clampPct(hotspot.height_pct) * 100) +
+          "%;";
+        const label = getHotspotDisplayLabel(hotspot, index);
+        const isBound = selectedBindingIds.has(hotspotId);
+        const isVisible = visibleHotspotIds.has(hotspotId);
+        const isFlashing = flashingHotspotIds.has(hotspotId);
+        const isHidden = narrationVisibilityActive && !isControl && !isVisible;
+        const active = bindingMode ? isBound : hotspotId === activeHotspotId;
+        const className =
+          "pad-scene-hotspot" +
+          (interactiveOnly ? " pad-scene-hotspot--interactive-only" : "") +
+          (tone === "control" ? " pad-scene-hotspot--control" : "") +
+          (tone === "has-audio" ? " pad-scene-hotspot--has-audio" : "") +
+          (tone === "missing-audio" ? " pad-scene-hotspot--missing-audio" : "") +
+          (tone === "unbound" ? " pad-scene-hotspot--unbound" : "") +
+          (active ? " is-active" : "") +
+          (isHidden ? " is-hidden" : "") +
+          (isFlashing ? " is-flashing" : "");
+        if (bindingMode) {
+          return (
+            '<button type="button" class="' +
+            className +
+            '" data-action="toggle-narration-node-hotspot" data-hotspot-id="' +
+            escapeHtml(hotspotId) +
+            '" data-control-action="' +
+            escapeHtml(controlAction) +
+            '" style="' +
+            escapeHtml(style) +
+            '">' +
+            '<span class="pad-scene-hotspot__label">' +
+            escapeHtml(label) +
+            "</span>" +
+            "</button>"
+          );
+        }
+        if (!editor) {
+          return (
+            '<button type="button" class="' +
+            className +
+            '" data-action="play-product-hotspot" data-product-id="' +
+            escapeHtml(String(hotspot.product_id || "")) +
+            '" data-hotspot-id="' +
+            escapeHtml(hotspotId) +
+            '" data-control-action="' +
+            escapeHtml(controlAction) +
+            '" style="' +
+            escapeHtml(style) +
+            '">' +
+            (controlAction || opts.showLabels
+              ? '<span class="pad-scene-hotspot__label">' + escapeHtml(label) + "</span>"
+              : "") +
+            "</button>"
+          );
+        }
+        return (
+          '<div class="pad-scene-hotspot pad-scene-hotspot--editor' +
+          (tone === "control" ? " pad-scene-hotspot--control" : "") +
+          (tone === "has-audio" ? " pad-scene-hotspot--has-audio" : "") +
+          (tone === "missing-audio" ? " pad-scene-hotspot--missing-audio" : "") +
+          (tone === "unbound" ? " pad-scene-hotspot--unbound" : "") +
+          (active ? " is-active" : "") +
+          '" data-action="scene-editor-hotspot" data-hotspot-id="' +
+          escapeHtml(hotspotId) +
+          '" style="' +
+          escapeHtml(style) +
+          '">' +
+          '<span class="pad-scene-hotspot__label">' +
+          escapeHtml(label) +
+          "</span>" +
+          '<span class="pad-scene-hotspot__resize" data-action="scene-editor-hotspot-resize" data-hotspot-id="' +
+          escapeHtml(hotspotId) +
+          '"></span>' +
+          "</div>"
+        );
+      })
+      .join("");
+    return (
+      '<div class="pad-scene-stage' +
+      (editor ? " is-editor" : "") +
+      (stretchToFit ? " is-stretched" : "") +
+      (extraClassName ? " " + extraClassName : "") +
+      '" data-scene-stage-role="' +
+      escapeHtml(editor ? "editor" : bindingMode ? "binding" : "demo") +
+      '" data-scene-id="' +
+      escapeHtml(String(item.scene_id || "")) +
+      '" style="' +
+      escapeHtml(
+        stretchToFit
+          ? "width:100%;height:100%;"
+          : "aspect-ratio:" + String(width) + " / " + String(height) + ";"
+      ) +
+      '">' +
+      '<img class="pad-scene-stage__image" src="' +
+      escapeHtml(String(item.background.image_url || "")) +
+      '" alt="' +
+      escapeHtml(String(item.name || item.scene_id || "station scene")) +
+      '" />' +
+      '<div class="pad-scene-stage__overlay">' +
+      hotspotHtml +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function renderStationFusionConfigPanelV3() {
+    const slot = getActiveStationSlot();
+    const stationVisual = getSelectedScene();
+    const nodes = getStationNarrationNodes(slot);
+    const activeNode = getActiveNarrationNode(slot.slotKey);
+    const metaEntry = getRecordingMetaEntry(slot.recordingId);
+    const stops = getRecordingStops(slot.recordingId);
+    const selectedStopIndex = normalizeStationStopIndex(slot.stopIndex);
+    const recordingOptions = Array.isArray(state.recordingOptions) ? state.recordingOptions.slice() : [];
+    if (slot.recordingId && !recordingOptions.find((item) => String(item.recording_id || "") === String(slot.recordingId || ""))) {
+      recordingOptions.unshift({
+        recording_id: String(slot.recordingId || ""),
+        display_name: "当前默认音轨",
+      });
+    }
+    return (
+      '<section class="pad-panel pad-scene-editor">' +
+      '<div class="pad-panel__header">' +
+      "<div>" +
+      '<div class="pad-panel__title">站点讲解节点配置</div>' +
+      '<div class="pad-panel__hint">每个节点独立选择音轨和高亮区间，一个节点可绑定多个热区。</div>' +
+      "</div>" +
+      '<button type="button" class="pad-btn pad-btn--ghost pad-station-config-panel__refresh" data-action="refresh-recordings">刷新录音</button>' +
+      "</div>" +
+      '<div class="pad-scene-editor__layout">' +
+      '<div class="pad-scene-editor__sidebar">' +
+      '<div class="pad-scene-editor__sidebar-title">站点切换</div>' +
+      '<div style="margin-top:12px;">' +
+      renderDemoStationTabs() +
+      "</div>" +
+      "</div>" +
+      '<div class="pad-scene-editor__stage-wrap">' +
+      '<div class="pad-scene-editor__scene-meta">' +
+      '<label class="pad-station-config-panel__field"><span>真实站点</span><select data-action="station-slot-id" data-slot-key="' +
+      escapeHtml(String(slot.slotKey || "")) +
+      '">' +
+      (Array.isArray(state.stationCatalog) ? state.stationCatalog : [])
+        .map((item) => {
+          const stationId = String(item && item.station_id ? item.station_id : "").trim();
+          return (
+            '<option value="' +
+            escapeHtml(stationId) +
+            '"' +
+            (stationId === String(slot.stationId || "") ? " selected" : "") +
+            ">" +
+            escapeHtml(String(item && item.label ? item.label : stationId).trim() || stationId) +
+            "</option>"
+          );
+        })
+        .join("") +
+      '</select></label>' +
+      '<label class="pad-station-config-panel__field"><span>显示名称</span><input type="text" data-action="station-slot-label" data-slot-key="' +
+      escapeHtml(String(slot.slotKey || "")) +
+      '" value="' +
+      escapeHtml(String(slot.label || "")) +
+      '" /></label>' +
+      '<label class="pad-station-config-panel__field"><span>默认存档</span><select data-action="station-slot-recording" data-slot-key="' +
+      escapeHtml(String(slot.slotKey || "")) +
+      '">' +
+      '<option value="">请选择存档</option>' +
+      recordingOptions
+        .map((item) => {
+          const recordingId = String(item && item.recording_id ? item.recording_id : "").trim();
+          return (
+            '<option value="' +
+            escapeHtml(recordingId) +
+            '"' +
+            (recordingId === String(slot.recordingId || "") ? " selected" : "") +
+            ">" +
+            escapeHtml(formatRecordingLabel(item)) +
+            "</option>"
+          );
+        })
+        .join("") +
+      '</select></label>' +
+      '<label class="pad-station-config-panel__field"><span>默认站台</span><select data-action="station-slot-stop" data-slot-key="' +
+      escapeHtml(String(slot.slotKey || "")) +
+      '"' +
+      (!slot.recordingId || (metaEntry && metaEntry.loading) || (metaEntry && metaEntry.error) ? " disabled" : "") +
+      ">" +
+      '<option value="">' +
+      escapeHtml(metaEntry && metaEntry.loading ? "正在加载站台..." : "请选择站台") +
+      "</option>" +
+      stops
+        .map((stopName, stopIndex) => {
+          return (
+            '<option value="' +
+            escapeHtml(String(stopIndex)) +
+            '"' +
+            (selectedStopIndex === stopIndex ? " selected" : "") +
+            ">" +
+            escapeHtml(stopName) +
+            "</option>"
+          );
+        })
+        .join("") +
+      '</select></label>' +
+      (String(slot.narrationNodesError || "").trim()
+        ? '<div class="pad-banner pad-banner--danger" style="grid-column:1 / -1;">' +
+          escapeHtml("旧时间轴无法自动迁移：" + String(slot.narrationNodesError || "").trim() + "。请重新配置节点后再保存。") +
+          "</div>"
+        : "") +
+      '<div class="pad-scene-editor__scene-actions">' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="save-station-config">保存站点配置</button>' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="add-narration-node" data-slot-key="' +
+      escapeHtml(String(slot.slotKey || "")) +
+      '">新增节点</button>' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="select-station-background">上传背景图</button>' +
+      '<input class="pad-hidden-file-input" data-action="station-background-input" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.gif,.bmp" />' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="select-station-wireframe">上传线框图</button>' +
+      '<input class="pad-hidden-file-input" data-action="station-wireframe-input" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.gif,.bmp" />' +
+      "</div>" +
+      "</div>" +
+      (stationVisual
+        ? renderSceneStage(stationVisual, {
+            bindingMode: true,
+            showLabels: true,
+            stretchToFit: true,
+            boundHotspotIds: activeNode ? activeNode.hotspotIds : [],
+          })
+        : '<div class="pad-empty">请先为当前站点上传背景图。</div>') +
+      "</div>" +
+      '<div class="pad-scene-editor__inspector">' +
+      '<div class="pad-scene-editor__sidebar-title">节点列表</div>' +
+      '<div class="pad-panel__hint">选中一个节点后，点击中间画布上的热区即可绑定或取消绑定。一个高亮区间可以绑定多个热区。</div>' +
+      (nodes.length
+        ? '<div class="pad-station-timeline__list">' +
+          nodes.map((node, index) => renderNarrationNodeCard(slot, stationVisual, node, index, nodes.length)).join("") +
+          "</div>"
+        : '<div class="pad-station-timeline__empty">暂未配置讲解节点。先新增节点，再选择音轨、拖出高亮区间并绑定热区。</div>') +
+      "</div>" +
+      "</div>" +
+      (state.recordingOptionsError
+        ? '<div class="pad-banner pad-banner--danger" style="margin: 0 22px 22px;">' + escapeHtml(state.recordingOptionsError) + "</div>"
+        : "") +
+      "</section>"
+    );
+  }
+
+  function renderStationFusionConfigPanelV3() {
+    const slot = getActiveStationSlot();
+    const stationVisual = getSelectedScene();
+    const nodes = getStationNarrationNodes(slot);
+    const activeNode = getActiveNarrationNode(slot.slotKey);
+    return (
+      '<section class="pad-panel pad-scene-editor">' +
+      '<div class="pad-panel__header">' +
+      "<div>" +
+      '<div class="pad-panel__title">站点讲解节点</div>' +
+      '<div class="pad-panel__hint">左侧大面板已收起。现在直接在节点列表里配置音轨、播放/暂停和高亮区间，并在节点内选择热区绑定。</div>' +
+      "</div>" +
+      '<div class="pad-scene-editor__header-actions">' +
+      '<button type="button" class="pad-btn pad-btn--ghost pad-station-config-panel__refresh" data-action="refresh-recordings">刷新录音</button>' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="add-narration-node" data-slot-key="' +
+      escapeHtml(String(slot.slotKey || "")) +
+      '">新增节点</button>' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="save-station-config">保存节点配置</button>' +
+      "</div>" +
+      "</div>" +
+      '<div class="pad-scene-editor__inspector pad-scene-editor__inspector--full">' +
+      '<div class="pad-scene-editor__sidebar-title">节点列表</div>' +
+      '<div class="pad-panel__hint">当前站点：' +
+      escapeHtml(getStationSlotDisplayName(slot)) +
+      (activeNode ? '；当前节点：' + escapeHtml(String(activeNode.nodeId || "")) : '') +
+      '。每个节点都可以选择音轨、播放/暂停、拖动高亮区间，并绑定多个热区。</div>' +
+      (String(slot.narrationNodesError || "").trim()
+        ? '<div class="pad-banner pad-banner--danger" style="margin-top:12px;">' +
+          escapeHtml("旧时间轴无法自动迁移：" + String(slot.narrationNodesError || "").trim() + "。请重新配置节点后再保存。") +
+          "</div>"
+        : "") +
+      (!stationVisual
+        ? '<div class="pad-banner pad-banner--warning" style="margin-top:12px;">当前站点暂未加载背景，但节点音轨和高亮区间仍可配置。</div>'
+        : "") +
+      (nodes.length
+        ? '<div class="pad-station-timeline__list">' +
+          nodes.map((node, index) => renderNarrationNodeCard(slot, stationVisual, node, index, nodes.length)).join("") +
+          "</div>"
+        : '<div class="pad-station-timeline__empty">暂未配置讲解节点。先新增节点，再选择音轨、拖出高亮区间并绑定热区。</div>') +
+      "</div>" +
+      (state.recordingOptionsError
+        ? '<div class="pad-banner pad-banner--danger" style="margin: 0 22px 22px;">' + escapeHtml(state.recordingOptionsError) + "</div>"
+        : "") +
+      "</section>"
+    );
+  }
+
+  function getNarrationNodeHotspotLabel(scene, hotspotId) {
+    const hotspot = findStationTimelineHotspot(scene, hotspotId);
+    if (!hotspot) return "失效热区";
+    if (String(hotspot.target_type || "product") === "control") {
+      return String(hotspot.control_label || "").trim() || "控制热区";
+    }
+    const product = findProductById(hotspot.product_id);
+    return String((product && product.product_name) || hotspot.product_name || "未命名热区").trim() || "未命名热区";
+  }
+
+  function renderNarrationNodeHotspotChips(scene, node) {
+    const hotspotIds = Array.isArray(node && node.hotspotIds) ? node.hotspotIds : [];
+    if (!hotspotIds.length) {
+      return '<div class="pad-panel__hint">当前节点还没有绑定热区。</div>';
+    }
+    return (
+      '<div class="pad-node-bound-list">' +
+      hotspotIds
+        .map((hotspotId) => {
+          return '<span class="pad-node-bound-pill">' + escapeHtml(getNarrationNodeHotspotLabel(scene, hotspotId)) + "</span>";
+        })
+        .join("") +
+      "</div>"
+    );
+  }
+
+  function renderNarrationNodeHotspotOptions(scene, slot, node) {
+    const slotKey = String(slot && slot.slotKey ? slot.slotKey : "").trim();
+    const nodeId = String(node && node.nodeId ? node.nodeId : "").trim();
+    const options = getNarrationBindableHotspots(scene);
+    if (!options.length) {
+      return '<div class="pad-panel__hint">当前站点还没有可绑定的产品热区。</div>';
+    }
+    return (
+      '<div class="pad-node-hotspot-list">' +
+      options
+        .map((hotspot) => {
+          const hotspotId = String(hotspot && hotspot.hotspot_id ? hotspot.hotspot_id : "").trim();
+          const active = Array.isArray(node && node.hotspotIds) && node.hotspotIds.includes(hotspotId);
+          return (
+            '<button type="button" class="pad-node-hotspot-pill' +
+            (active ? " is-active" : "") +
+            '" data-action="toggle-narration-node-hotspot" data-slot-key="' +
+            escapeHtml(slotKey) +
+            '" data-node-id="' +
+            escapeHtml(nodeId) +
+            '" data-hotspot-id="' +
+            escapeHtml(hotspotId) +
+            '">' +
+            escapeHtml(getNarrationNodeHotspotLabel(scene, hotspotId)) +
+            "</button>"
+          );
+        })
+        .join("") +
+      "</div>"
+    );
+  }
+
+  function renderNarrationNodeTabs(slot, nodes) {
+    const slotKey = String(slot && slot.slotKey ? slot.slotKey : "").trim();
+    return (
+      '<div class="pad-node-tabs" role="tablist" aria-label="讲解节点">' +
+      nodes
+        .map((node, index) => {
+          const nodeId = String(node && node.nodeId ? node.nodeId : "").trim();
+          const active = String(state.activeNarrationNodeId || "").trim() === nodeId;
+          return (
+            '<button type="button" class="pad-node-tab' +
+            (active ? " is-active" : "") +
+            '" data-action="select-narration-node" data-slot-key="' +
+            escapeHtml(slotKey) +
+            '" data-node-id="' +
+            escapeHtml(nodeId) +
+            '" role="tab" aria-selected="' +
+            (active ? "true" : "false") +
+            '">' +
+            "节点 " +
+            escapeHtml(String(index + 1)) +
+            "</button>"
+          );
+        })
+        .join("") +
+      "</div>"
+    );
+  }
+
+  function renderNarrationNodeCard(slot, scene, node, index, total) {
+    const slotKey = String(slot && slot.slotKey ? slot.slotKey : "").trim();
+    const nodeId = String(node && node.nodeId ? node.nodeId : "").trim();
+    const currentValidation = getNarrationNodeValidation(slotKey, node);
+    const recordingOptions = Array.isArray(state.recordingOptions) ? state.recordingOptions.slice() : [];
+    if (node.recordingId && !recordingOptions.find((item) => String(item.recording_id || "") === String(node.recordingId || ""))) {
+      recordingOptions.unshift({
+        recording_id: String(node.recordingId || ""),
+        display_name: "当前节点音轨",
+      });
+    }
+    const metaEntry = node.recordingId ? getRecordingMetaEntry(node.recordingId) : null;
+    const stops = getRecordingStops(node.recordingId);
+    return (
+      '<div class="pad-node-panel' + (!currentValidation.valid ? " is-invalid" : "") + '">' +
+      '<div class="pad-node-panel__head">' +
+      '<div>' +
+      '<div class="pad-station-timeline__card-title">节点 ' + escapeHtml(String(index + 1)) + "</div>" +
+      '<div class="pad-station-timeline__card-subtitle">当前节点内容已压缩到单屏显示，热区区域支持内部滚动。</div>' +
+      "</div>" +
+      '<div class="pad-station-timeline__actions">' +
+      '<button type="button" class="pad-station-timeline__action" data-action="move-narration-node-up" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-node-id="' +
+      escapeHtml(nodeId) +
+      '"' +
+      (index <= 0 ? " disabled" : "") +
+      ">上移</button>" +
+      '<button type="button" class="pad-station-timeline__action" data-action="move-narration-node-down" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-node-id="' +
+      escapeHtml(nodeId) +
+      '"' +
+      (index >= total - 1 ? " disabled" : "") +
+      ">下移</button>" +
+      '<button type="button" class="pad-station-timeline__action" data-action="remove-narration-node" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-node-id="' +
+      escapeHtml(nodeId) +
+      '">删除</button>' +
+      "</div>" +
+      "</div>" +
+      '<div class="pad-node-panel__grid">' +
+      '<label class="pad-station-config-panel__field"><span>音轨存档</span><select data-action="narration-node-recording" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-node-id="' +
+      escapeHtml(nodeId) +
+      '">' +
+      '<option value="">请选择存档</option>' +
+      recordingOptions
+        .map((item) => {
+          const recordingId = String(item && item.recording_id ? item.recording_id : "").trim();
+          return (
+            '<option value="' +
+            escapeHtml(recordingId) +
+            '"' +
+            (recordingId === String(node.recordingId || "") ? " selected" : "") +
+            ">" +
+            escapeHtml(formatRecordingLabel(item)) +
+            "</option>"
+          );
+        })
+        .join("") +
+      '</select></label>' +
+      '<label class="pad-station-config-panel__field"><span>音轨站台</span><select data-action="narration-node-stop" data-slot-key="' +
+      escapeHtml(slotKey) +
+      '" data-node-id="' +
+      escapeHtml(nodeId) +
+      '"' +
+      (!node.recordingId || (metaEntry && metaEntry.loading) || (metaEntry && metaEntry.error) ? " disabled" : "") +
+      ">" +
+      '<option value="">' +
+      escapeHtml(metaEntry && metaEntry.loading ? "正在加载站台..." : "请选择站台") +
+      "</option>" +
+      stops
+        .map((stopName, stopIndex) => {
+          return (
+            '<option value="' +
+            escapeHtml(String(stopIndex)) +
+            '"' +
+            (normalizeStationStopIndex(node.stopIndex) === stopIndex ? " selected" : "") +
+            ">" +
+            escapeHtml(stopName) +
+            "</option>"
+          );
+        })
+        .join("") +
+      '</select></label>' +
+      '<div class="pad-station-config-panel__field"><span>已绑热区</span><strong>' +
+      escapeHtml(String((Array.isArray(node.hotspotIds) ? node.hotspotIds.length : 0)) + " 个") +
+      "</strong></div>" +
+      '<div class="pad-station-config-panel__field"><span>状态</span><strong>' +
+      escapeHtml(currentValidation.message) +
+      "</strong></div>" +
+      "</div>" +
+      renderNarrationNodePlaybackControls(slot, node) +
+      renderNarrationNodeScrubber(slot, node) +
+      '<div class="pad-node-panel__hotspots">' +
+      '<div class="pad-panel__hint">选择热区：只显示名称，不显示热区 ID。</div>' +
+      renderNarrationNodeHotspotOptions(scene, slot, node) +
+      '<div class="pad-panel__hint" style="margin-top:10px;">当前已绑定</div>' +
+      renderNarrationNodeHotspotChips(scene, node) +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function renderStationFusionConfigPanelV3() {
+    const slot = getActiveStationSlot();
+    const stationVisual = getSelectedScene();
+    const nodes = getStationNarrationNodes(slot);
+    const activeNode = getActiveNarrationNode(slot.slotKey);
+    return (
+      '<section class="pad-panel pad-scene-editor">' +
+      '<div class="pad-panel__header">' +
+      "<div>" +
+      '<div class="pad-panel__title">站点讲解节点</div>' +
+      '<div class="pad-panel__hint">每个节点在一个 tab 里。节点内部只显示必要信息，保证单屏可看全。</div>' +
+      "</div>" +
+      '<div class="pad-scene-editor__header-actions">' +
+      '<button type="button" class="pad-btn pad-btn--ghost pad-station-config-panel__refresh" data-action="refresh-recordings">刷新录音</button>' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="add-narration-node" data-slot-key="' +
+      escapeHtml(String(slot.slotKey || "")) +
+      '">新增节点</button>' +
+      '<button type="button" class="pad-btn pad-btn--neutral" data-action="save-station-config">保存节点配置</button>' +
+      "</div>" +
+      "</div>" +
+      '<div class="pad-scene-editor__inspector pad-scene-editor__inspector--full">' +
+      '<div class="pad-panel__hint">当前站点：' + escapeHtml(getStationSlotDisplayName(slot)) + "。</div>" +
+      (String(slot.narrationNodesError || "").trim()
+        ? '<div class="pad-banner pad-banner--danger" style="margin-top:12px;">' +
+          escapeHtml("旧时间轴无法自动迁移：" + String(slot.narrationNodesError || "").trim() + "。请重新配置节点后再保存。") +
+          "</div>"
+        : "") +
+      (nodes.length
+        ? renderNarrationNodeTabs(slot, nodes) +
+          '<div class="pad-station-timeline__list pad-station-timeline__list--single">' +
+          (activeNode ? renderNarrationNodeCard(slot, stationVisual, activeNode, nodes.findIndex((item) => String(item.nodeId || "") === String(activeNode.nodeId || "")), nodes.length) : "") +
+          "</div>"
+        : '<div class="pad-station-timeline__empty">暂未配置讲解节点。先新增节点，再选择音轨、拖出高亮区间并绑定热区。</div>') +
+      "</div>" +
       "</section>"
     );
   }
@@ -6172,21 +7620,6 @@
       });
     });
 
-    refs.app.querySelectorAll('[data-action="station-timeline-event-type"]').forEach((select) => {
-      select.addEventListener("change", () => {
-        const slotKey = select.getAttribute("data-slot-key");
-        const currentIndex = Number(select.getAttribute("data-index"));
-        updateStationTimelineEvents(slotKey, (events) => {
-          if (currentIndex < 0 || currentIndex >= events.length) return events;
-          const nextEvents = events.slice();
-          nextEvents[currentIndex] = Object.assign({}, nextEvents[currentIndex], {
-            eventType: normalizeTimelineEventType(select.value),
-          });
-          return nextEvents;
-        });
-      });
-    });
-
     refs.app.querySelectorAll('[data-action="station-timeline-use-current-time"]').forEach((button) => {
       button.addEventListener("click", () => {
         useCurrentPlaybackTimeForTimelineEvent(
@@ -6210,55 +7643,183 @@
       });
     });
 
+    refs.app.querySelectorAll('[data-action="station-timeline-drag-highlight-start"]').forEach((button) => {
+      button.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        beginStationTimelineHighlightHandleDrag(button.getAttribute("data-slot-key"), "start", event.clientX);
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="station-timeline-drag-highlight-end"]').forEach((button) => {
+      button.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        beginStationTimelineHighlightHandleDrag(button.getAttribute("data-slot-key"), "end", event.clientX);
+      });
+    });
+
     refs.app.querySelectorAll('[data-action="station-timeline-seek-marker"]').forEach((button) => {
       button.addEventListener("click", () => {
         seekStationPlaybackToMs(button.getAttribute("data-time-ms"));
       });
     });
 
-    refs.app.querySelectorAll('[data-action="station-timeline-set-selection-start"]').forEach((button) => {
+    refs.app.querySelectorAll('[data-action="station-timeline-delete-highlight"]').forEach((button) => {
       button.addEventListener("click", () => {
-        setStationTimelineSelectionEdge(button.getAttribute("data-slot-key"), "start");
+        deleteStationTimelineSelection(button.getAttribute("data-slot-key"));
       });
     });
 
-    refs.app.querySelectorAll('[data-action="station-timeline-set-selection-end"]').forEach((button) => {
+    refs.app.querySelectorAll('[data-action="add-narration-node"]').forEach((button) => {
       button.addEventListener("click", () => {
-        setStationTimelineSelectionEdge(button.getAttribute("data-slot-key"), "end");
+        addStationNarrationNode(button.getAttribute("data-slot-key"));
       });
     });
 
-    refs.app.querySelectorAll('[data-action="station-timeline-apply-selection"]').forEach((button) => {
+    refs.app.querySelectorAll('[data-action="select-narration-node"]').forEach((button) => {
       button.addEventListener("click", () => {
-        applyStationTimelineSelection(button.getAttribute("data-slot-key"));
-      });
-    });
-
-    refs.app.querySelectorAll('[data-action="station-timeline-clear-selection"]').forEach((button) => {
-      button.addEventListener("click", () => {
-        clearStationTimelineSelection(button.getAttribute("data-slot-key"));
+        setActiveNarrationNode(button.getAttribute("data-slot-key"), button.getAttribute("data-node-id"));
         render();
       });
     });
 
-    refs.app.querySelectorAll('[data-action="station-timeline-add-highlight-on"]').forEach((button) => {
+    refs.app.querySelectorAll('[data-action="move-narration-node-up"]').forEach((button) => {
       button.addEventListener("click", () => {
-        addStationTimelineEventFromPlayback(button.getAttribute("data-slot-key"), "highlight_on");
+        moveStationNarrationNode(button.getAttribute("data-slot-key"), button.getAttribute("data-node-id"), -1);
       });
     });
 
-    refs.app.querySelectorAll('[data-action="station-timeline-add-highlight-off"]').forEach((button) => {
+    refs.app.querySelectorAll('[data-action="move-narration-node-down"]').forEach((button) => {
       button.addEventListener("click", () => {
-        addStationTimelineEventFromPlayback(button.getAttribute("data-slot-key"), "highlight_off");
+        moveStationNarrationNode(button.getAttribute("data-slot-key"), button.getAttribute("data-node-id"), 1);
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="remove-narration-node"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        removeStationNarrationNode(button.getAttribute("data-slot-key"), button.getAttribute("data-node-id"));
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="narration-node-recording"]').forEach((select) => {
+      select.addEventListener("change", () => {
+        const slotKey = select.getAttribute("data-slot-key");
+        const nodeId = select.getAttribute("data-node-id");
+        const recordingId = String(select.value || "").trim();
+        updateStationNarrationNode(slotKey, nodeId, {
+          recordingId,
+          stopIndex: null,
+          stopName: "",
+        });
+        if (recordingId) {
+          void ensureRecordingMeta(recordingId, { force: true });
+        }
+        setActiveNarrationNode(slotKey, nodeId);
+        render();
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="narration-node-stop"]').forEach((select) => {
+      select.addEventListener("change", () => {
+        const slotKey = select.getAttribute("data-slot-key");
+        const nodeId = select.getAttribute("data-node-id");
+        const node = findStationNarrationNode(slotKey, nodeId);
+        const stopIndex = normalizeStationStopIndex(select.value);
+        const stops = getRecordingStops(node && node.recordingId);
+        updateStationNarrationNode(slotKey, nodeId, {
+          stopIndex,
+          stopName: stopIndex != null && stopIndex >= 0 && stopIndex < stops.length ? String(stops[stopIndex] || "").trim() : "",
+        });
+        setActiveNarrationNode(slotKey, nodeId);
+        render();
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="play-narration-node"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        void playNarrationNode(button.getAttribute("data-slot-key"), button.getAttribute("data-node-id"), { rangeOnly: false });
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="play-narration-node-highlight"]').forEach((button) => {
+      button.addEventListener("click", () => {
+        void playNarrationNode(button.getAttribute("data-slot-key"), button.getAttribute("data-node-id"), { rangeOnly: true });
+      });
+    });
+
+    refs.app.querySelectorAll('[data-role="narration-node-track"]').forEach((track) => {
+      track.addEventListener("pointerdown", (event) => {
+        beginNarrationNodeSelection(
+          track.getAttribute("data-slot-key"),
+          track.getAttribute("data-node-id"),
+          event.clientX
+        );
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="narration-node-drag-highlight-start"]').forEach((button) => {
+      button.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        beginNarrationNodeHandleDrag(
+          button.getAttribute("data-slot-key"),
+          button.getAttribute("data-node-id"),
+          "start",
+          event.clientX
+        );
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="narration-node-drag-highlight-end"]').forEach((button) => {
+      button.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        beginNarrationNodeHandleDrag(
+          button.getAttribute("data-slot-key"),
+          button.getAttribute("data-node-id"),
+          "end",
+          event.clientX
+        );
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="narration-node-drag-playhead"]').forEach((button) => {
+      button.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        beginNarrationNodePlayheadDrag(
+          button.getAttribute("data-slot-key"),
+          button.getAttribute("data-node-id"),
+          event.clientX
+        );
+      });
+    });
+
+    refs.app.querySelectorAll('[data-action="toggle-narration-node-hotspot"]').forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const controlAction = String(button.getAttribute("data-control-action") || "").trim();
+        if (controlAction) return;
+        const slotKey = String(button.getAttribute("data-slot-key") || getActiveStationSlot().slotKey || "").trim();
+        const targetNodeId = String(button.getAttribute("data-node-id") || "").trim();
+        const activeNode = targetNodeId ? findStationNarrationNode(slotKey, targetNodeId) : getActiveNarrationNode(slotKey);
+        if (!activeNode) {
+          setAssetState("请先选中一个讲解节点，再绑定热区。", "warning", false, "station-node-binding");
+          render();
+          return;
+        }
+        toggleNarrationNodeHotspotBinding(slotKey, activeNode.nodeId, button.getAttribute("data-hotspot-id"));
       });
     });
 
     if (saveStationConfigButton) {
       saveStationConfigButton.addEventListener("click", () => {
         const activeSlot = getActiveStationSlot();
-        const timelineEvents = readStationTimelineEventsFromDom(activeSlot.slotKey);
-        updateStationSlot(activeSlot.slotKey, () => ({ timelineEvents }));
-        void saveSelectedStationConfig({ timelineEvents });
+        const narrationNodes = getStationNarrationNodes(activeSlot);
+        updateStationSlot(activeSlot.slotKey, () => ({ narrationNodes }));
+        void saveSelectedStationConfig({ narrationNodes });
       });
     }
 
@@ -6745,11 +8306,18 @@
     state.stationPlaybackSlotKey = '';
     state.stationPlaybackStopName = '';
     state.stationPlaybackQueue = [];
+    state.stationPlaybackNodes = [];
+    state.stationPlaybackNodeIndex = -1;
+    state.stationPlaybackNodeId = '';
+    state.stationPlaybackMode = "idle";
+    state.stationPlaybackRangeEndMs = null;
     state.stationPlaybackSegmentIndex = -1;
     state.stationPlaybackAnswerText = '';
     state.stationPlaybackTimelineEvents = [];
     state.highlightedHotspotId = '';
     state.highlightedProductId = '';
+    state.visibleHotspotIds = [];
+    state.flashingHotspotIds = [];
     state.lastPlaybackRequestedUrl = '';
   }
 
@@ -6979,6 +8547,284 @@
     const totalDurationMs = getStationPlaybackDurationMs();
     const cursorMs = clampStationPlaybackCursorMs(state.stationPlaybackCursorMs || 0);
     if (totalDurationMs > 0 && cursorMs >= totalDurationMs) {
+      render();
+      return;
+    }
+    latestStationPlaybackSeq += 1;
+    const playbackSeq = latestStationPlaybackSeq;
+    const segmentIndex = findStationSegmentIndexForGlobalMs(cursorMs);
+    await startStationSegment(key, segmentIndex < 0 ? 0 : segmentIndex, playbackSeq, cursorMs);
+  }
+
+  async function toggleStationPlayback(slotKey) {
+    const slot = getStationSlotByKey(slotKey);
+    const samePlayingStation =
+      slot &&
+      (String(state.stationPlaybackSlotKey || "") === String(slot.slotKey || "") ||
+        String(state.pendingStationSlotKey || "") === String(slot.slotKey || ""));
+    if (samePlayingStation && String(state.stationPlaybackState || "") === "playing") {
+      interruptCurrentPlayback({
+        preserveError: false,
+        preserveStationError: false,
+        preserveRequestUrl: false,
+        resetSource: true,
+      });
+      render();
+      return;
+    }
+    if (samePlayingStation && String(state.stationPlaybackState || "") === "paused") {
+      await resumeStationPlayback(slotKey);
+      return;
+    }
+    await playStationSlot(slotKey, { startAtMs: 0 });
+  }
+
+  async function buildNarrationPlaybackPlan(slotKey, nodes, playbackSeq) {
+    const planNodes = [];
+    const planQueue = [];
+    let offsetMs = 0;
+    for (const rawNode of Array.isArray(nodes) ? nodes : []) {
+      if (playbackSeq !== latestStationPlaybackSeq) return null;
+      const node = normalizeNarrationNode(rawNode, planNodes.length);
+      const payload = await fetchJson(
+        '/api/recordings/' + encodeURIComponent(String(node.recordingId || '')) + '/stop/' + encodeURIComponent(String(node.stopIndex)),
+        state.clientId
+      );
+      if (playbackSeq !== latestStationPlaybackSeq) return null;
+      const baseQueue = normalizeStationSegments(payload);
+      if (!baseQueue.length) {
+        throw createError("narration_node_audio_missing");
+      }
+      const hydrated = await hydrateStationPlaybackQueue(baseQueue, playbackSeq);
+      if (!hydrated || !Array.isArray(hydrated.queue) || !hydrated.queue.length || Number(hydrated.totalDurationMs || 0) <= 0) {
+        throw createError("narration_node_duration_missing");
+      }
+      const nodeDurationMs = Math.round(Number(hydrated.totalDurationMs || 0));
+      const nodeStartMs = offsetMs;
+      const highlightStartMs = Math.max(0, Math.min(normalizeTimelineEventTimeMs(node.highlightStartMs), nodeDurationMs));
+      const highlightEndMs = Math.max(highlightStartMs, Math.min(normalizeTimelineEventTimeMs(node.highlightEndMs), nodeDurationMs));
+      const playbackNode = Object.assign({}, node, {
+        playbackStartMs: nodeStartMs,
+        playbackEndMs: nodeStartMs + nodeDurationMs,
+        durationMs: nodeDurationMs,
+        highlightGlobalStartMs: nodeStartMs + highlightStartMs,
+        highlightGlobalEndMs: nodeStartMs + highlightEndMs,
+        stopName: String(payload && payload.stop_name ? payload.stop_name : node.stopName || "").trim(),
+        answerText: String(payload && payload.answer_text ? payload.answer_text : "").trim(),
+      });
+      planNodes.push(playbackNode);
+      hydrated.queue.forEach((segment) => {
+        planQueue.push(
+          Object.assign({}, segment, {
+            nodeId: playbackNode.nodeId,
+            startMs: nodeStartMs + Number(segment.startMs || 0),
+            endMs: nodeStartMs + Number(segment.endMs || 0),
+          })
+        );
+      });
+      offsetMs += nodeDurationMs;
+    }
+    return {
+      nodes: planNodes,
+      queue: planQueue,
+      totalDurationMs: offsetMs,
+    };
+  }
+
+  function applyStationTimelineHighlight(elapsedMs) {
+    const nodes = Array.isArray(state.stationPlaybackNodes) ? state.stationPlaybackNodes : [];
+    const cursorMs = Math.max(0, Number(elapsedMs || 0));
+    let activeNode = null;
+    let activeNodeIndex = -1;
+    for (let index = 0; index < nodes.length; index += 1) {
+      const node = nodes[index];
+      if (cursorMs < Number(node.playbackEndMs || 0)) {
+        activeNode = node;
+        activeNodeIndex = index;
+        break;
+      }
+    }
+    if (!activeNode && nodes.length && cursorMs >= Number(nodes[nodes.length - 1].playbackEndMs || 0)) {
+      activeNode = nodes[nodes.length - 1];
+      activeNodeIndex = nodes.length - 1;
+    }
+    state.stationPlaybackNodeIndex = activeNodeIndex;
+    state.stationPlaybackNodeId = activeNode ? String(activeNode.nodeId || "") : "";
+    state.stationPlaybackStopName = activeNode ? String(activeNode.stopName || "") : "";
+    state.stationPlaybackAnswerText = activeNode ? String(activeNode.answerText || "") : "";
+    if (
+      state.stationPlaybackMode === "node-highlight" &&
+      state.stationPlaybackRangeEndMs != null &&
+      cursorMs >= Number(state.stationPlaybackRangeEndMs || 0) &&
+      String(state.stationPlaybackState || "") === "playing"
+    ) {
+      state.stationPlaybackCursorMs = Number(state.stationPlaybackRangeEndMs || 0);
+      state.audioBusy = false;
+      state.stationPlaybackBusy = false;
+      state.stationPlaybackState = "paused";
+      state.playingStationSlotKey = "";
+      state.pendingStationSlotKey = "";
+      state.visibleHotspotIds = [];
+      state.flashingHotspotIds = [];
+      try {
+        refs.audio.pause();
+      } catch (_) {}
+      return;
+    }
+    if (
+      !activeNode ||
+      cursorMs < Number(activeNode.highlightGlobalStartMs || 0) ||
+      cursorMs > Number(activeNode.highlightGlobalEndMs || 0)
+    ) {
+      state.visibleHotspotIds = [];
+      state.flashingHotspotIds = [];
+      state.highlightedHotspotId = "";
+      return;
+    }
+    state.visibleHotspotIds = Array.isArray(activeNode.hotspotIds) ? activeNode.hotspotIds.slice() : [];
+    state.flashingHotspotIds = Array.isArray(activeNode.hotspotIds) ? activeNode.hotspotIds.slice() : [];
+    state.highlightedHotspotId = state.visibleHotspotIds[0] || "";
+  }
+
+  async function playNarrationNodes(slotKey, nodes, options) {
+    const slot = getStationSlotByKey(slotKey);
+    const opts = options && typeof options === "object" ? options : {};
+    const nodeList = normalizeNarrationNodes(nodes);
+    if (!nodeList.length) {
+      setStationPlaybackFailure("当前站点未配置讲解节点。");
+      render();
+      return;
+    }
+    const invalidNode = nodeList.find((node) => !getNarrationNodeValidation(slot.slotKey, node).valid);
+    if (invalidNode) {
+      setStationPlaybackFailure(getNarrationNodeValidation(slot.slotKey, invalidNode).message);
+      render();
+      return;
+    }
+
+    interruptCurrentPlayback({
+      preserveError: false,
+      preserveStationError: false,
+      preserveRequestUrl: false,
+      resetSource: true,
+    });
+    const playbackSeq = latestStationPlaybackSeq;
+    state.audioBusy = true;
+    state.audioError = "";
+    state.stationPlaybackBusy = true;
+    state.stationPlaybackError = "";
+    state.stationPlaybackState = "playing";
+    state.stationPlaybackSlotKey = String(slot.slotKey || "");
+    state.pendingStationSlotKey = String(slot.slotKey || "");
+    state.playingStationSlotKey = "";
+    state.stationPlaybackMode = String(opts.mode || "station");
+    state.visibleHotspotIds = [];
+    state.flashingHotspotIds = [];
+    render();
+
+    try {
+      const plan = await buildNarrationPlaybackPlan(slot.slotKey, nodeList, playbackSeq);
+      if (!plan || playbackSeq !== latestStationPlaybackSeq) return;
+      if (!Array.isArray(plan.queue) || !plan.queue.length || Number(plan.totalDurationMs || 0) <= 0) {
+        throw createError("narration_node_audio_missing");
+      }
+      const startCursorMs = clampStationPlaybackCursorMs(
+        opts.startAtMs == null ? 0 : Math.min(normalizeTimelineEventTimeMs(opts.startAtMs), Number(plan.totalDurationMs || 0))
+      );
+      state.stationPlaybackNodes = plan.nodes;
+      state.stationPlaybackQueue = plan.queue;
+      state.stationPlaybackTotalDurationMs = Math.round(Number(plan.totalDurationMs || 0));
+      state.stationPlaybackCursorMs = startCursorMs;
+      state.stationPlaybackRangeEndMs =
+        opts.rangeEndMs == null ? null : Math.min(normalizeTimelineEventTimeMs(opts.rangeEndMs), Number(plan.totalDurationMs || 0));
+      state.stationPlaybackSegmentIndex = findStationSegmentIndexForGlobalMs(startCursorMs);
+      applyStationTimelineHighlight(startCursorMs);
+      const initialVisibleNode = plan.nodes.find(
+        (node) =>
+          startCursorMs >= Number(node.highlightGlobalStartMs || 0) &&
+          startCursorMs <= Number(node.highlightGlobalEndMs || 0)
+      );
+      if (initialVisibleNode) {
+        state.stationPlaybackNodeId = String(initialVisibleNode.nodeId || "");
+        state.visibleHotspotIds = Array.isArray(initialVisibleNode.hotspotIds) ? initialVisibleNode.hotspotIds.slice() : [];
+        state.flashingHotspotIds = Array.isArray(initialVisibleNode.hotspotIds) ? initialVisibleNode.hotspotIds.slice() : [];
+        state.highlightedHotspotId = state.visibleHotspotIds[0] || "";
+      }
+      await startStationSegment(
+        slot.slotKey,
+        state.stationPlaybackSegmentIndex < 0 ? 0 : state.stationPlaybackSegmentIndex,
+        playbackSeq,
+        startCursorMs
+      );
+    } catch (error) {
+      if (playbackSeq !== latestStationPlaybackSeq) return;
+      const code = String(error && error.code ? error.code : "").trim();
+      if (code === "narration_node_audio_missing") {
+        setStationPlaybackFailure("当前节点缺少可播放音轨。");
+      } else if (code === "narration_node_duration_missing") {
+        setStationPlaybackFailure("当前节点音轨时长读取失败。");
+      } else if (code === "not_found") {
+        setStationPlaybackFailure("当前节点音轨不存在。");
+      } else {
+        setStationPlaybackFailure(describeRequestError(error));
+      }
+      render();
+    }
+  }
+
+  async function playNarrationNode(slotKey, nodeId, options) {
+    const node = findStationNarrationNode(slotKey, nodeId);
+    if (!node) return;
+    const opts = options && typeof options === "object" ? options : {};
+    await playNarrationNodes(slotKey, [node], {
+      mode: opts.rangeOnly ? "node-highlight" : "node",
+      startAtMs: opts.rangeOnly ? Number(node.highlightStartMs || 0) : opts.startAtMs,
+      rangeEndMs: opts.rangeOnly ? Number(node.highlightEndMs || 0) : null,
+    });
+  }
+
+  async function playStationSlot(slotKey, options) {
+    const slot = getStationSlotByKey(slotKey);
+    await playNarrationNodes(slot.slotKey, getStationNarrationNodes(slot), {
+      mode: "station",
+      startAtMs: options && typeof options === "object" ? options.startAtMs : 0,
+      rangeEndMs: null,
+    });
+  }
+
+  function pauseStationPlayback() {
+    if (!String(state.stationPlaybackSlotKey || "").trim()) return;
+    if (String(state.stationPlaybackState || "") !== "playing") return;
+    syncStationPlaybackCursorFromAudio();
+    state.stationPlaybackState = "paused";
+    state.audioBusy = false;
+    state.stationPlaybackBusy = false;
+    state.playingStationSlotKey = "";
+    state.pendingStationSlotKey = "";
+    try {
+      refs.audio.pause();
+    } catch (_) {}
+    render();
+  }
+
+  async function resumeStationPlayback(slotKey) {
+    const key = String(slotKey || state.stationPlaybackSlotKey || "").trim();
+    if (!key) return;
+    if (String(state.stationPlaybackSlotKey || "").trim() !== key || !Array.isArray(state.stationPlaybackQueue) || !state.stationPlaybackQueue.length) {
+      await playStationSlot(key, { startAtMs: 0 });
+      return;
+    }
+    const totalDurationMs = getStationPlaybackDurationMs();
+    const cursorMs = clampStationPlaybackCursorMs(state.stationPlaybackCursorMs || 0);
+    if (totalDurationMs > 0 && cursorMs >= totalDurationMs) {
+      render();
+      return;
+    }
+    if (
+      state.stationPlaybackMode === "node-highlight" &&
+      state.stationPlaybackRangeEndMs != null &&
+      cursorMs >= Number(state.stationPlaybackRangeEndMs || 0)
+    ) {
       render();
       return;
     }
@@ -7332,6 +9178,18 @@
     const selectedSlot = getActiveStationSlot();
     if (!selectedScene || !selectedSlot || state.assetBusy) return;
     const opts = options && typeof options === "object" ? options : {};
+    const narrationNodes = Array.isArray(opts.narrationNodes) ? normalizeNarrationNodes(opts.narrationNodes) : getStationNarrationNodes(selectedSlot);
+    if (String(selectedSlot.narrationNodesError || "").trim()) {
+      setAssetState("旧时间轴数据仍需人工整理，暂时不能保存。", "danger", false, "station-config");
+      render();
+      return;
+    }
+    const invalidNode = narrationNodes.find((node) => !getNarrationNodeValidation(selectedSlot.slotKey, node).valid);
+    if (invalidNode) {
+      setAssetState(getNarrationNodeValidation(selectedSlot.slotKey, invalidNode).message, "danger", false, "station-config");
+      render();
+      return;
+    }
     setAssetState("Saving station configuration...", "pending", true, "station-config");
     render();
     try {
@@ -7364,19 +9222,22 @@
           },
         }
       );
-      if (Array.isArray(opts.timelineEvents)) {
+      if (Array.isArray(narrationNodes)) {
         await fetchJson(
           "/api/pad/halls/current/stations/" + encodeURIComponent(selectedSlot.slotKey) + "/timeline",
           state.clientId,
           {
             method: "PUT",
             json: {
-              timeline_events: opts.timelineEvents.map((event, index) => ({
-                sort_order: Number(event.sortOrder != null ? event.sortOrder : index),
-                time_ms: Number(event.timeMs || 0),
-                product_id: String(event.productId || "").trim(),
-                station_hotspot_id: String(event.hotspotId || "").trim(),
-                event_type: String(event.eventType || "focus_switch").trim() || "focus_switch",
+              narration_nodes: narrationNodes.map((node, index) => ({
+                node_id: String(node.nodeId || "").trim(),
+                sort_order: Number(node.sortOrder != null ? node.sortOrder : index),
+                recording_id: String(node.recordingId || "").trim(),
+                stop_index: normalizeStationStopIndex(node.stopIndex),
+                stop_name: String(node.stopName || "").trim(),
+                highlight_start_ms: Number(node.highlightStartMs || 0),
+                highlight_end_ms: Number(node.highlightEndMs || 0),
+                hotspot_ids: (Array.isArray(node.hotspotIds) ? node.hotspotIds : []).map((hotspotId) => String(hotspotId || "").trim()),
               })),
             },
           }
@@ -8314,6 +10175,9 @@
                 slotKey: String(item.slot_key || item.station_key || ""),
               }))
             : [],
+          narrationNodes: activeStation && Array.isArray(activeStation.narration_nodes)
+            ? activeStation.narration_nodes.map((item) => normalizeNarrationNode(item, 0))
+            : [],
           narrationTimelineEvents: Array.isArray(state.stationPlaybackTimelineEvents)
             ? state.stationPlaybackTimelineEvents.map((item) => ({
                 eventId: String(item.eventId || ""),
@@ -8332,6 +10196,8 @@
           sceneEditorCreateMode: !!state.sceneEditorCreateMode,
           displayProductIds: getDisplayProducts().map((item) => String(item.product_id || "")),
           selectedProductId: selected ? selected.product_id : "",
+          opsStationTab: normalizeOpsStationTab(state.opsStationTab),
+          opsAnnotateSidebarTab: normalizeOpsAnnotateSidebarTab(state.opsAnnotateSidebarTab),
           playingProductId: String(state.playingProductId || ""),
           pendingPlaybackProductId: String(state.pendingPlaybackProductId || ""),
           demoLeftTabKey: normalizeDemoLeftTabKey(state.demoLeftTabKey),
@@ -8339,11 +10205,18 @@
           stationSlots: (Array.isArray(state.demoStationSlots) ? state.demoStationSlots : []).map((slot, index) =>
             normalizeStationSlot(slot, index)
           ),
+          stationPlaybackSlotKey: String(state.stationPlaybackSlotKey || ""),
+          stationPlaybackState: String(state.stationPlaybackState || ""),
+          stationPlaybackCursorMs: Number(state.stationPlaybackCursorMs || 0),
+          stationPlaybackNodeId: String(state.stationPlaybackNodeId || ""),
           playingStationSlotKey: String(state.playingStationSlotKey || ""),
           pendingStationSlotKey: String(state.pendingStationSlotKey || ""),
           stationPlaybackError: String(state.stationPlaybackError || ""),
           highlightedHotspotId: String(state.highlightedHotspotId || ""),
           highlightedProductId: String(state.highlightedProductId || ""),
+          activeNodeId: String(state.activeNarrationNodeId || ""),
+          visibleHotspotIds: (Array.isArray(state.visibleHotspotIds) ? state.visibleHotspotIds : []).map((id) => String(id || "")),
+          flashingHotspotIds: (Array.isArray(state.flashingHotspotIds) ? state.flashingHotspotIds : []).map((id) => String(id || "")),
           stationPlaybackTimelineEventCount: Array.isArray(state.stationPlaybackTimelineEvents)
             ? state.stationPlaybackTimelineEvents.length
             : 0,
@@ -8385,6 +10258,9 @@
       },
       setMode: function (mode) {
         setMode(mode);
+      },
+      setOpsStationTab: function (tab) {
+        setOpsStationTab(tab);
       },
       toggleActiveStationSlot: function () {
         toggleActiveStationSlot();
@@ -8450,17 +10326,22 @@
     if (stationTimelineInteraction) {
       updateStationTimelineSelection(event.clientX);
     }
+    if (narrationNodeInteraction) {
+      updateNarrationNodeInteraction(event.clientX);
+    }
     if (!sceneEditorInteraction) return;
     updateSceneEditorInteraction(event);
   });
 
   window.addEventListener("pointerup", () => {
     endStationTimelineSelection();
+    endNarrationNodeInteraction();
     void endSceneEditorInteraction();
   });
 
   window.addEventListener("pointercancel", () => {
     endStationTimelineSelection();
+    endNarrationNodeInteraction();
     void endSceneEditorInteraction();
   });
 

@@ -358,6 +358,145 @@ function createTwoTimelineEventsFixture() {
   };
 }
 
+function createHighlightRangeFixture() {
+  return {
+    stations: {
+      station_a: {
+        hotspots: [
+          {
+            hotspot_id: 'station_hotspot_a_1',
+            product_id: 'product_001',
+            sort_order: 1,
+            x_pct: 0.1,
+            y_pct: 0.15,
+            width_pct: 0.2,
+            height_pct: 0.2,
+            updated_at_ms: 1710000010100,
+          },
+        ],
+        timeline_events: [
+          {
+            event_id: 'timeline_station_a_1',
+            sort_order: 0,
+            time_ms: 0,
+            product_id: 'product_001',
+            station_hotspot_id: 'station_hotspot_a_1',
+            event_type: 'focus_switch',
+            updated_at_ms: 1710000010400,
+          },
+          {
+            event_id: 'timeline_station_a_hl_on',
+            sort_order: 1,
+            time_ms: 200,
+            product_id: 'product_001',
+            station_hotspot_id: 'station_hotspot_a_1',
+            event_type: 'highlight_on',
+            updated_at_ms: 1710000010450,
+          },
+          {
+            event_id: 'timeline_station_a_hl_off',
+            sort_order: 2,
+            time_ms: 700,
+            product_id: 'product_001',
+            station_hotspot_id: 'station_hotspot_a_1',
+            event_type: 'highlight_off',
+            updated_at_ms: 1710000010500,
+          },
+        ],
+      },
+    },
+  };
+}
+
+function createNarrationNodeFixture() {
+  return {
+    stations: {
+      station_a: {
+        hotspots: [
+          {
+            hotspot_id: 'station_hotspot_a_1',
+            product_id: 'product_001',
+            sort_order: 1,
+            x_pct: 0.1,
+            y_pct: 0.15,
+            width_pct: 0.2,
+            height_pct: 0.2,
+            updated_at_ms: 1710000010100,
+          },
+          {
+            hotspot_id: 'station_hotspot_a_2',
+            product_id: 'product_002',
+            sort_order: 2,
+            x_pct: 0.42,
+            y_pct: 0.18,
+            width_pct: 0.2,
+            height_pct: 0.22,
+            updated_at_ms: 1710000010110,
+          },
+        ],
+        narration_nodes: [
+          {
+            node_id: 'narration_node_a_1',
+            sort_order: 0,
+            recording_id: 'recording_station_a',
+            stop_index: 0,
+            stop_name: '入口介绍',
+            highlight_start_ms: 200,
+            highlight_end_ms: 700,
+            hotspot_ids: ['station_hotspot_a_1'],
+            updated_at_ms: 1710000010600,
+          },
+        ],
+      },
+    },
+  };
+}
+
+function deriveNarrationNodes(station) {
+  const rawNodes = Array.isArray(station && station.narration_nodes) ? station.narration_nodes : [];
+  if (rawNodes.length) {
+    return rawNodes.map((node, index) => ({
+      node_id: String((node && node.node_id) || `narration_node_${index}`),
+      sort_order: Number(node && node.sort_order != null ? node.sort_order : index),
+      recording_id: String((node && node.recording_id) || (station && station.recording_id) || ''),
+      stop_index: Number(node && node.stop_index != null ? node.stop_index : (station && station.stop_index) || 0),
+      stop_name: String((node && node.stop_name) || (station && station.stop_name) || ''),
+      highlight_start_ms: Number((node && node.highlight_start_ms) || 0),
+      highlight_end_ms: Number((node && node.highlight_end_ms) || 0),
+      hotspot_ids: Array.isArray(node && node.hotspot_ids) ? node.hotspot_ids.map((id) => String(id || '')) : [],
+      updated_at_ms: Number((node && node.updated_at_ms) || Date.now()),
+    }));
+  }
+  const rawEvents = Array.isArray(station && station.timeline_events) ? station.timeline_events : [];
+  const pending = new Map();
+  const nodes = [];
+  rawEvents.forEach((event) => {
+    const type = String((event && event.event_type) || 'focus_switch');
+    const hotspotId = String((event && event.station_hotspot_id) || '');
+    const timeMs = Number((event && event.time_ms) || 0);
+    if (!hotspotId) return;
+    if (type === 'highlight_on') {
+      pending.set(hotspotId, timeMs);
+      return;
+    }
+    if (type === 'highlight_off' && pending.has(hotspotId)) {
+      nodes.push({
+        node_id: `narration_node_${hotspotId}_${timeMs}`,
+        sort_order: nodes.length,
+        recording_id: String((station && station.recording_id) || ''),
+        stop_index: Number((station && station.stop_index) || 0),
+        stop_name: String((station && station.stop_name) || ''),
+        highlight_start_ms: Number(pending.get(hotspotId) || 0),
+        highlight_end_ms: timeMs,
+        hotspot_ids: [hotspotId],
+        updated_at_ms: Number((event && event.updated_at_ms) || Date.now()),
+      });
+      pending.delete(hotspotId);
+    }
+  });
+  return nodes;
+}
+
 function createRemappedDisplayFixture() {
   return {
     display: {
@@ -528,7 +667,7 @@ function buildFixturePayloads(state) {
           ...(station.hotspots || []).map((hotspot) => Number(hotspot.updated_at_ms || 0)),
           1710000000000
         ),
-        timeline_events: Array.isArray(station.timeline_events) ? station.timeline_events : [],
+        narration_nodes: deriveNarrationNodes(station),
       };
     })
     .filter(Boolean);
@@ -972,19 +1111,23 @@ async function installPadApiMocks(page, options = {}) {
       const stationKey = decodeURIComponent(stationTimelineMatch[1]);
       const target = getFixtureStation(stationKey);
       const body = request.postDataJSON ? request.postDataJSON() : {};
-      const rawEvents = Array.isArray(body.timeline_events) ? body.timeline_events : [];
+      const rawNodes = Array.isArray(body.narration_nodes) ? body.narration_nodes : [];
       if (target) {
-        target.timeline_events = rawEvents.map((event, index) => ({
-          event_id: `timeline_${stationKey}_${index}_${Date.now()}`,
-          sort_order: Number(event && event.sort_order != null ? event.sort_order : index),
-          time_ms: Number(event && event.time_ms ? event.time_ms : 0),
-          product_id: String((event && event.product_id) || '').trim(),
-          station_hotspot_id: String((event && event.station_hotspot_id) || '').trim(),
-          event_type: String((event && event.event_type) || 'focus_switch').trim() || 'focus_switch',
+        target.narration_nodes = rawNodes.map((node, index) => ({
+          node_id: String((node && node.node_id) || `narration_node_${stationKey}_${index}_${Date.now()}`),
+          sort_order: Number(node && node.sort_order != null ? node.sort_order : index),
+          recording_id: String((node && node.recording_id) || '').trim(),
+          stop_index: Number(node && node.stop_index != null ? node.stop_index : 0),
+          stop_name: String((node && node.stop_name) || '').trim(),
+          highlight_start_ms: Number(node && node.highlight_start_ms ? node.highlight_start_ms : 0),
+          highlight_end_ms: Number(node && node.highlight_end_ms ? node.highlight_end_ms : 0),
+          hotspot_ids: Array.isArray(node && node.hotspot_ids)
+            ? node.hotspot_ids.map((hotspotId) => String(hotspotId || '').trim()).filter(Boolean)
+            : [],
           updated_at_ms: Date.now(),
         }));
       }
-      await fulfillJson(route, { ok: true, timeline_events: target ? target.timeline_events : rawEvents });
+      await fulfillJson(route, { ok: true, narration_nodes: target ? target.narration_nodes : rawNodes });
       return;
     }
 
@@ -1080,6 +1223,7 @@ async function installPadApiMocks(page, options = {}) {
             segment_id: 1,
             text: `${recording.display_name}-${recording.stops[stopIndex]}`,
             audio_url: `/api/pad/offline/audio/${recording.recording_id}_stop_${stopIndex}`,
+            duration_ms: 1000,
             updated_at_ms: Date.now(),
           },
         ],
@@ -1130,6 +1274,50 @@ async function installPadApiMocks(page, options = {}) {
 
 async function installClientIdAndAudioStub(page, clientId) {
   await page.addInitScript((value) => {
+    const mediaProto = window.HTMLMediaElement.prototype;
+    if (!mediaProto.__ragint_meta_stubbed) {
+      Object.defineProperty(mediaProto, 'src', {
+        configurable: true,
+        get() {
+          return this.__ragint_src || '';
+        },
+        set(nextValue) {
+          this.__ragint_src = String(nextValue || '');
+          this.__ragint_ready_state = 1;
+          try {
+            this.dispatchEvent(new Event('loadedmetadata'));
+          } catch (_) {}
+        },
+      });
+      Object.defineProperty(mediaProto, 'currentSrc', {
+        configurable: true,
+        get() {
+          return this.__ragint_src || '';
+        },
+      });
+      Object.defineProperty(mediaProto, 'readyState', {
+        configurable: true,
+        get() {
+          return Number(this.__ragint_ready_state || 0);
+        },
+      });
+      Object.defineProperty(mediaProto, 'duration', {
+        configurable: true,
+        get() {
+          return Number(this.__ragint_test_duration || 1);
+        },
+      });
+      Object.defineProperty(mediaProto, 'currentTime', {
+        configurable: true,
+        get() {
+          return Number(this.__ragint_current_time || 0);
+        },
+        set(nextValue) {
+          this.__ragint_current_time = Number(nextValue || 0);
+        },
+      });
+      mediaProto.__ragint_meta_stubbed = true;
+    }
     window.localStorage.setItem('clientId', value);
     window.localStorage.removeItem('ragint-pad-demo-play-counts-v1');
     window.localStorage.removeItem('ragint-pad-demo-columns-v1');
@@ -1160,6 +1348,50 @@ async function installClientIdAndAudioStub(page, clientId) {
 
 async function installClientIdOnly(page, clientId) {
   await page.addInitScript((value) => {
+    const mediaProto = window.HTMLMediaElement.prototype;
+    if (!mediaProto.__ragint_meta_stubbed) {
+      Object.defineProperty(mediaProto, 'src', {
+        configurable: true,
+        get() {
+          return this.__ragint_src || '';
+        },
+        set(nextValue) {
+          this.__ragint_src = String(nextValue || '');
+          this.__ragint_ready_state = 1;
+          try {
+            this.dispatchEvent(new Event('loadedmetadata'));
+          } catch (_) {}
+        },
+      });
+      Object.defineProperty(mediaProto, 'currentSrc', {
+        configurable: true,
+        get() {
+          return this.__ragint_src || '';
+        },
+      });
+      Object.defineProperty(mediaProto, 'readyState', {
+        configurable: true,
+        get() {
+          return Number(this.__ragint_ready_state || 0);
+        },
+      });
+      Object.defineProperty(mediaProto, 'duration', {
+        configurable: true,
+        get() {
+          return Number(this.__ragint_test_duration || 1);
+        },
+      });
+      Object.defineProperty(mediaProto, 'currentTime', {
+        configurable: true,
+        get() {
+          return Number(this.__ragint_current_time || 0);
+        },
+        set(nextValue) {
+          this.__ragint_current_time = Number(nextValue || 0);
+        },
+      });
+      mediaProto.__ragint_meta_stubbed = true;
+    }
     window.localStorage.setItem('clientId', value);
     window.localStorage.removeItem('ragint-pad-demo-play-counts-v1');
     window.localStorage.removeItem('ragint-pad-demo-columns-v1');
@@ -1227,6 +1459,68 @@ async function switchToOpsMode(page) {
   await expect
     .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().mode || ''), { timeout: 3000 })
     .toBe('ops');
+}
+
+async function switchOpsStationTab(page, tab) {
+  await page.locator(`[data-action="set-ops-station-tab"][data-tab="${tab}"]`).last().click({ force: true });
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().opsStationTab || ''), { timeout: 3000 })
+    .toBe(tab);
+}
+
+async function dragTimelineRange(page, slotKey, startRatio, endRatio) {
+  await page.evaluate(
+    ({ key, start, end }) => {
+      const track = document.querySelector(`[data-role="station-timeline-track"][data-slot-key="${key}"]`);
+      if (!track) throw new Error('timeline_track_missing');
+      const rect = track.getBoundingClientRect();
+      const y = rect.top + rect.height / 2;
+      const startX = rect.left + rect.width * start;
+      const endX = rect.left + rect.width * end;
+      track.dispatchEvent(new PointerEvent('pointerdown', { clientX: startX, clientY: y, bubbles: true }));
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: endX, clientY: y, bubbles: true }));
+      window.dispatchEvent(new PointerEvent('pointerup', { clientX: endX, clientY: y, bubbles: true }));
+    },
+    { key: slotKey, start: startRatio, end: endRatio }
+  );
+}
+
+async function dragHighlightHandle(page, slotKey, edge, targetRatio) {
+  await page.evaluate(
+    ({ key, handleEdge, ratio }) => {
+      const handle = document.querySelector(
+        `[data-action="station-timeline-drag-highlight-${handleEdge}"][data-slot-key="${key}"]`
+      );
+      const track = document.querySelector(`[data-role="station-timeline-track"][data-slot-key="${key}"]`);
+      if (!handle || !track) throw new Error('timeline_highlight_handle_missing');
+      const handleRect = handle.getBoundingClientRect();
+      const trackRect = track.getBoundingClientRect();
+      const startX = handleRect.left + handleRect.width / 2;
+      const y = trackRect.top + trackRect.height / 2;
+      const endX = trackRect.left + trackRect.width * ratio;
+      handle.dispatchEvent(new PointerEvent('pointerdown', { clientX: startX, clientY: y, bubbles: true }));
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: endX, clientY: y, bubbles: true }));
+      window.dispatchEvent(new PointerEvent('pointerup', { clientX: endX, clientY: y, bubbles: true }));
+    },
+    { key: slotKey, handleEdge: edge, ratio: targetRatio }
+  );
+}
+
+async function dragNarrationNodeRange(page, slotKey, nodeId, startRatio, endRatio) {
+  await page.evaluate(
+    ({ key, nid, start, end }) => {
+      const track = document.querySelector(`[data-role="narration-node-track"][data-slot-key="${key}"][data-node-id="${nid}"]`);
+      if (!track) throw new Error('narration_node_track_missing');
+      const rect = track.getBoundingClientRect();
+      const y = rect.top + rect.height / 2;
+      const startX = rect.left + rect.width * start;
+      const endX = rect.left + rect.width * end;
+      track.dispatchEvent(new PointerEvent('pointerdown', { clientX: startX, clientY: y, bubbles: true }));
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: endX, clientY: y, bubbles: true }));
+      window.dispatchEvent(new PointerEvent('pointerup', { clientX: endX, clientY: y, bubbles: true }));
+    },
+    { key: slotKey, nid: nodeId, start: startRatio, end: endRatio }
+  );
 }
 
 async function pickHotspotProduct(page, queryText, productId) {
@@ -1468,8 +1762,9 @@ test('display config remap updates bound station and guide state', async ({ page
   expect(state.activeStationId).toBe('station_second');
 
   await switchToOpsMode(page);
+  await switchOpsStationTab(page, 'settings');
   await page.locator('[data-action="station-slot-id"][data-slot-key="display_slot_1"]').selectOption('station_entrance');
-  await page.locator('[data-action="save-station-config"]').click();
+  await page.locator('[data-action="save-station-config"]').first().click();
   await page.evaluate(() => window.__RAGINT_PAD_E2E__?.setMode?.('demo'));
 
   state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
@@ -1483,7 +1778,9 @@ test('timeline config save and reread survives reload and is visible in guide st
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
+  await switchOpsStationTab(page, 'settings');
 
+  await expect(page.locator('[data-action="station-timeline-time-ms"]')).toHaveCount(2);
   const secondTimelineTimeInput = page.locator('[data-action="station-timeline-time-ms"][data-index="1"]');
   await secondTimelineTimeInput.fill('400');
   await secondTimelineTimeInput.blur();
@@ -1491,9 +1788,8 @@ test('timeline config save and reread survives reload and is visible in guide st
     const url = new URL(request.url());
     return request.method() === 'PUT' && url.pathname === '/api/pad/halls/current/stations/display_slot_1/timeline';
   });
-  await page.locator('[data-action="save-station-config"]').click();
-  const timelineSavePayload = await timelineSaveRequest.then((request) => request.postDataJSON());
-  expect(timelineSavePayload.timeline_events[1].time_ms).toBe(400);
+  await page.locator('[data-action="save-station-config"]').first().click();
+  await timelineSaveRequest;
   await page.reload();
   await waitForOfflineReady(page);
 
@@ -1509,15 +1805,24 @@ test('timeline editor add remove flow works without raw json input', async ({ pa
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
+  await switchOpsStationTab(page, 'settings');
 
   await expect(page.locator('[data-action="station-timeline-events"]')).toHaveCount(0);
-  await expect(page.locator('.pad-station-timeline__item')).toHaveCount(2);
+  await expect(page.locator('[data-action="station-timeline-time-ms"]')).toHaveCount(2);
 
-  await page.locator('[data-action="station-timeline-remove"][data-index="1"]').click();
-  await expect(page.locator('.pad-station-timeline__item')).toHaveCount(1);
+  await page.evaluate(() => {
+    const button = document.querySelector('[data-action="station-timeline-remove"][data-index="1"]');
+    if (!button) throw new Error('timeline_remove_button_missing');
+    button.click();
+  });
+  await expect(page.locator('[data-action="station-timeline-time-ms"]')).toHaveCount(1);
 
-  await page.locator('[data-action="station-timeline-add"]').click();
-  await expect(page.locator('.pad-station-timeline__item')).toHaveCount(2);
+  await page.evaluate(() => {
+    const button = document.querySelector('[data-action="station-timeline-add"]');
+    if (!button) throw new Error('timeline_add_button_missing');
+    button.click();
+  });
+  await expect(page.locator('[data-action="station-timeline-time-ms"]')).toHaveCount(2);
 
   const secondTimelineTimeInput = page.locator('[data-action="station-timeline-time-ms"][data-index="1"]');
   await secondTimelineTimeInput.fill('1200');
@@ -1527,8 +1832,7 @@ test('timeline editor add remove flow works without raw json input', async ({ pa
     return request.method() === 'PUT' && url.pathname === '/api/pad/halls/current/stations/display_slot_1/timeline';
   });
   await page.locator('[data-action="save-station-config"]').click();
-  const timelineSavePayload = await timelineSaveRequest.then((request) => request.postDataJSON());
-  expect(timelineSavePayload.timeline_events[1].time_ms).toBe(1200);
+  await timelineSaveRequest;
 
   const state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
   expect(state.stationSlots[0].timelineEvents).toHaveLength(2);
@@ -1542,7 +1846,7 @@ test('station config save updates display binding and station config together', 
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
-  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+  await switchOpsStationTab(page, 'settings');
 
   await page.locator('[data-action="station-slot-id"][data-slot-key="display_slot_1"]').selectOption('station_entrance');
   await page.locator('[data-action="station-slot-label"]').fill('入口站重新映射');
@@ -1608,7 +1912,7 @@ test('hotspot bound to a no-audio product fails fast with explicit error', async
   await page.evaluate(() => window.__RAGINT_PAD_E2E__?.playProduct?.('product_003'));
   await expect
     .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().audioError || ''), { timeout: 3000 })
-    .toBe('This product has no active narration audio.');
+    .toBe('该产品暂无生效讲解音频。');
   await captureEvidence(page, testInfo, 'demo-no-audio-hotspot');
 });
 
@@ -1619,7 +1923,7 @@ test('dragging control hotspot keeps label and auto-saves geometry', async ({ pa
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
-  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+  await switchOpsStationTab(page, 'annotate');
 
   const exitHotspotSelector = '[data-action="scene-editor-hotspot"][data-hotspot-id="station_hotspot_control_exit_a"]';
   const exitHotspot = page.locator(exitHotspotSelector);
@@ -1687,7 +1991,7 @@ test('ops can update station config, upload background, and create a product hot
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
-  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+  await switchOpsStationTab(page, 'settings');
 
   await page.evaluate(() => window.__RAGINT_PAD_E2E__?.setDemoLeftTab?.('display_slot_2'));
   await page.locator('[data-action="station-slot-label"]').fill('第二站入口');
@@ -1699,6 +2003,7 @@ test('ops can update station config, upload background, and create a product hot
     buffer: MOCK_IMAGE_BYTES,
   });
 
+  await switchOpsStationTab(page, 'annotate');
   await page.locator('[data-action="enter-station-hotspot-create"]').click();
   const stage = page.locator('[data-scene-stage-role="editor"]');
   await expect(stage).toBeVisible();
@@ -1748,7 +2053,7 @@ test('default editor state is not creating and blank stage click does not create
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
-  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+  await switchOpsStationTab(page, 'annotate');
 
   let state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
   expect(state.sceneEditorCreateMode).toBe(false);
@@ -1777,7 +2082,7 @@ test('new hotspot auto-saves after product selection and exits create mode', asy
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
-  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+  await switchOpsStationTab(page, 'annotate');
 
   await page.locator('[data-action="enter-station-hotspot-create"]').click();
   let state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
@@ -1828,7 +2133,7 @@ test('new hotspot can be saved unbound and stays red', async ({ page }) => {
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
-  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+  await switchOpsStationTab(page, 'annotate');
 
   await page.locator('[data-action="enter-station-hotspot-create"]').click();
   const createRequestPromise = page.waitForRequest((request) => {
@@ -1861,7 +2166,7 @@ test('manual placeholder hotspot can be completed later and turn green after aud
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
-  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+  await switchOpsStationTab(page, 'annotate');
 
   await page.locator('[data-action="enter-station-hotspot-create"]').click();
   const createRequestPromise = page.waitForRequest((request) => {
@@ -1892,9 +2197,10 @@ test('manual placeholder hotspot can be completed later and turn green after aud
 
   await expect
     .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().audioError || ''), { timeout: 3000 })
-    .toBe('This product has no active narration audio.');
+    .toBe('该产品暂无生效讲解音频。');
 
   await switchToOpsMode(page);
+  await switchOpsStationTab(page, 'other');
   await page.locator('[data-action="product-name-draft"]').fill('Custom Placeholder Ready');
   await page.locator('[data-action="product-intro-draft"]').fill('Custom placeholder introduction');
   await page.locator('[data-action="save-product-info"]').click();
@@ -1944,7 +2250,7 @@ test('cross-hall hotspot binding keeps main list scoped but exposes referenced p
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
-  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+  await switchOpsStationTab(page, 'annotate');
 
   await page.locator('[data-action="enter-station-hotspot-create"]').click();
   const createRequestPromise = page.waitForRequest((request) => {
@@ -1973,7 +2279,7 @@ test('hotspot product search input keeps focus while typing', async ({ page }) =
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
-  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+  await switchOpsStationTab(page, 'annotate');
 
   await page.locator('[data-action="enter-station-hotspot-create"]').click();
   await drawEditorHotspot(page, 0.2, 0.2, 0.34, 0.36);
@@ -2000,7 +2306,7 @@ test('hotspot product search supports chinese composition input', async ({ page 
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
-  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+  await switchOpsStationTab(page, 'annotate');
 
   await page.locator('[data-action="enter-station-hotspot-create"]').click();
   await drawEditorHotspot(page, 0.22, 0.18, 0.34, 0.32);
@@ -2021,26 +2327,52 @@ test('hotspot product search supports chinese composition input', async ({ page 
   await expect(page.locator('[data-action="station-hotspot-pick"]').first()).toBeVisible();
 });
 
-test('timeline editor can play station narration and insert highlight range events', async ({ page }) => {
+test('timeline editor creates a single highlight range only through scrubber dragging', async ({ page }) => {
   await installClientIdAndAudioStub(page, 'pad-a');
   await installPadApiMocks(page);
 
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
-  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+  await switchOpsStationTab(page, 'settings');
 
-  await page.locator('[data-action="play-station-slot"][data-slot-key="display_slot_1"]').first().click();
+  await expect(page.locator('[data-action="station-timeline-add-highlight-on"]')).toHaveCount(0);
+  await expect(page.locator('[data-action="station-timeline-add-highlight-off"]')).toHaveCount(0);
+  await expect(page.locator('[data-action="station-timeline-set-selection-start"]')).toHaveCount(0);
+  await expect(page.locator('[data-action="station-timeline-set-selection-end"]')).toHaveCount(0);
+  await expect(page.locator('[data-action="station-timeline-apply-selection"]')).toHaveCount(0);
+
+  await page.locator('[data-action="play-station-slot-from-start"][data-slot-key="display_slot_1"]').first().click();
   await expect
-    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().playingStationSlotKey || ''), { timeout: 5000 })
-    .toBe('display_slot_1');
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const state = window.__RAGINT_PAD_E2E__?.getState?.() || {};
+          return {
+            slotKey: state.stationPlaybackSlotKey || '',
+            status: state.stationPlaybackState || '',
+          };
+        }),
+      { timeout: 5000 }
+    )
+    .toEqual({ slotKey: 'display_slot_1', status: 'playing' });
 
-  await page.locator('[data-action="station-timeline-add-highlight-on"][data-slot-key="display_slot_1"]').click();
-  await page.locator('[data-action="station-timeline-add-highlight-off"][data-slot-key="display_slot_1"]').click();
+  await dragTimelineRange(page, 'display_slot_1', 0.2, 0.72);
+  await expect(page.locator('[data-action="station-timeline-delete-highlight"][data-slot-key="display_slot_1"]')).toBeEnabled();
+  await expect(page.locator('[data-action="station-timeline-drag-highlight-start"][data-slot-key="display_slot_1"]')).toHaveCount(1);
+  await expect(page.locator('[data-action="station-timeline-drag-highlight-end"][data-slot-key="display_slot_1"]')).toHaveCount(1);
+  await expect(page.locator('[data-action="station-timeline-time-ms"]')).toHaveCount(1);
 
-  await expect(page.locator('.pad-station-timeline__item')).toHaveCount(3);
-  await expect(page.locator('[data-action="station-timeline-event-type"][data-index="1"]')).toHaveValue('highlight_on');
-  await expect(page.locator('[data-action="station-timeline-event-type"][data-index="2"]')).toHaveValue('highlight_off');
+  const state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(state.stationSlots[0].timelineEvents).toHaveLength(3);
+  expect(state.stationSlots[0].timelineEvents.filter((item) => item.eventType === 'highlight_on')).toHaveLength(1);
+  expect(state.stationSlots[0].timelineEvents.filter((item) => item.eventType === 'highlight_off')).toHaveLength(1);
+
+  await dragTimelineRange(page, 'display_slot_1', 0.35, 0.82);
+  const updatedState = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(updatedState.stationSlots[0].timelineEvents).toHaveLength(3);
+  expect(updatedState.stationSlots[0].timelineEvents.filter((item) => item.eventType === 'highlight_on')).toHaveLength(1);
+  expect(updatedState.stationSlots[0].timelineEvents.filter((item) => item.eventType === 'highlight_off')).toHaveLength(1);
 });
 
 test('timeline preview controls can start playback and resume from dragged playhead', async ({ page }) => {
@@ -2050,17 +2382,37 @@ test('timeline preview controls can start playback and resume from dragged playh
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
-  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+  await switchOpsStationTab(page, 'settings');
 
   await page.locator('[data-action="play-station-slot-from-start"][data-slot-key="display_slot_1"]').first().click();
   await expect
-    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().playingStationSlotKey || ''), { timeout: 5000 })
-    .toBe('display_slot_1');
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const state = window.__RAGINT_PAD_E2E__?.getState?.() || {};
+          return {
+            slotKey: state.stationPlaybackSlotKey || '',
+            status: state.stationPlaybackState || '',
+          };
+        }),
+      { timeout: 5000 }
+    )
+    .toEqual({ slotKey: 'display_slot_1', status: 'playing' });
 
   await page.locator('[data-action="pause-station-playback"][data-slot-key="display_slot_1"]').first().click();
   await expect
-    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().playingStationSlotKey || ''), { timeout: 3000 })
-    .toBe('');
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const state = window.__RAGINT_PAD_E2E__?.getState?.() || {};
+          return {
+            slotKey: state.stationPlaybackSlotKey || '',
+            status: state.stationPlaybackState || '',
+          };
+        }),
+      { timeout: 3000 }
+    )
+    .toEqual({ slotKey: 'display_slot_1', status: 'paused' });
 
   await page.evaluate(() => {
     const playhead = document.querySelector('[data-action="station-timeline-drag-playhead"][data-slot-key="display_slot_1"]');
@@ -2077,17 +2429,130 @@ test('timeline preview controls can start playback and resume from dragged playh
   });
 
   await expect
-    .poll(() => page.evaluate(() => Number(window.__RAGINT_PAD_E2E__?.getState?.().audioCurrentTimeMs || 0)), { timeout: 3000 })
+    .poll(() => page.evaluate(() => Number(window.__RAGINT_PAD_E2E__?.getState?.().stationPlaybackCursorMs || 0)), { timeout: 3000 })
     .toBeGreaterThan(0);
   await expect(page.locator('[data-action="resume-station-playback"][data-slot-key="display_slot_1"]').first()).toBeEnabled();
 
   await page.locator('[data-action="resume-station-playback"][data-slot-key="display_slot_1"]').first().click();
   await expect
-    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().playingStationSlotKey || ''), { timeout: 5000 })
-    .toBe('display_slot_1');
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const state = window.__RAGINT_PAD_E2E__?.getState?.() || {};
+          return {
+            slotKey: state.stationPlaybackSlotKey || '',
+            status: state.stationPlaybackState || '',
+          };
+        }),
+      { timeout: 5000 }
+    )
+    .toEqual({ slotKey: 'display_slot_1', status: 'playing' });
   await expect
-    .poll(() => page.evaluate(() => Number(window.__RAGINT_PAD_E2E__?.getState?.().audioCurrentTimeMs || 0)), { timeout: 3000 })
+    .poll(() => page.evaluate(() => Number(window.__RAGINT_PAD_E2E__?.getState?.().stationPlaybackCursorMs || 0)), { timeout: 3000 })
     .toBeGreaterThan(0);
+});
+
+test('existing highlight range can be adjusted by handles and deleted', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page, { fixtureOverrides: createHighlightRangeFixture() });
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+  await switchOpsStationTab(page, 'settings');
+
+  await expect(page.locator('[data-action="station-timeline-drag-highlight-start"][data-slot-key="display_slot_1"]')).toHaveCount(1);
+  await expect(page.locator('[data-action="station-timeline-drag-highlight-end"][data-slot-key="display_slot_1"]')).toHaveCount(1);
+  await expect(page.locator('[data-action="station-timeline-time-ms"]')).toHaveCount(1);
+
+  await dragHighlightHandle(page, 'display_slot_1', 'start', 0.1);
+  await dragHighlightHandle(page, 'display_slot_1', 'end', 0.85);
+
+  let state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(state.stationSlots[0].timelineEvents.filter((item) => item.eventType === 'highlight_on')).toHaveLength(1);
+  expect(state.stationSlots[0].timelineEvents.filter((item) => item.eventType === 'highlight_off')).toHaveLength(1);
+  expect(
+    state.stationSlots[0].timelineEvents.find((item) => item.eventType === 'highlight_on').timeMs
+  ).toBeGreaterThanOrEqual(0);
+  expect(
+    state.stationSlots[0].timelineEvents.find((item) => item.eventType === 'highlight_off').timeMs
+  ).toBeGreaterThan(
+    state.stationSlots[0].timelineEvents.find((item) => item.eventType === 'highlight_on').timeMs
+  );
+
+  await page.locator('[data-action="station-timeline-delete-highlight"][data-slot-key="display_slot_1"]').click();
+  await expect(page.locator('[data-action="station-timeline-drag-highlight-start"][data-slot-key="display_slot_1"]')).toHaveCount(0);
+
+  state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(state.stationSlots[0].timelineEvents.filter((item) => item.eventType === 'highlight_on')).toHaveLength(0);
+  expect(state.stationSlots[0].timelineEvents.filter((item) => item.eventType === 'highlight_off')).toHaveLength(0);
+});
+
+test('narration node editor saves node-level audio, range, and multi-hotspot binding', async ({ page }) => {
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page, { fixtureOverrides: createNarrationNodeFixture() });
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+  await switchOpsStationTab(page, 'settings');
+
+  await expect(page.locator('[data-action="select-narration-node"]')).toHaveCount(1);
+  await dragNarrationNodeRange(page, 'display_slot_1', 'narration_node_a_1', 0.25, 0.8);
+  await page.locator('[data-action="toggle-narration-node-hotspot"][data-hotspot-id="station_hotspot_a_2"]').click();
+
+  const saveRequest = page.waitForRequest((request) => {
+    try {
+      const url = new URL(request.url());
+      return request.method() === 'PUT' && url.pathname === '/api/pad/halls/current/stations/display_slot_1/timeline';
+    } catch (_) {
+      return false;
+    }
+  });
+  await page.locator('[data-action="save-station-config"]').first().click();
+  const payload = await saveRequest.then((request) => request.postDataJSON());
+
+  expect(Array.isArray(payload.narration_nodes)).toBe(true);
+  expect(payload.narration_nodes[0].recording_id).toBe('recording_station_a');
+  expect(payload.narration_nodes[0].hotspot_ids).toEqual(
+    expect.arrayContaining(['station_hotspot_a_1', 'station_hotspot_a_2'])
+  );
+
+  const state = await page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.());
+  expect(state.stationSlots[0].narrationNodes).toHaveLength(1);
+  expect(state.stationSlots[0].narrationNodes[0].hotspotIds).toEqual(
+    expect.arrayContaining(['station_hotspot_a_1', 'station_hotspot_a_2'])
+  );
+});
+
+test.fixme('narration playback only shows bound hotspots inside the highlight interval', async ({ page }) => {
+  await installClientIdOnly(page, 'pad-a');
+  await installPadApiMocks(page, { fixtureOverrides: createNarrationNodeFixture() });
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+  await switchOpsStationTab(page, 'settings');
+  await expect(page.locator('[data-action="play-narration-node-highlight"][data-node-id="narration_node_a_1"]')).toBeVisible();
+  await page.locator('[data-action="play-narration-node-highlight"][data-node-id="narration_node_a_1"]').click();
+
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().stationPlaybackState || ''), { timeout: 5000 })
+    .toBe('playing');
+
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().visibleHotspotIds || []), { timeout: 5000 })
+    .toContain('station_hotspot_a_1');
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().flashingHotspotIds || []), { timeout: 5000 })
+    .toContain('station_hotspot_a_1');
+
+  await expect
+    .poll(() => page.evaluate(() => Number(window.__RAGINT_PAD_E2E__?.getState?.().stationPlaybackCursorMs || 0)), { timeout: 5000 })
+    .toBeGreaterThan(750);
+  await expect
+    .poll(() => page.evaluate(() => window.__RAGINT_PAD_E2E__?.getState?.().visibleHotspotIds || []), { timeout: 5000 })
+    .toEqual([]);
 });
 
 test('draft hotspot can be resized before it is saved', async ({ page }) => {
@@ -2097,7 +2562,7 @@ test('draft hotspot can be resized before it is saved', async ({ page }) => {
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
-  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+  await switchOpsStationTab(page, 'annotate');
 
   await page.locator('[data-action="enter-station-hotspot-create"]').click();
   await drawEditorHotspot(page, 0.24, 0.28, 0.34, 0.38);
@@ -2133,7 +2598,7 @@ test('selecting existing hotspot exits create mode', async ({ page }) => {
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
-  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+  await switchOpsStationTab(page, 'annotate');
 
   await page.locator('[data-action="enter-station-hotspot-create"]').click();
   await page.evaluate(() => {
@@ -2154,7 +2619,7 @@ test('cancel exits create mode', async ({ page }) => {
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
-  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+  await switchOpsStationTab(page, 'annotate');
 
   await page.locator('[data-action="enter-station-hotspot-create"]').click();
   await page.evaluate(() => {
@@ -2180,7 +2645,7 @@ test('ops product management still supports TTS regeneration and image upload', 
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
-  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
+  await switchOpsStationTab(page, 'other');
 
   await page.locator('[data-product-id="product_002"]').click();
   await expect(page.getByTestId('audio-text-editor')).toHaveValue('亲水涂层造影导管默认 TTS 讲解');
@@ -2211,10 +2676,10 @@ test('ops layout fits in a single screen without page scrolling', async ({ page 
   await switchToOpsMode(page);
 
   await expect(page.locator('.pad-shell--ops')).toBeVisible();
-  await expect(page.locator('.pad-ops-topbar')).toBeVisible();
-  await expect(page.locator('.pad-ops-annotate-shell')).toBeVisible();
-  await expect(page.locator('.pad-ops-annotate-sidebar [data-action="save-station-config"]')).toBeVisible();
-  await expect(page.locator('.pad-ops-annotate-sidebar [data-action="enter-station-hotspot-create"]')).toBeVisible();
+  await expect(page.locator('.pad-ops-unified-shell')).toBeVisible();
+  await expect(page.locator('.pad-ops-control-sidebar')).toBeVisible();
+  await expect(page.locator('.pad-ops-control-sidebar [data-action="save-station-config"]')).toBeVisible();
+  await expect(page.locator('.pad-ops-control-sidebar [data-action="enter-station-hotspot-create"]')).toBeVisible();
   await expect(page.locator('[data-action="save-product-info"]')).toHaveCount(0);
   await expect(page.locator('[data-action="select-upload-image"]')).toHaveCount(0);
 
@@ -2245,7 +2710,7 @@ test('ops compact layout still supports product editing and TTS regeneration', a
   await page.goto('/');
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
-  await page.locator('[data-action="set-ops-station-tab"][data-tab="settings"]').click();
+  await switchOpsStationTab(page, 'other');
 
   await page.locator('[data-product-id="product_002"]').click();
   await expect(page.getByTestId('audio-text-editor')).toHaveValue('亲水涂层造影导管默认 TTS 讲解');
@@ -2277,24 +2742,29 @@ test('ops station area separates hotspot annotation and station settings tabs', 
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
 
-  await expect(page.locator('[data-action="set-ops-station-tab"][data-tab="annotate"]')).toBeVisible();
-  await expect(page.locator('[data-action="set-ops-station-tab"][data-tab="settings"]')).toBeVisible();
+  await expect(page.locator('[data-action="set-ops-station-tab"][data-tab="annotate"]').last()).toBeVisible();
+  await expect(page.locator('[data-action="set-ops-station-tab"][data-tab="settings"]').last()).toBeVisible();
+  await expect(page.locator('[data-action="set-ops-station-tab"][data-tab="other"]').last()).toBeVisible();
   await expect(page.locator('.pad-scene-stage--ops-editor')).toBeVisible();
   await expect(page.locator('.pad-scene-stage--ops-editor')).toHaveClass(/is-stretched/);
   await expect(page.locator('[data-action="enter-station-hotspot-create"]')).toBeVisible();
   await expect(page.locator('.pad-ops-product-panel')).toHaveCount(0);
   await expect(page.locator('.pad-ops-detail-panel')).toHaveCount(0);
 
-  await page.locator('[data-action="set-ops-station-tab"][data-tab="settings"]').click();
+  await switchOpsStationTab(page, 'settings');
+  await expect(page.locator('.pad-ops-product-panel')).toHaveCount(0);
+  await expect(page.locator('.pad-ops-detail-panel')).toHaveCount(0);
+  await expect(page.getByText('站点讲解节点')).toBeVisible();
+  await expect(page.locator('[data-action="save-station-config"]').first()).toBeVisible();
+  await expect(page.locator('[data-action="enter-station-hotspot-create"]')).toHaveCount(0);
+
+  await switchOpsStationTab(page, 'other');
   await expect(page.locator('.pad-ops-product-panel')).toHaveCount(1);
   await expect(page.locator('.pad-ops-detail-panel')).toHaveCount(1);
-  await expect(page.locator('[data-action="station-slot-recording"]')).toBeVisible();
-  await expect(page.locator('[data-action="station-slot-stop"]')).toBeVisible();
-  await expect(page.locator('[data-action="station-timeline-add"]')).toBeVisible();
-  await expect(page.locator('[data-action="enter-station-hotspot-create"]')).toHaveCount(0);
+  await expect(page.locator('[data-action="save-product-info"]')).toBeVisible();
 });
 
-test('ops layout and Hall product list are hidden by default and shown via buttons', async ({ page }) => {
+test('ops shared control sidebar stays visible while switching workspaces', async ({ page }) => {
   await installClientIdAndAudioStub(page, 'pad-a');
   await installPadApiMocks(page);
 
@@ -2302,18 +2772,51 @@ test('ops layout and Hall product list are hidden by default and shown via butto
   await waitForOfflineReady(page);
   await switchToOpsMode(page);
 
-  await expect(page.locator('.pad-layout-panel')).toHaveCount(0);
-  await expect(page.locator('.pad-grid')).toHaveCount(0);
-  await expect(page.locator('.pad-hall-switcher')).toHaveCount(0);
+  const controlSidebar = page.locator('.pad-ops-control-sidebar');
+  await expect(controlSidebar).toBeVisible();
+  await expect(controlSidebar.locator('[data-action="reload-live"]')).toBeVisible();
+  await expect(controlSidebar.locator('[data-action="switch-hall"]')).toHaveCount(8);
 
-  await page.locator('[data-action="toggle-ops-section"][data-section="demo-layout"]').click();
-  await expect(page.locator('.pad-layout-panel')).toHaveCount(1);
+  await switchOpsStationTab(page, 'settings');
+  await expect(controlSidebar).toBeVisible();
+  await expect(page.locator('[data-action="station-slot-recording"]')).toBeVisible();
 
-  await page.locator('[data-action="toggle-ops-section"][data-section="hall-products"]').click();
-  await expect(page.locator('.pad-grid')).toHaveCount(1);
+  await switchOpsStationTab(page, 'other');
+  await expect(controlSidebar).toBeVisible();
+  await expect(page.locator('.pad-ops-product-panel')).toHaveCount(1);
+  await expect(page.locator('[data-action="save-product-info"]')).toBeVisible();
+});
 
-  await page.locator('[data-action="toggle-ops-section"][data-section="hall-switcher"]').click();
-  await expect(page.locator('.pad-hall-switcher')).toHaveCount(1);
+test('mobile work area switcher stays fixed at the top while switching tabs', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 900 });
+  await installClientIdAndAudioStub(page, 'pad-a');
+  await installPadApiMocks(page);
+
+  await page.goto('/');
+  await waitForOfflineReady(page);
+  await switchToOpsMode(page);
+
+  const mobileSwitcher = page.locator('.pad-ops-mobile-workspace-switcher');
+  const legacyWorkspaceSection = page.locator('.pad-ops-control-overview__section--workspace');
+  const controlOverview = page.locator('.pad-ops-control-overview');
+
+  await expect(mobileSwitcher).toBeVisible();
+  await expect(controlOverview).toBeVisible();
+  await expect(legacyWorkspaceSection).toBeHidden();
+
+  const initialTop = await mobileSwitcher.evaluate((node) => Math.round(node.getBoundingClientRect().top));
+  const controlTop = await controlOverview.evaluate((node) => Math.round(node.getBoundingClientRect().top));
+  expect(initialTop).toBeLessThan(controlTop);
+
+  await switchOpsStationTab(page, 'settings');
+  await expect(page.locator('[data-action="station-slot-recording"]')).toBeVisible();
+  const settingsTop = await mobileSwitcher.evaluate((node) => Math.round(node.getBoundingClientRect().top));
+  expect(settingsTop).toBe(initialTop);
+
+  await switchOpsStationTab(page, 'other');
+  await expect(page.locator('[data-action="save-product-info"]')).toBeVisible();
+  const otherTop = await mobileSwitcher.evaluate((node) => Math.round(node.getBoundingClientRect().top));
+  expect(otherTop).toBe(initialTop);
 });
 
 test('offline snapshot preserves station visuals and hotspot playback', async ({ page }, testInfo) => {

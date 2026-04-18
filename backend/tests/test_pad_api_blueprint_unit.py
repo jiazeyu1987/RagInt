@@ -572,6 +572,7 @@ def test_station_endpoints_roundtrip_and_manifest_payload(work_dir: Path):
     assert station_body[0]["background"]["width"] == 1
     assert station_body[0]["wireframe"]["width"] == 1
     assert any(item["hotspot_id"] == hotspot["hotspot_id"] for item in station_body[0]["hotspots"])
+    assert station_body[0]["narration_nodes"] == []
 
     update_station = client.put(
         "/api/pad/halls/current/stations/display_slot_1",
@@ -625,26 +626,28 @@ def test_station_endpoints_roundtrip_and_manifest_payload(work_dir: Path):
         "/api/pad/halls/current/stations/display_slot_1/timeline",
         headers={"X-Client-ID": "pad-a"},
         json={
-            "timeline_events": [
+            "narration_nodes": [
                 {
                     "sort_order": 0,
-                    "time_ms": 0,
-                    "product_id": "product_001",
-                    "station_hotspot_id": hotspot["hotspot_id"],
-                    "event_type": "focus_switch",
+                    "recording_id": "recording_002",
+                    "stop_index": 1,
+                    "stop_name": "Narration Stop",
+                    "highlight_start_ms": 0,
+                    "highlight_end_ms": 800,
+                    "hotspot_ids": [hotspot["hotspot_id"]],
                 }
             ]
         },
     )
     assert timeline.status_code == 200
-    assert timeline.get_json()["timeline_events"][0]["station_hotspot_id"] == hotspot["hotspot_id"]
+    assert timeline.get_json()["narration_nodes"][0]["hotspot_ids"] == [hotspot["hotspot_id"]]
 
     manifest = client.get("/api/pad/offline/manifest", headers={"X-Client-ID": "pad-a"})
     assert manifest.status_code == 200
     manifest_body = manifest.get_json()
     assert len(manifest_body["stations"]) == 2
     assert manifest_body["stations"][0]["background"]["image_url"].startswith("/api/pad/offline/stations/display_slot_1/background")
-    assert manifest_body["stations"][0]["timeline_events"][0]["station_hotspot_id"] == hotspot["hotspot_id"]
+    assert manifest_body["stations"][0]["narration_nodes"][0]["hotspot_ids"] == [hotspot["hotspot_id"]]
 
     offline_background = client.get("/api/pad/offline/stations/display_slot_1/background", headers={"X-Client-ID": "pad-a"})
     assert offline_background.status_code == 200
@@ -656,6 +659,32 @@ def test_station_endpoints_roundtrip_and_manifest_payload(work_dir: Path):
         headers={"X-Client-ID": "pad-a"},
     )
     assert delete_hotspot.status_code == 200
+
+
+def test_station_timeline_route_rejects_legacy_timeline_events_payload(work_dir: Path):
+    app, deps = _build_app(work_dir)
+    _seed_products_and_bindings(deps)
+    hotspot = _seed_station_assets(deps)
+    client = app.test_client()
+
+    response = client.put(
+        "/api/pad/halls/current/stations/display_slot_1/timeline",
+        headers={"X-Client-ID": "pad-a"},
+        json={
+            "timeline_events": [
+                {
+                    "sort_order": 0,
+                    "time_ms": 0,
+                    "product_id": "product_001",
+                    "station_hotspot_id": hotspot["hotspot_id"],
+                    "event_type": "focus_switch",
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "timeline_events_not_supported"
 
 
 def test_station_wireframe_requires_background_and_allows_cross_hall_product_binding(work_dir: Path):

@@ -439,6 +439,244 @@ def test_station_timeline_events_roundtrip(work_dir: Path):
     assert store.list_station_narration_timeline_events(hall_id="hall_01", station_id="station_a")[0]["product_id"] == "product_001"
 
 
+def test_station_narration_nodes_roundtrip_supports_multi_hotspot_binding(work_dir: Path):
+    store = _store(work_dir)
+    store.replace_hall_products(
+        hall_id="hall_01",
+        products=[
+            _product(product_id="product_001", sort_order=1, name="Product A"),
+            _product(product_id="product_002", sort_order=2, name="Product B"),
+        ],
+    )
+    store.upsert_station_config(
+        hall_id="hall_01",
+        station_key="station_a",
+        label="Station A",
+        recording_id="recording_station_default",
+        stop_index=0,
+        stop_name="Default Stop",
+    )
+    hotspot_a = store.create_station_hotspot(
+        hall_id="hall_01",
+        station_key="station_a",
+        product_id="product_001",
+        sort_order=1,
+        x_pct=0.1,
+        y_pct=0.2,
+        width_pct=0.2,
+        height_pct=0.2,
+    )
+    hotspot_b = store.create_station_hotspot(
+        hall_id="hall_01",
+        station_key="station_a",
+        product_id="product_002",
+        sort_order=2,
+        x_pct=0.4,
+        y_pct=0.2,
+        width_pct=0.2,
+        height_pct=0.2,
+    )
+
+    nodes = store.replace_station_narration_nodes(
+        hall_id="hall_01",
+        station_id="station_a",
+        nodes=[
+            {
+                "sort_order": 0,
+                "recording_id": "recording_001",
+                "stop_index": 1,
+                "stop_name": "Stop 1",
+                "highlight_start_ms": 200,
+                "highlight_end_ms": 900,
+                "hotspot_ids": [hotspot_a["hotspot_id"], hotspot_b["hotspot_id"]],
+            },
+            {
+                "sort_order": 1,
+                "recording_id": "recording_002",
+                "stop_index": 0,
+                "stop_name": "Stop 2",
+                "highlight_start_ms": 100,
+                "highlight_end_ms": 500,
+                "hotspot_ids": [hotspot_b["hotspot_id"]],
+            },
+        ],
+    )
+
+    assert len(nodes) == 2
+    assert nodes[0]["recording_id"] == "recording_001"
+    assert nodes[0]["hotspot_ids"] == [hotspot_a["hotspot_id"], hotspot_b["hotspot_id"]]
+    assert nodes[1]["recording_id"] == "recording_002"
+    assert store.list_station_narration_nodes(hall_id="hall_01", station_id="station_a")[1]["highlight_end_ms"] == 500
+
+
+def test_station_narration_nodes_validate_required_fields(work_dir: Path):
+    store = _store(work_dir)
+    store.replace_hall_products(
+        hall_id="hall_01",
+        products=[_product(product_id="product_001", sort_order=1, name="Product A")],
+    )
+    store.upsert_station_config(
+        hall_id="hall_01",
+        station_key="station_a",
+        label="Station A",
+        recording_id="recording_station_default",
+        stop_index=0,
+        stop_name="Default Stop",
+    )
+    hotspot = store.create_station_hotspot(
+        hall_id="hall_01",
+        station_key="station_a",
+        product_id="product_001",
+        sort_order=1,
+        x_pct=0.1,
+        y_pct=0.2,
+        width_pct=0.2,
+        height_pct=0.2,
+    )
+
+    with pytest.raises(ValueError, match="narration_node_recording_required"):
+        store.replace_station_narration_nodes(
+            hall_id="hall_01",
+            station_id="station_a",
+            nodes=[
+                {
+                    "stop_index": 0,
+                    "highlight_start_ms": 100,
+                    "highlight_end_ms": 200,
+                    "hotspot_ids": [hotspot["hotspot_id"]],
+                }
+            ],
+        )
+
+    with pytest.raises(ValueError, match="narration_node_hotspots_required"):
+        store.replace_station_narration_nodes(
+            hall_id="hall_01",
+            station_id="station_a",
+            nodes=[
+                {
+                    "recording_id": "recording_001",
+                    "stop_index": 0,
+                    "highlight_start_ms": 100,
+                    "highlight_end_ms": 200,
+                    "hotspot_ids": [],
+                }
+            ],
+        )
+
+    with pytest.raises(ValueError, match="station_hotspot_not_found"):
+        store.replace_station_narration_nodes(
+            hall_id="hall_01",
+            station_id="station_a",
+            nodes=[
+                {
+                    "recording_id": "recording_001",
+                    "stop_index": 0,
+                    "highlight_start_ms": 100,
+                    "highlight_end_ms": 200,
+                    "hotspot_ids": ["station_hotspot_missing"],
+                }
+            ],
+        )
+
+
+def test_station_narration_nodes_migrate_pairable_legacy_timeline(work_dir: Path):
+    store = _store(work_dir)
+    store.replace_hall_products(
+        hall_id="hall_01",
+        products=[_product(product_id="product_001", sort_order=1, name="Product A")],
+    )
+    store.upsert_station_config(
+        hall_id="hall_01",
+        station_key="station_a",
+        label="Station A",
+        recording_id="recording_001",
+        stop_index=2,
+        stop_name="Stop A",
+    )
+    hotspot = store.create_station_hotspot(
+        hall_id="hall_01",
+        station_key="station_a",
+        product_id="product_001",
+        sort_order=1,
+        x_pct=0.1,
+        y_pct=0.2,
+        width_pct=0.2,
+        height_pct=0.2,
+    )
+    store.replace_station_narration_timeline_events(
+        hall_id="hall_01",
+        station_id="station_a",
+        events=[
+            {
+                "sort_order": 0,
+                "time_ms": 300,
+                "product_id": "product_001",
+                "station_hotspot_id": hotspot["hotspot_id"],
+                "event_type": "highlight_on",
+            },
+            {
+                "sort_order": 1,
+                "time_ms": 900,
+                "product_id": "product_001",
+                "station_hotspot_id": hotspot["hotspot_id"],
+                "event_type": "highlight_off",
+            },
+        ],
+    )
+
+    narration_state = store.get_station_narration_nodes_state(hall_id="hall_01", station_id="station_a")
+
+    assert narration_state["narration_nodes_error"] == ""
+    assert len(narration_state["narration_nodes"]) == 1
+    assert narration_state["narration_nodes"][0]["recording_id"] == "recording_001"
+    assert narration_state["narration_nodes"][0]["hotspot_ids"] == [hotspot["hotspot_id"]]
+    assert store.list_station_narration_timeline_events(hall_id="hall_01", station_id="station_a") == []
+
+
+def test_station_narration_nodes_report_invalid_legacy_timeline(work_dir: Path):
+    store = _store(work_dir)
+    store.replace_hall_products(
+        hall_id="hall_01",
+        products=[_product(product_id="product_001", sort_order=1, name="Product A")],
+    )
+    store.upsert_station_config(
+        hall_id="hall_01",
+        station_key="station_a",
+        label="Station A",
+        recording_id="recording_001",
+        stop_index=0,
+        stop_name="Stop A",
+    )
+    hotspot = store.create_station_hotspot(
+        hall_id="hall_01",
+        station_key="station_a",
+        product_id="product_001",
+        sort_order=1,
+        x_pct=0.1,
+        y_pct=0.2,
+        width_pct=0.2,
+        height_pct=0.2,
+    )
+    store.replace_station_narration_timeline_events(
+        hall_id="hall_01",
+        station_id="station_a",
+        events=[
+            {
+                "sort_order": 0,
+                "time_ms": 0,
+                "product_id": "product_001",
+                "station_hotspot_id": hotspot["hotspot_id"],
+                "event_type": "focus_switch",
+            }
+        ],
+    )
+
+    narration_state = store.get_station_narration_nodes_state(hall_id="hall_01", station_id="station_a")
+
+    assert narration_state["narration_nodes"] == []
+    assert narration_state["narration_nodes_error"] == "legacy_timeline_focus_switch_unsupported"
+
+
 def test_station_hotspot_validates_product_scope_and_custom_station_ids(work_dir: Path):
     store = _store(work_dir)
     store.replace_hall_products(

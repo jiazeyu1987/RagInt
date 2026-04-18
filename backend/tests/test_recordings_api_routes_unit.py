@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import uuid
+import wave
 from pathlib import Path
 
 import pytest
@@ -57,6 +58,16 @@ def _build_app(work_dir: Path) -> tuple[Flask, _Deps]:
     app = Flask(__name__)
     app.register_blueprint(create_blueprint(deps))
     return app, deps
+
+
+def _write_wav(path: Path, *, duration_ms: int = 1000, sample_rate: int = 16000) -> None:
+    frames = max(1, round((duration_ms / 1000) * sample_rate))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(b"\x00\x00" * frames)
 
 
 def test_recordings_start_requires_non_empty_stops(work_dir: Path):
@@ -119,6 +130,7 @@ def test_recordings_start_list_get_finish_roundtrip(work_dir: Path):
 def test_recordings_stop_payload_found_and_not_found(work_dir: Path):
     app, deps = _build_app(work_dir)
     deps.recording_store.create(recording_id="rec_stop", stops=["Stop A"])
+    _write_wav(deps.recording_store.audio_dir("rec_stop") / "s0.wav", duration_ms=1000)
     deps.recording_store.add_ask_event(recording_id="rec_stop", stop_index=0, request_id="ask_1", kind="chunk", text="chunk_a")
     deps.recording_store.add_tts_audio(
         recording_id="rec_stop",
@@ -138,6 +150,7 @@ def test_recordings_stop_payload_found_and_not_found(work_dir: Path):
     assert body["chunks"] == ["segment_a"]
     assert body["answer_text"] == "segment_a"
     assert len(body["segments"]) == 1
+    assert body["segments"][0]["duration_ms"] == 1000
 
     missing = c.get("/api/recordings/not_exist/stop/0")
     assert missing.status_code == 404
