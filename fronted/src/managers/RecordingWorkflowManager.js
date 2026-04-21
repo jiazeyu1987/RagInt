@@ -271,8 +271,8 @@ export class RecordingWorkflowManager {
             wake_word: wakeWord,
             wake_match_mode: wakeMatchMode,
             wake_cooldown_ms: wakeCooldownMs,
-            // Non-strict mode: allow a little leading filler like "嗯" before wake word.
-            // Strict mode: require wake word at the beginning.
+            // 非严格模式下，允许唤醒词前出现少量语气词，例如“嗯”。
+            // 严格模式要求唤醒词位于开头。
             wake_max_pos: strict ? 0 : 2,
             emit_prewake: false,
           }
@@ -376,7 +376,7 @@ export class RecordingWorkflowManager {
         const onWakeWordFeedback = this._deps.onWakeWordFeedback;
         if (requireWake && typeof onWakeWordFeedback === 'function') {
           try {
-            onWakeWordFeedback({ message: `ASR 错误：${safeTrim(msg)}` });
+            onWakeWordFeedback({ message: `语音识别错误：${safeTrim(msg)}` });
           } catch (_) {
             // ignore
           }

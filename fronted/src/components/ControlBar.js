@@ -175,7 +175,7 @@ export function ControlBar({
       ) : null}
 
       {guideEnabled ? (
-        <label className="tts-toggle" title="开始讲解时创建一个存档，保存RAGFlow chunk/segment/done 与对应的TTS wav">
+        <label className="tts-toggle" title="开始讲解时创建一个存档，保存 RAGFlow 的分块、分段、完成事件及对应语音。">
           <input
             type="checkbox"
             checked={!!tourRecordingEnabled}
@@ -186,7 +186,7 @@ export function ControlBar({
       ) : null}
 
       {guideEnabled ? (
-        <label className="tts-toggle" title="站点播报使用存档里的文字+语音，不再调用RAGFlow/TTS">
+        <label className="tts-toggle" title="站点播报使用存档中的文字和语音，不再调用 RAGFlow 或语音合成。">
           <input
             type="checkbox"
             checked={!!playTourRecordingEnabled}
@@ -225,21 +225,21 @@ export function ControlBar({
       ) : null}
 
       <>
-        <label className="tts-toggle" title="Wake word via backend streaming ASR (VoiceKit WebSocket).">
+        <label className="tts-toggle" title="通过后端流式语音识别启用唤醒词（VoiceKit WebSocket）。">
         <input type="checkbox" checked={!!wakeWordEnabled} onChange={(e) => onChangeWakeWordEnabled && onChangeWakeWordEnabled(e.target.checked)} />
-        <span>Wake Word</span>
+        <span>唤醒词</span>
       </label>
 
       {wakeWordEnabled ? (
         <label className="kb-select">
-          <span>Word</span>
-          <input value={String(wakeWord || '')} onChange={(e) => onChangeWakeWord && onChangeWakeWord(e.target.value)} placeholder="e.g. 你好小R" />
+          <span>唤醒词</span>
+          <input value={String(wakeWord || '')} onChange={(e) => onChangeWakeWord && onChangeWakeWord(e.target.value)} placeholder="例如：你好小R" />
         </label>
       ) : null}
 
       {wakeWordEnabled ? (
         <label className="kb-select">
-          <span>Cooldown(ms)</span>
+          <span>冷却时间（毫秒）</span>
           <input
             value={String(wakeWordCooldownMs)}
             onChange={(e) => onChangeWakeWordCooldownMs && onChangeWakeWordCooldownMs(Number(e.target.value) || 0)}
@@ -249,9 +249,9 @@ export function ControlBar({
       ) : null}
 
       {wakeWordEnabled ? (
-        <label className="tts-toggle" title="Strict mode uses prefix match to reduce false triggers.">
+        <label className="tts-toggle" title="严格模式使用前缀匹配，可减少误触发。">
           <input type="checkbox" checked={!!wakeWordStrict} onChange={(e) => onChangeWakeWordStrict && onChangeWakeWordStrict(e.target.checked)} />
-          <span>Strict</span>
+          <span>严格匹配</span>
         </label>
       ) : null}
       </>

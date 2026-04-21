@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import shutil
+import uuid
 from pathlib import Path
 
+import pytest
+
 from backend.services.ragflow_config_store import RagflowConfigStore
-from backend.services.ragflow_service import RagflowService
+from backend.services.ragflow_service import RagflowInitError, RagflowService
 
 
 class _Session:
@@ -221,3 +225,36 @@ def test_env_bootstrap_used_only_when_db_empty(tmp_path, monkeypatch):
     monkeypatch.setenv("RAGFLOW_API_KEY", "env_key_changed")
     loaded2 = svc.load_config(force=True)
     assert loaded2["api_key"] == "env_key"
+
+
+def test_init_raises_clear_error_when_base_url_is_unreachable(monkeypatch):
+    temp_root = (Path(__file__).resolve().parent.parent / "data" / "tmp_test_rw").resolve()
+    temp_root.mkdir(parents=True, exist_ok=True)
+    temp_dir = temp_root / f"ragflow_init_{uuid.uuid4().hex}"
+    temp_dir.mkdir(parents=True, exist_ok=False)
+    store = RagflowConfigStore(temp_dir / "ragflow_config.db")
+    store.upsert(config={"api_key": "db_key", "base_url": "http://127.0.0.1:9380"})
+    svc = RagflowService(temp_dir / "missing.json", logger=_Logger(), config_store=store)
+
+    def fail_create_connection(_address, timeout=None):  # noqa: ANN001
+        raise ConnectionRefusedError("[WinError 10061] 由于目标计算机积极拒绝，无法连接。")
+
+    def fail_ragflow_ctor(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("RAGFlow SDK should not be constructed when base_url is unreachable")
+
+    monkeypatch.setattr("backend.services.ragflow_service.socket.create_connection", fail_create_connection)
+    monkeypatch.setattr("backend.services.ragflow_service.RAGFlow", fail_ragflow_ctor)
+
+    try:
+        with pytest.raises(RagflowInitError) as exc:
+            svc.init()
+
+        err = exc.value
+        assert err.code == "ragflow_base_url_unreachable"
+        assert err.details["base_url"] == "http://127.0.0.1:9380"
+        assert err.details["host"] == "127.0.0.1"
+        assert err.details["port"] == 9380
+        assert "http://127.0.0.1:9380" in str(err)
+        assert "请先启动 RAGFlow 服务" in str(err)
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)

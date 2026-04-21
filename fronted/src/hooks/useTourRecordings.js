@@ -85,7 +85,7 @@ export function useTourRecordings({
         body: JSON.stringify({ display_name: String(next || '').trim() }),
       });
     } catch (e) {
-      alert(String((e && e.message) || e || 'rename_failed'));
+      alert(String((e && e.message) || e || '重命名失败'));
     }
     await refreshTourRecordings();
   }, [refreshTourRecordings, selectedTourRecordingIdRef]);
@@ -93,7 +93,7 @@ export function useTourRecordings({
   const deleteSelectedTourRecording = useCallback(async () => {
     const rid = String(selectedTourRecordingIdRef && selectedTourRecordingIdRef.current ? selectedTourRecordingIdRef.current : '').trim();
     if (!rid) return;
-    const ok = window.confirm('确认删除该存档？删除后无法恢复。');
+    const ok = window.confirm('确认删除该存档吗？删除后无法恢复。');
     if (!ok) return;
     try {
       await fetchJson(`/api/recordings/${encodeURIComponent(rid)}`, { method: 'DELETE' });
@@ -101,7 +101,7 @@ export function useTourRecordings({
         if (typeof setSelectedTourRecordingId === 'function') setSelectedTourRecordingId('');
       }
     } catch (e) {
-      alert(String((e && e.message) || e || 'delete_failed'));
+      alert(String((e && e.message) || e || '删除失败'));
     }
     await refreshTourRecordings();
   }, [refreshTourRecordings, selectedTourRecordingIdRef, setSelectedTourRecordingId]);

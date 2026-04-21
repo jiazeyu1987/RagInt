@@ -8,12 +8,12 @@ import { RecordingArchivePreviewPanel } from './RecordingArchivePreviewPanel';
 import { fetchRagflowConfig, saveRagflowConfig } from '../api/backendClient';
 
 const TABS = [
-  { key: 'tts', label: 'TTS设置' },
-  { key: 'debug', label: 'Debug设置' },
+  { key: 'tts', label: '语音合成设置' },
+  { key: 'debug', label: '调试设置' },
   { key: 'ops', label: '运维设置' },
   { key: 'qa', label: '问答缓存' },
   { key: 'archive', label: '存档设置' },
-  { key: 'asr', label: 'ASR设置' },
+  { key: 'asr', label: '语音识别设置' },
   { key: 'mode', label: '讲解设置' },
   { key: 'stop_prompt', label: '站点提示词' },
   { key: 'template', label: '模板编辑' },
@@ -94,7 +94,7 @@ function normalizeStopPromptMap(value) {
 
 function TabBar({ activeTab, onTabChange }) {
   return (
-    <div className="settings-tabs" role="tablist" aria-label="Settings tabs">
+    <div className="settings-tabs" role="tablist" aria-label="设置标签页">
       {TABS.map((tab) => (
         <button
           key={tab.key}
@@ -530,7 +530,7 @@ function AsrTab({ controlBarProps }) {
             : c.asrRecognitionStage === 'wake_detected'
               ? '已检测到唤醒词'
               : c.asrRecognitionStage === 'streaming'
-                ? '正在发送到 ASR'
+                ? '正在发送到语音识别服务'
                 : c.asrRecognitionStage === 'final_received'
                   ? '已收到最终结果'
                   : c.asrRecognitionStage === 'final_timeout'
@@ -550,16 +550,16 @@ function AsrTab({ controlBarProps }) {
             : c.asrPostProcessStage === 'bypass_non_asr'
               ? '手动输入，跳过后处理'
               : c.asrPostProcessStage === 'pending_asr_matched'
-                ? '已匹配待处理 ASR 文本'
+                ? '已匹配待处理语音识别文本'
                 : '空闲';
   const postProcessEvents = Array.isArray(c.asrPostProcessEvents) ? c.asrPostProcessEvents : [];
 
   return (
     <>
-      <SettingsGroup title="ASR 运行状态">
+      <SettingsGroup title="语音识别运行状态">
         <div className="settings-form">
           <label className="settings-field">
-            <span>ASR 提供方</span>
+            <span>语音识别提供方</span>
             <select value={String(c.asrProviderType || 'voicekit_ws')} onChange={(e) => c.onChangeAsrProviderType && c.onChangeAsrProviderType(e.target.value)}>
               <option value="voicekit_ws">VoiceKit WebSocket</option>
               <option value="sauc_ws">SAUC WebSocket (Proxy)</option>
@@ -578,7 +578,7 @@ function AsrTab({ controlBarProps }) {
               </label>
 
               <label className="settings-field">
-                <span>Resource ID</span>
+                <span>资源 ID</span>
                 <input
                   value={String(c.saucResourceId || '')}
                   onChange={(e) => c.onChangeSaucResourceId && c.onChangeSaucResourceId(e.target.value)}
@@ -591,7 +591,7 @@ function AsrTab({ controlBarProps }) {
                 <input
                   value={String(c.saucAppKey || '')}
                   onChange={(e) => c.onChangeSaucAppKey && c.onChangeSaucAppKey(e.target.value)}
-                  placeholder="required"
+                  placeholder="必填"
                 />
               </label>
 
@@ -600,12 +600,12 @@ function AsrTab({ controlBarProps }) {
                 <input
                   value={String(c.saucAccessKey || '')}
                   onChange={(e) => c.onChangeSaucAccessKey && c.onChangeSaucAccessKey(e.target.value)}
-                  placeholder="required"
+                  placeholder="必填"
                 />
               </label>
 
               <label className="settings-field">
-                <span>Model Name</span>
+                <span>模型名称</span>
                 <input
                   value={String(c.saucModelName || 'bigmodel')}
                   onChange={(e) => c.onChangeSaucModelName && c.onChangeSaucModelName(e.target.value)}
@@ -614,7 +614,7 @@ function AsrTab({ controlBarProps }) {
               </label>
 
               <label className="settings-field">
-                <span>Packet Duration (ms)</span>
+                <span>分包时长（毫秒）</span>
                 <input
                   type="number"
                   min="50"
@@ -632,7 +632,7 @@ function AsrTab({ controlBarProps }) {
                   checked={!!c.saucEnableItn}
                   onChange={(e) => c.onChangeSaucEnableItn && c.onChangeSaucEnableItn(e.target.checked)}
                 />
-                <span>SAUC enable_itn</span>
+                <span>SAUC 启用 ITN</span>
               </label>
 
               <label className="settings-toggle">
@@ -641,7 +641,7 @@ function AsrTab({ controlBarProps }) {
                   checked={!!c.saucEnablePunc}
                   onChange={(e) => c.onChangeSaucEnablePunc && c.onChangeSaucEnablePunc(e.target.checked)}
                 />
-                <span>SAUC enable_punc</span>
+                <span>SAUC 启用标点</span>
               </label>
 
               <label className="settings-toggle">
@@ -650,7 +650,7 @@ function AsrTab({ controlBarProps }) {
                   checked={!!c.saucEnableDdc}
                   onChange={(e) => c.onChangeSaucEnableDdc && c.onChangeSaucEnableDdc(e.target.checked)}
                 />
-                <span>SAUC enable_ddc</span>
+                <span>SAUC 启用 DDC</span>
               </label>
 
               <label className="settings-toggle">
@@ -659,7 +659,7 @@ function AsrTab({ controlBarProps }) {
                   checked={!!c.saucShowUtterances}
                   onChange={(e) => c.onChangeSaucShowUtterances && c.onChangeSaucShowUtterances(e.target.checked)}
                 />
-                <span>SAUC show_utterances</span>
+                <span>SAUC 显示分句</span>
               </label>
 
               <label className="settings-toggle">
@@ -668,7 +668,7 @@ function AsrTab({ controlBarProps }) {
                   checked={!!c.saucEnableNonstream}
                   onChange={(e) => c.onChangeSaucEnableNonstream && c.onChangeSaucEnableNonstream(e.target.checked)}
                 />
-                <span>SAUC enable_nonstream</span>
+                <span>SAUC 启用非流式</span>
               </label>
             </>
           ) : null}
@@ -691,7 +691,7 @@ function AsrTab({ controlBarProps }) {
           {c.wakeWordEnabled ? (
             <label className="settings-field">
               <span>唤醒词</span>
-              <input value={String(c.wakeWord || '')} onChange={(e) => c.onChangeWakeWord && c.onChangeWakeWord(e.target.value)} placeholder="e.g. 你好小助手" />
+              <input value={String(c.wakeWord || '')} onChange={(e) => c.onChangeWakeWord && c.onChangeWakeWord(e.target.value)} placeholder="例如：你好小助手" />
             </label>
           ) : null}
 
@@ -717,7 +717,7 @@ function AsrTab({ controlBarProps }) {
           ) : null}
 
           <label className="settings-field">
-            <span>静音判定时长(ms)</span>
+            <span>静音判定时长（毫秒）</span>
             <input
               type="number"
               min="500"
@@ -761,7 +761,7 @@ function AsrTab({ controlBarProps }) {
                 />
               </label>
               <label className="settings-field">
-                <span>上下文Token上限</span>
+                <span>上下文 Token 上限</span>
                 <input
                   type="number"
                   min="2000"
@@ -791,7 +791,7 @@ function AsrTab({ controlBarProps }) {
 
           {c.asrAutoResumeAfterAnswerEnabled ? (
             <label className="settings-field">
-              <span>恢复等待时间(ms)</span>
+              <span>恢复等待时间（毫秒）</span>
               <input
                 type="number"
                 min="300"
@@ -857,7 +857,7 @@ function AsrTab({ controlBarProps }) {
         </div>
       </SettingsGroup>
 
-      <SettingsGroup title="ASR 文本过滤">
+      <SettingsGroup title="语音识别文本过滤">
         <div className="settings-form">
           <label className="settings-toggle">
             <input
@@ -874,7 +874,7 @@ function AsrTab({ controlBarProps }) {
               <input
                 value={String(c.asrTextFilterChatName || '')}
                 onChange={(e) => c.onChangeAsrTextFilterChatName && c.onChangeAsrTextFilterChatName(e.target.value)}
-                placeholder="语音模型"
+                placeholder="例如：语音问答"
               />
             </label>
           ) : null}
@@ -887,7 +887,7 @@ function AsrTab({ controlBarProps }) {
                 rows={2}
                 value={String(c.asrTextFilterTerms || '')}
                 onChange={(e) => c.onChangeAsrTextFilterTerms && c.onChangeAsrTextFilterTerms(e.target.value)}
-                placeholder="指引导丝, 指引导管"
+                placeholder="指引导丝，指引导管"
               />
             </label>
           ) : null}
@@ -902,13 +902,13 @@ function AsrTab({ controlBarProps }) {
                 onChange={(e) => c.onChangeAsrTextFilterPrompt && c.onChangeAsrTextFilterPrompt(e.target.value)}
                 placeholder="填写发送到 RAGFlow 纠错对话前使用的提示词。"
               />
-              <span className="settings-field-hint">这段提示词会先用于 ASR 纠错，再进行唤醒词判断和业务提交。</span>
+              <span className="settings-field-hint">这段提示词会先用于语音识别纠错，再进行唤醒词判断和业务提交。</span>
             </label>
           ) : null}
         </div>
       </SettingsGroup>
 
-      <SettingsGroup title="ASR 事件日志">
+      <SettingsGroup title="语音识别事件日志">
         <div className="settings-form">
           <div className="settings-field">
             <span>最近后处理事件</span>
@@ -919,7 +919,7 @@ function AsrTab({ controlBarProps }) {
                   const text = fields.text || fields.correctedText || fields.trigger || '';
                   return (
                     <div key={`${String(event && event.name) || 'evt'}_${idx}`}>
-                      {String(event && event.name) || 'event'}
+                      {String(event && event.name) || '事件'}
                       {text ? `: ${String(text)}` : ''}
                     </div>
                   );

@@ -224,7 +224,16 @@ def init_ragflow(*, deps: AppDeps, logger) -> bool:
         chat_manager.set_default_session(deps.session)
         return bool(ok)
     except Exception as e:
-        logger.error(f"RAGFlow初始化失败: {e}", exc_info=True)
+        deps.session = None
+        try:
+            from backend.services.ragflow_service import RagflowInitError
+
+            if isinstance(e, RagflowInitError):
+                logger.error("%s", e)
+                return False
+        except Exception:
+            pass
+        logger.error("RAGFlow初始化失败: %s", e, exc_info=True)
         return False
 
 

@@ -16,7 +16,6 @@ services:
       RAGINT_STATE_BACKEND: redis
       RAGINT_REDIS_URL: redis://redis:6379/0
       RAGINT_CORS_ORIGINS: http://localhost:4981,http://127.0.0.1:4981
-      RAGINT_CONFIG_PATH: /app/ragflow_demo/ragflow_config.json
       # Optional safety filter:
       # RAGINT_SENSITIVE_WORDS: 涉密词1,涉密词2
       # Provide secrets via env in deployment (examples):
@@ -25,9 +24,14 @@ services:
       # BAILIAN_API_KEY: ...
     volumes:
       - ./backend/data:/app/backend/data
-      - ./ragflow_demo/ragflow_config.json:/app/ragflow_demo/ragflow_config.json:ro
     ports:
       - "8101:8101"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8101/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
     depends_on:
       - redis
 
@@ -41,7 +45,8 @@ services:
     ports:
       - "4981:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   redis_data:

@@ -149,8 +149,8 @@ function buildTimelineItems(debugInfo, serverStatus, { ttsEnabled = true } = {})
     { key: 'qaMatchStart', label: '问题比对开始', value: formatElapsed(qaMatchStartMs), done: qaMatchStartMs != null },
     { key: 'qaMatchEnd', label: '问题比对完成', value: formatElapsed(qaMatchEndMs), done: qaMatchEndMs != null },
     { key: 'serverSubmit', label: '服务端提交', value: formatElapsed(serverSubmitMs), done: serverSubmitMs != null },
-    { key: 'ragRequest', label: 'RAG请求', value: formatElapsed(ragRequestMs), done: ragRequestMs != null },
-    { key: 'ragflowFirstChunkAt', label: '首Chunk', value: formatElapsed(ragFirstChunkMs), done: ragFirstChunkMs != null },
+    { key: 'ragRequest', label: 'RAG 请求', value: formatElapsed(ragRequestMs), done: ragRequestMs != null },
+    { key: 'ragflowFirstChunkAt', label: '首块', value: formatElapsed(ragFirstChunkMs), done: ragFirstChunkMs != null },
     {
       key: 'ragflowFirstTextAt',
       label: '首文本',
@@ -170,7 +170,7 @@ function buildTimelineItems(debugInfo, serverStatus, { ttsEnabled = true } = {})
       done: ttsEnabled ? firstAudioMs != null : false,
       disabled: !ttsEnabled,
     },
-    { key: 'ragflowDoneAt', label: 'RAG完成', value: formatElapsed(ragDoneMs), done: ragDoneMs != null },
+    { key: 'ragflowDoneAt', label: 'RAG 完成', value: formatElapsed(ragDoneMs), done: ragDoneMs != null },
     {
       key: 'ttsAllDoneAt',
       label: '结束',

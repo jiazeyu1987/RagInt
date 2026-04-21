@@ -3,13 +3,22 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import threading
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 from ragflow_sdk import RAGFlow
 
 from backend.services.env_overrides import apply_env_overrides
+
+
+class RagflowInitError(RuntimeError):
+    def __init__(self, code: str, message: str, *, details: dict | None = None):
+        super().__init__(str(message))
+        self.code = str(code or "ragflow_init_failed")
+        self.details = dict(details or {})
 
 
 def _ragflow_chat_to_dict(chat):
@@ -226,6 +235,64 @@ class RagflowService:
             return payload
         return []
 
+    @staticmethod
+    def _resolve_base_endpoint(base_url: str) -> tuple[str, str, int]:
+        raw = str(base_url or "").strip().rstrip("/")
+        if not raw:
+            raise RagflowInitError(
+                "ragflow_base_url_missing",
+                "RAGFlow初始化失败: 缺少 base_url 配置。",
+                details={"base_url": raw},
+            )
+
+        parsed = urlparse(raw)
+        scheme = str(parsed.scheme or "").strip().lower()
+        if scheme not in ("http", "https"):
+            raise RagflowInitError(
+                "ragflow_base_url_invalid",
+                f"RAGFlow初始化失败: base_url 非法: {raw}",
+                details={"base_url": raw, "scheme": scheme},
+            )
+
+        host = str(parsed.hostname or "").strip()
+        if not host:
+            raise RagflowInitError(
+                "ragflow_base_url_invalid",
+                f"RAGFlow初始化失败: base_url 缺少主机名: {raw}",
+                details={"base_url": raw, "scheme": scheme},
+            )
+
+        try:
+            port = int(parsed.port or (443 if scheme == "https" else 80))
+        except ValueError as e:
+            raise RagflowInitError(
+                "ragflow_base_url_invalid",
+                f"RAGFlow初始化失败: base_url 端口非法: {raw}",
+                details={"base_url": raw, "scheme": scheme},
+            ) from e
+        return raw, host, port
+
+    @classmethod
+    def _ensure_base_url_reachable(cls, base_url: str, *, timeout_s: float = 2.0) -> tuple[str, str, int]:
+        raw, host, port = cls._resolve_base_endpoint(base_url)
+        try:
+            with socket.create_connection((host, port), timeout=float(timeout_s)):
+                return raw, host, port
+        except OSError as e:
+            raise RagflowInitError(
+                "ragflow_base_url_unreachable",
+                (
+                    f"RAGFlow初始化失败: 无法连接 {raw}（host={host}, port={port}, err={e}）。"
+                    "请先启动 RAGFlow 服务，或把运行时配置中的 base_url 改成正确地址。"
+                ),
+                details={
+                    "base_url": raw,
+                    "host": host,
+                    "port": port,
+                    "socket_error": str(e),
+                },
+            ) from e
+
     def load_config(self, *, force: bool = False) -> dict:
         """
         Load runtime config with precedence:
@@ -303,7 +370,7 @@ class RagflowService:
     def init(self) -> bool:
         cfg = self.load_config()
         api_key = cfg.get("api_key", "")
-        base_url = cfg.get("base_url", "http://127.0.0.1")
+        base_url = str(cfg.get("base_url") or "http://127.0.0.1").strip().rstrip("/")
         dataset_name = cfg.get("dataset_name", "")
         conversation_name = cfg.get("default_conversation_name", "语音问答")
 
@@ -311,6 +378,7 @@ class RagflowService:
             self._logger.error("RAGFlow API key无效")
             return False
 
+        self._ensure_base_url_reachable(base_url)
         self.client = RAGFlow(api_key=api_key, base_url=base_url)
         self.default_chat_name = conversation_name
 
