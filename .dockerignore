@@ -20,3 +20,7 @@ fronted/build/
 dist/
 tmp/
 tmp_*/
+backend/data/tmp_test_rw/
+backend/data/tmp_test_rw/**
+pytest-cache-files-*/
+pytest-cache-files-*/**

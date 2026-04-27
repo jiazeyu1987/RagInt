@@ -9,3 +9,13 @@ script = ""
 name = "运行"
 icon = "run"
 command = "./restart_fullstack.bat"
+
+[[actions]]
+name = "1"
+icon = "run"
+command = "./restart_fullstack.bat"
+
+[[actions]]
+name = "2"
+icon = "run"
+command = "./IntAuth/restart_fullstack.bat"

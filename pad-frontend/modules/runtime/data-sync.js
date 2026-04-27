@@ -244,6 +244,14 @@ async function loadCurrentHall(options) {
     } catch (error) {
       if (loadSeq !== appContext.runtime.latestLoadSeq) return;
       if (error && error.kind === "http") {
+        if (
+          (error.code === "display_binding_not_found" || error.code === "hall_binding_not_found") &&
+          String(state.clientId || "").trim() !== "pad-a"
+        ) {
+          persistClientId("pad-a");
+          void loadCurrentHall({ forceOnline: true });
+          return;
+        }
         state.loading = false;
         state.errorMessage = TEXT.loadFailed;
         if (error.code === "display_binding_not_found" || error.code === "hall_binding_not_found") {

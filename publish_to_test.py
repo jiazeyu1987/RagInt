@@ -219,7 +219,7 @@ set_kv FRONTEND_PORT {sh_quote(str(frontend_port))}
 set_kv BACKEND_PORT {sh_quote(str(backend_port))}
 set_kv BACKEND_DATA_DIR ./data/backend
 set_default RAGINT_HOST 0.0.0.0
-set_default RAGINT_PORT 8000
+set_default RAGINT_PORT 8101
 set_default RAGINT_DEBUG 0
 set_default RAGINT_STATE_BACKEND redis
 set_default RAGINT_REDIS_URL redis://redis:6379/0
@@ -475,24 +475,32 @@ def run_publish(args, ctx: DeployContext) -> None:
     remote_state = f"{runtime_dir}/release_state.env"
 
     tar_local = Path(tempfile.gettempdir()) / f"ragint_release_{args.tag}.tar"
-    log(f"[1/8] build backend image: {backend_image}")
-    run_cmd(["docker", "build", "-f", "backend/Dockerfile", "-t", backend_image, "."], cwd=ctx.repo_root, timeout_s=7200)
-    log(f"[1/8] build fronted image: {fronted_image}")
-    run_cmd(
-        [
-            "docker",
-            "build",
-            "-f",
-            "fronted/Dockerfile",
-            "--build-arg",
-            "REACT_APP_BACKEND_URL=",
-            "-t",
-            fronted_image,
-            ".",
-        ],
-        cwd=ctx.repo_root,
-        timeout_s=7200,
-    )
+    if getattr(args, "reuse_local_latest", False):
+        log(f"[1/8] reuse local backend image: ragint-backend:latest -> {backend_image}")
+        run_cmd(["docker", "image", "inspect", "ragint-backend:latest"], cwd=ctx.repo_root, timeout_s=60)
+        run_cmd(["docker", "tag", "ragint-backend:latest", backend_image], cwd=ctx.repo_root, timeout_s=60)
+        log(f"[1/8] reuse local fronted image: ragint-fronted:latest -> {fronted_image}")
+        run_cmd(["docker", "image", "inspect", "ragint-fronted:latest"], cwd=ctx.repo_root, timeout_s=60)
+        run_cmd(["docker", "tag", "ragint-fronted:latest", fronted_image], cwd=ctx.repo_root, timeout_s=60)
+    else:
+        log(f"[1/8] build backend image: {backend_image}")
+        run_cmd(["docker", "build", "-f", "backend/Dockerfile", "-t", backend_image, "."], cwd=ctx.repo_root, timeout_s=7200)
+        log(f"[1/8] build fronted image: {fronted_image}")
+        run_cmd(
+            [
+                "docker",
+                "build",
+                "-f",
+                "fronted/Dockerfile",
+                "--build-arg",
+                "REACT_APP_BACKEND_URL=",
+                "-t",
+                fronted_image,
+                ".",
+            ],
+            cwd=ctx.repo_root,
+            timeout_s=7200,
+        )
 
     log("[2/8] export images")
     run_cmd(["docker", "save", backend_image, fronted_image, "-o", str(tar_local)], cwd=ctx.repo_root, timeout_s=7200)
@@ -638,6 +646,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_common(pub)
     pub.add_argument("--tag", default=_tag_now())
     pub.add_argument("--keep-local-tar", action="store_true")
+    pub.add_argument("--reuse-local-latest", action="store_true", help="skip docker build and retag local ragint-backend/fronted:latest")
 
     rb = sub.add_parser("rollback", help="rollback remote runtime to an older image tag")
     add_common(rb)

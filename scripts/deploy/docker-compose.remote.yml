@@ -16,7 +16,7 @@ services:
       - .env
     environment:
       RAGINT_HOST: ${RAGINT_HOST:-0.0.0.0}
-      RAGINT_PORT: ${RAGINT_PORT:-8000}
+      RAGINT_PORT: ${RAGINT_PORT:-8101}
       RAGINT_DEBUG: ${RAGINT_DEBUG:-0}
       RAGINT_STATE_BACKEND: ${RAGINT_STATE_BACKEND:-redis}
       RAGINT_REDIS_URL: ${RAGINT_REDIS_URL:-redis://redis:6379/0}
@@ -24,7 +24,7 @@ services:
     volumes:
       - ${BACKEND_DATA_DIR:-./data/backend}:/app/backend/data
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      - "${BACKEND_PORT:-8000}:8101"
     depends_on:
       - redis
     networks:

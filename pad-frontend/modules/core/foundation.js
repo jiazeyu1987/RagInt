@@ -25,17 +25,15 @@ function formatTimestamp(value) {
 }
 
 function ensureClientId() {
+  const defaultClientId = "pad-a";
   try {
     const existing = window.localStorage.getItem("clientId");
     if (existing) return existing;
-    const next =
-      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : "cid_" + Date.now() + "_" + Math.random().toString(16).slice(2);
+    const next = defaultClientId;
     window.localStorage.setItem("clientId", next);
     return next;
   } catch (_) {
-    return "cid_" + Date.now() + "_" + Math.random().toString(16).slice(2);
+    return defaultClientId;
   }
 }
 
