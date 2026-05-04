@@ -8,6 +8,7 @@ from flask import Flask
 from backend.app_deps import AppDeps
 from backend.config import RagflowAppConfig
 from backend.config.env import env_bool, env_float, env_int
+from backend.runtime_paths import ensure_runtime_data_seeded, resolve_runtime_data_dir, resolve_seed_data_dir
 
 
 def resolve_config_path(*, repo_root: Path) -> Path:
@@ -119,8 +120,10 @@ def build_deps(*, base_dir: Path, config_path: Path, logger) -> AppDeps:
     - state backend (redis/memory)
     """
 
-    data_dir = base_dir / "data"
+    data_dir = resolve_runtime_data_dir(base_dir=base_dir)
+    template_dir = resolve_seed_data_dir(base_dir=base_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
+    ensure_runtime_data_seeded(data_dir=data_dir, template_dir=template_dir, logger=logger)
 
     (
         history_store,
@@ -176,6 +179,7 @@ def build_deps(*, base_dir: Path, config_path: Path, logger) -> AppDeps:
 
     return AppDeps(
         base_dir=base_dir,
+        runtime_data_dir=data_dir,
         logger=logger,
         ragflow_service=ragflow_service,
         ragflow_chat_manager=ragflow_chat_manager,

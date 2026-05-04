@@ -11,7 +11,7 @@ from flask import Blueprint, jsonify, request, send_file
 def create_blueprint(deps):
     bp = Blueprint("offline_api", __name__)
 
-    offline_root = (Path(deps.base_dir) / "data" / "offline").resolve()
+    offline_root = (Path(deps.runtime_data_dir) / "offline").resolve()
     manifest_path = (offline_root / "manifest.json").resolve()
     audio_dir = (offline_root / "audio").resolve()
 
@@ -89,4 +89,3 @@ def create_blueprint(deps):
         return send_file(str(p), mimetype="audio/wav", conditional=True)
 
     return bp
-

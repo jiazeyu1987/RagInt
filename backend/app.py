@@ -17,6 +17,7 @@ if __package__ is None and __name__ == "__main__":
     sys.path.insert(0, str(repo_root))
 
 import backend.bootstrap as bootstrap
+from backend.frontend_host import register_frontend_routes
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -74,6 +75,7 @@ def create_app() -> Flask:
 
     bootstrap.init_ragflow(deps=deps, logger=logger)
     bootstrap.register_blueprints(app=app, deps=deps)
+    register_frontend_routes(app=app, repo_root=repo_root, logger=logger)
 
     # WebSocket endpoints (Flask-Sock / VoiceKit).
     bootstrap.register_voicekit(app=app, deps=deps, logger=logger)

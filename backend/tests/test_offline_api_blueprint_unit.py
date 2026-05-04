@@ -14,6 +14,7 @@ from backend.api.offline import create_blueprint
 class _Deps:
     def __init__(self, base_dir: Path):
         self.base_dir = str(base_dir)
+        self.runtime_data_dir = base_dir / "data"
 
 
 def _build_app(tmp_path: Path) -> Flask:

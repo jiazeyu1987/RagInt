@@ -11,6 +11,7 @@
   "scripts": {
     "start": "set PORT=4981&& react-scripts start",
     "build": "react-scripts build",
+    "build:ragint": "set BUILD_PATH=build-ragint&& set PUBLIC_URL=/ragint&& react-scripts build",
     "serve:dual:e2e": "node scripts/serve_dual_frontends.js",
     "test": "react-scripts test",
     "test:e2e": "playwright test",

@@ -9,6 +9,7 @@ from typing import Any
 @dataclass
 class AppDeps:
     base_dir: Path
+    runtime_data_dir: Path
     logger: logging.Logger
 
     ragflow_service: Any

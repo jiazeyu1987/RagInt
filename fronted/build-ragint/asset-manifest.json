@@ -1,14 +1,14 @@
 {
   "files": {
     "main.css": "/ragint/static/css/main.44068aee.css",
-    "main.js": "/ragint/static/js/main.ed2cfc17.js",
+    "main.js": "/ragint/static/js/main.3a72cf22.js",
     "static/media/pcm16_encoder_worklet.js": "/ragint/static/media/pcm16_encoder_worklet.9a1076a711a04a625a4e.js",
     "index.html": "/ragint/index.html",
     "main.44068aee.css.map": "/ragint/static/css/main.44068aee.css.map",
-    "main.ed2cfc17.js.map": "/ragint/static/js/main.ed2cfc17.js.map"
+    "main.3a72cf22.js.map": "/ragint/static/js/main.3a72cf22.js.map"
   },
   "entrypoints": [
     "static/css/main.44068aee.css",
-    "static/js/main.ed2cfc17.js"
+    "static/js/main.3a72cf22.js"
   ]
 }
