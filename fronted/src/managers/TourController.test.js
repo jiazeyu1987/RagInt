@@ -172,6 +172,20 @@ describe('TourController', () => {
     expect(deps.askQuestion).not.toHaveBeenCalled();
   });
 
+  test('start fails fast when continuous tour has no planned stops', async () => {
+    const deps = makeBaseDeps({
+      continuousTourRef: { current: true },
+      fetchJson: jest.fn().mockResolvedValue({ stops: [] }),
+      getTourStops: () => [],
+    });
+    const c = new TourController(deps);
+
+    await expect(c.start()).rejects.toThrow(/tour_continuous_stops_missing/i);
+
+    expect(deps.beginDebugRun).not.toHaveBeenCalled();
+    expect(deps.askQuestion).not.toHaveBeenCalled();
+  });
+
   test('continue fails fast when question resume playback cannot enqueue audio', async () => {
     const deps = makeBaseDeps({
       tourResumeRef: {
@@ -221,6 +235,52 @@ describe('TourController', () => {
     const c = new TourController(deps);
 
     await expect(c.continue()).rejects.toThrow(/tour_resume_failed/i);
+
+    expect(deps.beginDebugRun).not.toHaveBeenCalled();
+    expect(deps.askQuestion).not.toHaveBeenCalled();
+  });
+
+  test('continue fails fast when continuous resume does not advance tour state', async () => {
+    const startContinuousTour = jest.fn().mockResolvedValue(undefined);
+    const deps = makeBaseDeps({
+      continuousTourRef: { current: true },
+      tourResumeRef: {
+        current: {
+          0: {
+            kind: 'stop',
+            segments: ['cached stop narration'],
+          },
+        },
+      },
+      tourStateRef: { current: { stopIndex: 0 } },
+      setTourState: jest.fn(),
+      getTourPipeline: () => ({ startContinuousTour }),
+      getTtsManager: () => ({
+        resetForRun: jest.fn(),
+        enqueueText: jest.fn(),
+        markRagDone: jest.fn(),
+        ensureRunning: jest.fn(),
+        waitForIdle: jest.fn().mockResolvedValue(undefined),
+      }),
+    });
+    const c = new TourController(deps);
+
+    await expect(c.continue()).rejects.toThrow(/tour_continuous_resume_stalled/i);
+
+    expect(startContinuousTour).not.toHaveBeenCalled();
+    expect(deps.askQuestion).not.toHaveBeenCalled();
+  });
+
+  test('nextStop fails fast when current run cannot be interrupted', async () => {
+    const deps = makeBaseDeps({
+      tourStateRef: { current: { stopIndex: 0 } },
+      interruptCurrentRun: jest.fn(() => {
+        throw new Error('interrupt offline');
+      }),
+    });
+    const c = new TourController(deps);
+
+    await expect(c.nextStop()).rejects.toThrow(/tour_interrupt_failed/i);
 
     expect(deps.beginDebugRun).not.toHaveBeenCalled();
     expect(deps.askQuestion).not.toHaveBeenCalled();

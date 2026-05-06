@@ -4,6 +4,7 @@ import logging
 import shutil
 import time
 import uuid
+import wave
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,16 @@ def work_dir():
 
 def _store(work_dir: Path):
     return RecordingStore(work_dir / "recordings", logger=logging.getLogger("test_recording_store"))
+
+
+def _write_wav(path: Path, *, duration_ms: int = 100, sample_rate: int = 16000) -> None:
+    frames = max(1, round((duration_ms / 1000) * sample_rate))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(b"\x00\x00" * frames)
 
 
 def test_create_list_get_finish_delete_roundtrip(work_dir: Path):
@@ -67,6 +78,73 @@ def test_create_list_get_finish_delete_roundtrip(work_dir: Path):
     assert store.get("rec_1") is None
     assert store.list(limit=10) == []
     assert not (work_dir / "recordings" / "rec_1").exists()
+
+
+def test_create_rejects_blank_stops_and_non_object_metadata(work_dir: Path):
+    store = _store(work_dir)
+
+    with pytest.raises(ValueError, match="stops_empty"):
+        store.create(recording_id="rec_blank_stop", stops=["  "])
+
+    with pytest.raises(ValueError, match="metadata_invalid"):
+        store.create(recording_id="rec_bad_metadata", stops=["Stop A"], metadata="not-object")  # type: ignore[arg-type]
+
+
+def test_create_existing_recording_id_clears_stale_events_and_audio(work_dir: Path):
+    store = _store(work_dir)
+    store.create(recording_id="rec_replace", stops=["Old Stop"])
+    _write_wav(store.audio_dir("rec_replace") / "old.wav")
+    store.add_ask_event(recording_id="rec_replace", stop_index=0, request_id="ask_old", kind="chunk", text="old")
+    store.add_tts_audio(
+        recording_id="rec_replace",
+        stop_index=0,
+        request_id="ask_old",
+        segment_index=0,
+        text="old",
+        rel_path="old.wav",
+    )
+
+    store.create(recording_id="rec_replace", stops=["New Stop"], metadata={"source": "new"})
+
+    rec = store.get("rec_replace")
+    assert rec is not None
+    assert rec["stops"] == ["New Stop"]
+    assert rec["metadata"] == {"source": "new"}
+    assert store.get_stop_payload(recording_id="rec_replace", stop_index=0, base_url="") == {
+        "recording_id": "rec_replace",
+        "stop_index": 0,
+        "stop_name": "New Stop",
+        "chunks": [],
+        "answer_text": "",
+        "tail": "",
+        "segments": [],
+        "created_at_ms": rec["created_at_ms"],
+        "finished_at_ms": None,
+    }
+    assert not (work_dir / "recordings" / "rec_replace" / "audio" / "old.wav").exists()
+
+
+def test_set_display_name_rejects_oversized_name_without_truncating(work_dir: Path):
+    store = _store(work_dir)
+    store.create(recording_id="rec_name", stops=["Stop A"])
+
+    with pytest.raises(ValueError, match="display_name_too_long"):
+        store.set_display_name("rec_name", "x" * 121)
+
+    rec = store.get("rec_name")
+    assert rec is not None
+    assert rec.get("display_name") in (None, "")
+
+
+def test_list_rejects_invalid_limit_without_defaulting(work_dir: Path):
+    store = _store(work_dir)
+    store.create(recording_id="rec_limit", stops=["Stop A"])
+
+    with pytest.raises(ValueError, match="limit_invalid"):
+        store.list(limit=0)
+
+    with pytest.raises(ValueError, match="limit_invalid"):
+        store.list(limit=None)  # type: ignore[arg-type]
 
 
 def test_ask_and_tts_seq_increment_per_stop(work_dir: Path):
@@ -115,6 +193,7 @@ def test_stop_payload_and_segment_update_versioned_url(work_dir: Path):
 
     store.add_ask_event(recording_id="rec_payload", stop_index=0, request_id="ask_1", kind="chunk", text="chunk_a")
     store.add_ask_event(recording_id="rec_payload", stop_index=0, request_id="ask_1", kind="chunk", text="chunk_b")
+    _write_wav(store.audio_dir("rec_payload") / "seg_v1.wav")
     store.add_tts_audio(
         recording_id="rec_payload",
         stop_index=0,
@@ -135,6 +214,7 @@ def test_stop_payload_and_segment_update_versioned_url(work_dir: Path):
 
     seg_id = int(seg["segment_id"])
     time.sleep(0.01)
+    _write_wav(store.audio_dir("rec_payload") / "seg_v2.wav")
     updated = store.update_tts_segment(
         recording_id="rec_payload",
         segment_id=seg_id,

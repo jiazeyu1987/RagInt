@@ -20,9 +20,10 @@ function resolveConfiguredBaseUrl(baseUrl, fallbackOrigin) {
 }
 
 function normalizeFetchConcurrency(value) {
+  if (value === undefined || value === null || value === '') return 4;
   const n = Number(value);
   if (ALLOWED_FETCH_CONCURRENCY.has(n)) return n;
-  return 4;
+  throw new Error(`Invalid TTS fetchConcurrency: ${value}`);
 }
 
 function safeStopCurrentAudio(currentAudioRef) {

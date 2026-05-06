@@ -102,6 +102,16 @@ def test_recordings_start_requires_non_empty_stops(work_dir: Path):
     assert r3.get_json()["error"] == "stops_required"
 
 
+def test_recordings_start_requires_metadata_object_when_present(work_dir: Path):
+    app, _deps = _build_app(work_dir)
+    c = app.test_client()
+
+    r = c.post("/api/recordings/start", json={"stops": ["Stop A"], "metadata": "not-object"})
+
+    assert r.status_code == 400
+    assert r.get_json()["error"] == "metadata_object_required"
+
+
 def test_recordings_start_list_get_finish_roundtrip(work_dir: Path):
     app, _deps = _build_app(work_dir)
     c = app.test_client()
@@ -122,6 +132,10 @@ def test_recordings_start_list_get_finish_roundtrip(work_dir: Path):
     bad_limit = c.get("/api/recordings?limit=bad")
     assert bad_limit.status_code == 400
     assert bad_limit.get_json()["error"] == "invalid_limit"
+
+    zero_limit = c.get("/api/recordings?limit=0")
+    assert zero_limit.status_code == 400
+    assert zero_limit.get_json()["error"] == "invalid_limit"
 
     listed = c.get("/api/recordings?limit=50")
     assert listed.status_code == 200
@@ -348,6 +362,18 @@ def test_recordings_audio_bad_path_not_found_and_success(work_dir: Path):
     assert "audio/mpeg" in str(ok_mp3.headers.get("content-type", "")).lower()
     assert ok_mp3.data == mp3_bytes
 
+    unknown = audio_dir / "bad.bin"
+    unknown.write_bytes(b"not-a-supported-audio-container")
+    bad_format = c.get("/api/recordings/rec_audio/audio/bad.bin")
+    assert bad_format.status_code == 415
+    assert bad_format.get_json()["error"] == "audio_format_unsupported"
+
+    disguised = audio_dir / "bad.wav"
+    disguised.write_bytes(b"not-a-real-wav")
+    disguised_format = c.get("/api/recordings/rec_audio/audio/bad.wav")
+    assert disguised_format.status_code == 415
+    assert disguised_format.get_json()["error"] == "audio_format_unsupported"
+
 
 def test_recordings_rename_and_delete_error_paths(work_dir: Path, monkeypatch):
     app, deps = _build_app(work_dir)
@@ -369,7 +395,22 @@ def test_recordings_rename_and_delete_error_paths(work_dir: Path, monkeypatch):
 
     monkeypatch.setattr(deps.recording_store, "delete", _raise_delete)
     delete = c.delete("/api/recordings/rec_rename_delete")
-    assert delete.status_code == 400
+    assert delete.status_code == 500
     db = delete.get_json()
     assert db["ok"] is False
     assert "delete_fail" in db["error"]
+
+
+def test_recordings_rename_rejects_oversized_name_without_truncating(work_dir: Path):
+    app, deps = _build_app(work_dir)
+    deps.recording_store.create(recording_id="rec_long_name", stops=["Stop A"])
+
+    r = app.test_client().post("/api/recordings/rec_long_name/rename", json={"display_name": "x" * 121})
+
+    assert r.status_code == 400
+    body = r.get_json()
+    assert body["ok"] is False
+    assert body["error"] == "display_name_too_long"
+    rec = deps.recording_store.get("rec_long_name")
+    assert rec is not None
+    assert rec.get("display_name") in (None, "")

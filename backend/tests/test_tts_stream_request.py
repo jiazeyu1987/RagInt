@@ -59,6 +59,16 @@ def test_parse_tts_stream_request_missing_text():
     assert err == {"error": "No text"}
 
 
+def test_parse_tts_stream_request_invalid_stop_index_fails_fast():
+    app = Flask(__name__)
+    deps = _Deps()
+    data = {"text": "hi", "stop_index": "not-an-int"}
+    with app.test_request_context("/api/text_to_speech_stream", method="POST", json=data):
+        parsed, err = parse_tts_stream_request(deps=deps, req=request, data=data)
+    assert parsed is None
+    assert err == {"error": "Invalid stop_index"}
+
+
 def test_emit_tts_stream_request_received():
     app = Flask(__name__)
     deps = _Deps()

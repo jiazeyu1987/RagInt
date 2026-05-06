@@ -12,7 +12,7 @@ def _is_allowed(value, allowed: set[str]) -> bool:
 def _compute_default_topn(*, duration_s: int | None, profile: str | None) -> int:
     try:
         d = int(duration_s) if duration_s is not None else None
-    except Exception:
+    except (TypeError, ValueError):
         raise ValueError("duration_s_invalid") from None
     p = str(profile or "").strip()
     if d is None:
@@ -40,7 +40,7 @@ def create_blueprint(deps):
         max_level = request.args.get("max_level")
         try:
             limit = int(request.args.get("limit") or 50)
-        except Exception:
+        except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "invalid_query_parameter", "field": "limit"}), 400
         if status is not None and not _is_allowed(status, {"draft", "review", "published"}):
             return jsonify({"ok": False, "error": "invalid_query_parameter", "field": "status"}), 400
@@ -135,7 +135,7 @@ def create_blueprint(deps):
         max_level = request.args.get("max_level")
         try:
             n = int(request.args.get("n")) if request.args.get("n") is not None else None
-        except Exception:
+        except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "invalid_query_parameter", "field": "n"}), 400
         if max_level is not None and not _is_allowed(max_level, {"public", "internal", "sensitive"}):
             return jsonify({"ok": False, "error": "invalid_query_parameter", "field": "max_level"}), 400

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import time
 from dataclasses import dataclass
 from typing import Iterable
@@ -129,7 +128,9 @@ def generate_streaming_tts_audio(ctx: TtsStreamContext) -> Iterable[bytes]:
                             segment_index=ctx.segment_index,
                         )
                         break
-                    if not chunk:
+                    if not isinstance(chunk, bytes):
+                        raise RuntimeError(f"tts_provider_invalid_chunk:{provider}")
+                    if len(chunk) == 0:
                         continue
                     per_provider_chunks += 1
                     per_provider_bytes += len(chunk)
@@ -138,8 +139,7 @@ def generate_streaming_tts_audio(ctx: TtsStreamContext) -> Iterable[bytes]:
                     recorder.write(chunk)
                     if first_audio_chunk_at is None:
                         first_audio_chunk_at = time.perf_counter()
-                        with contextlib.suppress(Exception):
-                            deps.ask_timings.set(ctx.request_id, t_tts_first_audio=first_audio_chunk_at)
+                        deps.ask_timings.set(ctx.request_id, t_tts_first_audio=first_audio_chunk_at)
                         if not first_emitted:
                             first_emitted = True
                             deps.event_store.emit(

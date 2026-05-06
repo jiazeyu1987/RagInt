@@ -72,19 +72,18 @@ class TourControlStore:
                 )
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_tcc_client_id_id ON tour_control_commands(client_id, id);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_tcc_consumed ON tour_control_commands(consumed_at_ms);")
+                self._ensure_status_column(conn=conn)
                 conn.commit()
             finally:
                 conn.close()
 
-    def _ensure_column(self, *, conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
-        cols = conn.execute(f"PRAGMA table_info({table});").fetchall() or []
-        names = {str(r[1]) for r in cols if len(r) >= 2}
-        if column in names:
-            return
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl};")
+    def _ensure_status_column(self, *, conn: sqlite3.Connection) -> None:
+        cols = conn.execute("PRAGMA table_info(tour_control_state);").fetchall() or []
+        names = {str(row[1]) for row in cols if len(row) >= 2}
+        if "status" not in names:
+            conn.execute("ALTER TABLE tour_control_state ADD COLUMN status TEXT NOT NULL DEFAULT 'waiting';")
 
     def _ensure_state_row(self, *, conn: sqlite3.Connection, client_id: str, now_ms: int) -> None:
-        self._ensure_column(conn=conn, table="tour_control_state", column="status", ddl="status TEXT NOT NULL DEFAULT 'waiting'")
         conn.execute(
             """
             INSERT INTO tour_control_state (client_id, status, paused, speed, updated_at_ms)
@@ -170,7 +169,9 @@ class TourControlStore:
         if q > 0:
             return "queued"
         s = str(st.status or "").strip().lower()
-        return s if s in ("waiting", "playing") else "waiting"
+        if s in ("waiting", "playing"):
+            return s
+        raise ValueError(f"invalid_tour_control_status:{s}")
 
     def add_command(self, *, client_id: str, action: str, payload: dict | None = None, now_ms: int | None = None) -> int:
         cid = str(client_id or "").strip()

@@ -130,16 +130,30 @@ class RecordingStore:
             raise ValueError("recording_id_empty")
         if not isinstance(stops, list) or not stops:
             raise ValueError("stops_empty")
+        cleaned_stops = [str(stop or "").strip() for stop in stops if str(stop or "").strip()]
+        if not cleaned_stops:
+            raise ValueError("stops_empty")
+        if metadata is not None and not isinstance(metadata, dict):
+            raise ValueError("metadata_invalid")
         created_at_ms = self._now_ms()
-        payload = json.dumps([str(s or "").strip() for s in stops], ensure_ascii=False)
+        payload = json.dumps(cleaned_stops, ensure_ascii=False)
         metadata_payload = json.dumps(metadata if isinstance(metadata, dict) else {}, ensure_ascii=False)
+        root = (self._root / rid).resolve()
+        base = self._root.resolve()
+        if not str(root).lower().startswith(str(base).lower() + os.sep.lower()):
+            raise ValueError("path_outside_store")
+        if root.exists() and root.is_dir():
+            shutil.rmtree(root)
 
         with self._lock:
             conn = self._connect()
             try:
+                conn.execute("DELETE FROM recording_ask_events WHERE recording_id=?", (rid,))
+                conn.execute("DELETE FROM recording_tts_audio WHERE recording_id=?", (rid,))
+                conn.execute("DELETE FROM recordings WHERE recording_id=?", (rid,))
                 conn.execute(
                     """
-                    INSERT OR REPLACE INTO recordings (recording_id, created_at_ms, finished_at_ms, stops_json, metadata_json)
+                    INSERT INTO recordings (recording_id, created_at_ms, finished_at_ms, stops_json, metadata_json)
                     VALUES (?, ?, NULL, ?, ?)
                     """,
                     (rid, int(created_at_ms), payload, metadata_payload),
@@ -153,7 +167,7 @@ class RecordingStore:
             recording_id=rid,
             created_at_ms=created_at_ms,
             finished_at_ms=None,
-            stops=stops,
+            stops=cleaned_stops,
             metadata=metadata if isinstance(metadata, dict) else {},
         )
 
@@ -177,7 +191,12 @@ class RecordingStore:
         self._logger.info(f"[REC] finished recording_id={rid}")
 
     def list(self, *, limit: int = 50) -> list[dict]:
-        limit = max(1, min(int(limit or 50), 200))
+        try:
+            limit_value = int(limit)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("limit_invalid") from exc
+        if limit_value < 1 or limit_value > 200:
+            raise ValueError("limit_invalid")
         with self._lock:
             conn = self._connect()
             try:
@@ -188,7 +207,7 @@ class RecordingStore:
                     ORDER BY created_at_ms DESC
                     LIMIT ?
                     """,
-                    (limit,),
+                    (limit_value,),
                 ).fetchall()
                 out = []
                 for r in rows:
@@ -252,7 +271,7 @@ class RecordingStore:
             raise ValueError("recording_id_empty")
         name = str(display_name or "").strip()
         if len(name) > 120:
-            name = name[:120]
+            raise ValueError("display_name_too_long")
         with self._lock:
             conn = self._connect()
             try:

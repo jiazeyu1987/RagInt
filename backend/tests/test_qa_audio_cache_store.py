@@ -108,7 +108,7 @@ def test_qa_audio_store_upsert_same_question_updates_same_pair(tmp_path):
     assert len(all_pairs) == 1
 
 
-def test_find_exact_pair_legacy_normalized_fallback(tmp_path):
+def test_find_exact_pair_rejects_legacy_normalized_key_without_fallback_scan(tmp_path):
     root_dir = tmp_path / "qa_audio_root"
     db_path = tmp_path / "qa_audio.db"
     store = QaAudioCacheStore(root_dir=root_dir, db_path=db_path)
@@ -128,19 +128,18 @@ def test_find_exact_pair_legacy_normalized_fallback(tmp_path):
     # Simulate an old row that stored a legacy normalized_question key.
     conn = sqlite3.connect(str(db_path))
     try:
-        conn.execute("UPDATE qa_audio_pairs SET normalized_question = ? WHERE id = ?", ("9*0\u7b49\u4e8e\u591a\u5c11", int(pid)))
+        conn.execute("UPDATE qa_audio_pairs SET normalized_question = ? WHERE id = ?", ("legacy-only-key", int(pid)))
         conn.commit()
     finally:
         conn.close()
 
     pair = store.find_exact_pair(
-        question_text="9*0\u7b49\u4e8e\u591a\u5c11",
+        question_text="9*0=?",
         tts_provider="flash",
         tts_voice="",
         tts_speed=1.0,
     )
-    assert pair is not None
-    assert int(pair.id) == int(pid)
+    assert pair is None
 
 
 def test_cleanup_invalid_audio_pairs_removes_missing_and_zero_duration_wav(tmp_path):
@@ -267,7 +266,8 @@ def test_upsert_pair_rejects_invalid_tts_speed_and_audio_extension(tmp_path):
         )
 
 
-def test_get_audio_file_path_raises_on_invalid_audio_rel_path(tmp_path):
+@pytest.mark.parametrize("bad_rel_path", ["../outside.wav", "/audio/outside.wav", "audio\\outside.wav"])
+def test_get_audio_file_path_raises_on_invalid_audio_rel_path(tmp_path, bad_rel_path):
     root_dir = tmp_path / "qa_audio_root"
     db_path = tmp_path / "qa_audio.db"
     store = QaAudioCacheStore(root_dir=root_dir, db_path=db_path)
@@ -286,7 +286,7 @@ def test_get_audio_file_path_raises_on_invalid_audio_rel_path(tmp_path):
 
     conn = sqlite3.connect(str(db_path))
     try:
-        conn.execute("UPDATE qa_audio_pairs SET audio_rel_path = ? WHERE id = ?", ("../outside.wav", int(pair_id)))
+        conn.execute("UPDATE qa_audio_pairs SET audio_rel_path = ? WHERE id = ?", (bad_rel_path, int(pair_id)))
         conn.commit()
     finally:
         conn.close()
@@ -427,3 +427,33 @@ def test_cleanup_invalid_audio_pairs_raises_when_audio_header_cannot_be_read(tmp
 
     with pytest.raises(PermissionError, match="cannot read audio header"):
         store.cleanup_invalid_audio_pairs()
+
+
+@pytest.mark.parametrize("bad_rel_path", ["/audio/orphan.wav", "audio\\orphan.wav"])
+def test_cleanup_invalid_audio_pairs_deletes_rows_with_malformed_audio_paths(tmp_path, bad_rel_path):
+    root_dir = tmp_path / "qa_audio_root"
+    db_path = tmp_path / "qa_audio.db"
+    store = QaAudioCacheStore(root_dir=root_dir, db_path=db_path)
+
+    pair_id = store.upsert_pair_with_audio(
+        question_text="bad rel path q",
+        answer_text="bad rel path a",
+        audio_bytes=b"pcm_bytes_for_bad_path",
+        tts_provider="edge",
+        tts_voice="v1",
+        tts_speed=1.0,
+        source_request_id="ask_bad_path",
+        embedding=_vec(1.0, 0.0, 0.0),
+    )
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("UPDATE qa_audio_pairs SET audio_rel_path = ? WHERE id = ?", (bad_rel_path, int(pair_id)))
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = store.cleanup_invalid_audio_pairs()
+
+    assert result["deleted"] == 1
+    assert result["reason_counts"]["audio_rel_path_invalid"] == 1
+    assert store.get_pair(pair_id=pair_id) is None

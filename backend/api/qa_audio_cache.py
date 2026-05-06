@@ -16,7 +16,7 @@ def _detect_audio_mimetype(path: str) -> str:
         return "audio/mpeg"
     if len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0:
         return "audio/mpeg"
-    return "application/octet-stream"
+    raise ValueError("audio_format_unsupported")
 
 
 def create_blueprint(deps):
@@ -27,7 +27,11 @@ def create_blueprint(deps):
         p = deps.qa_audio_cache_store.get_audio_file_path(pair_id=int(pair_id))
         if p is None:
             return jsonify({"error": "not_found"}), 404
-        resp = send_file(str(p), mimetype=_detect_audio_mimetype(str(p)), conditional=True)
+        try:
+            mimetype = _detect_audio_mimetype(str(p))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 415
+        resp = send_file(str(p), mimetype=mimetype, conditional=True)
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         resp.headers["Pragma"] = "no-cache"
         resp.headers["Expires"] = "0"

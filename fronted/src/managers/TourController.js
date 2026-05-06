@@ -161,9 +161,7 @@ export class TourController {
     const stops =
       Array.isArray(stopsOverride) && stopsOverride.length ? stopsOverride : typeof getTourStops === 'function' ? getTourStops() : [];
     if (!Array.isArray(stops) || !stops.length) {
-      // eslint-disable-next-line no-console
-      console.warn('[TOUR] continuous: no stops loaded');
-      return;
+      throw new Error('tour_continuous_stops_missing');
     }
     if (!allow()) return;
 
@@ -471,20 +469,11 @@ export class TourController {
       if (qRes.resumed || resumed) {
         if (!allow()) return;
         if ((continuousTourRef && continuousTourRef.current) || this._isPlaybackArchiveMode()) {
-          // If prefetch worked, stopIndex will advance naturally as next-stop audio begins playing.
-          // Fallback: if it didn't advance, restart continuous tour from next stop.
           const after = tourStateRef && tourStateRef.current ? tourStateRef.current : null;
           const afterIndex =
             after && Number.isFinite(after.stopIndex) && Number(after.stopIndex) >= 0 ? Number(after.stopIndex) : stopIndex;
-          // Only auto-advance when we actually resumed tour-stop content; a question resume should NOT skip the stop.
           if (resumed && afterIndex === stopIndex) {
-            const stops = typeof getTourStops === 'function' ? getTourStops() : [];
-            const n = Array.isArray(stops) ? stops.length : 0;
-            const nextIndex = stopIndex + 1;
-            if (n && nextIndex >= 0 && nextIndex < n) {
-              if (!allow()) return;
-              await this._runContinuousTour({ startIndex: nextIndex, firstAction: 'next' });
-            }
+            throw new Error(`tour_continuous_resume_stalled: ${stopIndex}`);
           }
         }
         return;
@@ -508,8 +497,8 @@ export class TourController {
     const { tourStateRef, buildTourPrompt, beginDebugRun, askQuestion, interruptCurrentRun } = this.deps;
     try {
       if (typeof interruptCurrentRun === 'function') interruptCurrentRun(RUN_REASON.TOUR_PREV);
-    } catch (_) {
-      // ignore
+    } catch (error) {
+      throw this._makeError('tour_interrupt_failed', error);
     }
     const cur = tourStateRef ? tourStateRef.current : null;
     const stopIndexRaw = Number.isFinite(cur && cur.stopIndex) ? cur.stopIndex - 1 : 0;
@@ -529,8 +518,8 @@ export class TourController {
     const { tourStateRef, getTourStops, buildTourPrompt, beginDebugRun, askQuestion, interruptCurrentRun } = this.deps;
     try {
       if (typeof interruptCurrentRun === 'function') interruptCurrentRun(RUN_REASON.TOUR_NEXT);
-    } catch (_) {
-      // ignore
+    } catch (error) {
+      throw this._makeError('tour_interrupt_failed', error);
     }
     const cur = tourStateRef ? tourStateRef.current : null;
     const stops = typeof getTourStops === 'function' ? getTourStops() : [];
@@ -552,8 +541,8 @@ export class TourController {
     const { getTourStops, buildTourPrompt, beginDebugRun, askQuestion, interruptCurrentRun } = this.deps;
     try {
       if (typeof interruptCurrentRun === 'function') interruptCurrentRun(RUN_REASON.TOUR_JUMP);
-    } catch (_) {
-      // ignore
+    } catch (error) {
+      throw this._makeError('tour_interrupt_failed', error);
     }
     const stops = typeof getTourStops === 'function' ? getTourStops() : [];
     const n = Array.isArray(stops) ? stops.length : 0;

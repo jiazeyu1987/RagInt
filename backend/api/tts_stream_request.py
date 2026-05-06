@@ -17,10 +17,9 @@ class TtsStreamRequest:
 
 
 def _as_int_or_none(value):
-    try:
-        return int(value) if value is not None and str(value).strip() != "" else None
-    except Exception:
+    if value is None or str(value).strip() == "":
         return None
+    return int(value)
 
 
 def parse_tts_stream_request(*, deps, req, data: dict | None) -> tuple[TtsStreamRequest | None, dict | None]:
@@ -34,7 +33,10 @@ def parse_tts_stream_request(*, deps, req, data: dict | None) -> tuple[TtsStream
     segment_index = payload.get("segment_index", None)
     cancel_event = deps.request_registry.get_cancel_event(request_id)
     recording_id = str((payload.get("recording_id") or req.headers.get("X-Recording-ID") or "")).strip() or None
-    stop_index = _as_int_or_none(payload.get("stop_index", None))
+    try:
+        stop_index = _as_int_or_none(payload.get("stop_index", None))
+    except (TypeError, ValueError):
+        return None, {"error": "Invalid stop_index"}
 
     return (
         TtsStreamRequest(

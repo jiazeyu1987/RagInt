@@ -41,6 +41,11 @@ class _Timings:
         return self.data
 
 
+class _FailingTimings(_Timings):
+    def set(self, request_id: str, **kwargs):
+        raise RuntimeError("timing_store_failed")
+
+
 class _Store:
     def __init__(self, base: Path):
         self.base = base
@@ -298,3 +303,51 @@ def test_tts_streaming_recording_finalize_failure_fails_stream(tmp_path):
     assert "tts_stream_failed" in names
     failed_evt = next(e for e in deps.event_store.events if e.get("name") == "tts_stream_failed")
     assert "tts_recording_finalize_failed" in str(failed_evt.get("err") or "")
+
+
+def test_tts_streaming_invalid_provider_chunk_fails_fast(tmp_path):
+    deps = _Deps(tmp_path, chunks=[None])
+    ctx = TtsStreamContext(
+        deps=deps,
+        request_id="r-invalid-chunk",
+        client_id="c-invalid-chunk",
+        text="hello",
+        app_config={},
+        provider="flash",
+        endpoint="/api/text_to_speech_stream",
+        segment_index=0,
+        cancel_event=deps.cancel_event,
+        t_received=0.0,
+        recording_id=None,
+        stop_index=None,
+    )
+
+    with pytest.raises(RuntimeError, match="tts_provider_invalid_chunk:flash"):
+        list(generate_streaming_tts_audio(ctx))
+    assert deps.tts_service.calls == ["flash"]
+    failed_evt = next(e for e in deps.event_store.events if e.get("name") == "tts_stream_failed")
+    assert "tts_provider_invalid_chunk:flash" in str(failed_evt.get("err") or "")
+
+
+def test_tts_streaming_timing_store_failure_fails_stream(tmp_path):
+    deps = _Deps(tmp_path, chunks=[b"a"], cancel_seq=[False, False])
+    deps.ask_timings = _FailingTimings()
+    ctx = TtsStreamContext(
+        deps=deps,
+        request_id="r-timing",
+        client_id="c-timing",
+        text="hello",
+        app_config={},
+        provider="edge",
+        endpoint="/api/text_to_speech_stream",
+        segment_index=0,
+        cancel_event=deps.cancel_event,
+        t_received=0.0,
+        recording_id=None,
+        stop_index=None,
+    )
+
+    with pytest.raises(RuntimeError, match="timing_store_failed"):
+        list(generate_streaming_tts_audio(ctx))
+    failed_evt = next(e for e in deps.event_store.events if e.get("name") == "tts_stream_failed")
+    assert "timing_store_failed" in str(failed_evt.get("err") or "")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import sqlite3
 import uuid
 from pathlib import Path
 
@@ -205,7 +206,7 @@ def test_get_state_fails_fast_on_corrupt_state_values(work_dir: Path):
         store.get_state(client_id=cid)
 
 
-def test_effective_status_unknown_falls_back_to_waiting(work_dir: Path):
+def test_effective_status_unknown_status_fails_fast(work_dir: Path):
     store = _store(work_dir)
     cid = "cid_state"
 
@@ -221,7 +222,8 @@ def test_effective_status_unknown_falls_back_to_waiting(work_dir: Path):
     finally:
         conn.close()
 
-    assert store.get_effective_status(client_id=cid) == "waiting"
+    with pytest.raises(ValueError, match="invalid_tour_control_status:mystery"):
+        store.get_effective_status(client_id=cid)
 
     conn2 = store._connect()  # noqa: SLF001
     try:
@@ -231,3 +233,35 @@ def test_effective_status_unknown_falls_back_to_waiting(work_dir: Path):
         conn2.close()
 
     assert store.get_effective_status(client_id=cid) == "paused"
+
+
+def test_existing_state_table_without_status_is_migrated(work_dir: Path):
+    db_path = work_dir / "tourctl.db"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            """
+            CREATE TABLE tour_control_state (
+                client_id TEXT PRIMARY KEY,
+                paused INTEGER NOT NULL DEFAULT 0,
+                speed REAL NOT NULL DEFAULT 1.0,
+                updated_at_ms INTEGER NOT NULL
+            );
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO tour_control_state (client_id, paused, speed, updated_at_ms)
+            VALUES ('legacy_client', 0, 1.0, 123)
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    store = TourControlStore(db_path, logger=logging.getLogger("test_tour_control_store"))
+
+    state = store.get_state(client_id="legacy_client")
+    assert state is not None
+    assert state.status == "waiting"
+    assert store.add_command(client_id="new_client", action="pause") > 0

@@ -214,8 +214,12 @@ class NavService:
                 timeout_s=float(timeout_s),
             )
             self._set_terminal(status, state=res.state, reason=res.reason)
-        except Exception as e:
-            self._set_terminal(status, state="failed", reason=f"nav_exception:{type(e).__name__}")
+        except (RuntimeError, ValueError) as e:
+            detail = str(e).strip()
+            reason = f"nav_exception:{type(e).__name__}"
+            if detail:
+                reason = f"{reason}:{detail}"
+            self._set_terminal(status, state="failed", reason=reason)
         finally:
             # Best-effort: if nothing set terminal, mark timeout.
             with self._lock:

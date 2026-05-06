@@ -11,6 +11,56 @@ function parseWakeWords(raw) {
     .filter((s) => !!s);
 }
 
+function toInt(value, fallback, { min = null, max = null, name = 'value' } = {}) {
+  const missing = value == null || (typeof value === 'string' && value.trim() === '');
+  if (missing) return fallback;
+  const n = Number(value);
+  if (!Number.isFinite(n)) throw new Error(`invalid_voicekit_numeric_config:${name}`);
+  const out = Math.round(n);
+  if (Number.isFinite(min) && out < Number(min)) throw new Error(`invalid_voicekit_numeric_config:${name}`);
+  if (Number.isFinite(max) && out > Number(max)) throw new Error(`invalid_voicekit_numeric_config:${name}`);
+  return out;
+}
+
+function normalizeWakeConfig(startPayload) {
+  const payload = startPayload && typeof startPayload === 'object' ? startPayload : null;
+  const wakeEnabled = !!(payload && payload.wake_word_enabled);
+  if (!wakeEnabled) {
+    return {
+      wakeEnabled: false,
+      wakeWord: '',
+      wakeWords: [],
+      strict: false,
+      cooldownMs: 0,
+      wakeMaxPos: 2,
+    };
+  }
+
+  const wakeWord = safeTrim(payload && payload.wake_word);
+  const wakeWords = parseWakeWords(wakeWord);
+  const wakeMatchMode = safeTrim(payload && payload.wake_match_mode) || 'contains';
+  if (wakeMatchMode !== 'contains' && wakeMatchMode !== 'prefix') {
+    throw new Error('invalid_voicekit_wake_match_mode');
+  }
+  const strict = wakeMatchMode === 'prefix';
+  return {
+    wakeEnabled,
+    wakeWord,
+    wakeWords,
+    strict,
+    cooldownMs: toInt(payload && payload.wake_cooldown_ms, 0, {
+      min: 0,
+      max: 120000,
+      name: 'wake_cooldown_ms',
+    }),
+    wakeMaxPos: toInt(payload && payload.wake_max_pos, strict ? 0 : 2, {
+      min: 0,
+      max: 20,
+      name: 'wake_max_pos',
+    }),
+  };
+}
+
 export class VoiceKitWsRecorderManager {
   constructor({
     baseUrl,
@@ -35,7 +85,7 @@ export class VoiceKitWsRecorderManager {
     this._label = safeTrim(label);
     this._clientId = safeTrim(clientId);
     this._requestId = safeTrim(requestId);
-    this._targetSampleRate = Number(sampleRate) || 16000;
+    this._targetSampleRate = toInt(sampleRate, 16000, { min: 8000, max: 48000, name: 'sampleRate' });
     this._continuous = !!continuous;
     this._startPayload = startPayload && typeof startPayload === 'object' ? startPayload : null;
     this._onStateChange = typeof onStateChange === 'function' ? onStateChange : null;
@@ -58,8 +108,8 @@ export class VoiceKitWsRecorderManager {
     this._isRecognizing = false;
     this._stopGraceTimer = null;
     this._finalWaitTimer = null;
-    this._stopGraceMs = Math.max(0, Number(stopGraceMs) || 480);
-    this._finalWaitMs = Math.max(200, Number(finalWaitMs) || 1500);
+    this._stopGraceMs = toInt(stopGraceMs, 480, { min: 0, max: 5000, name: 'stopGraceMs' });
+    this._finalWaitMs = toInt(finalWaitMs, 1500, { min: 200, max: 30000, name: 'finalWaitMs' });
     this._lastPartialText = '';
   }
 
@@ -159,18 +209,20 @@ export class VoiceKitWsRecorderManager {
       return false;
     }
 
+    let wakeConfig = null;
+    try {
+      wakeConfig = normalizeWakeConfig(this._startPayload);
+    } catch (e) {
+      this._fail('Failed to start VoiceKit ASR', e);
+      throw e;
+    }
+
     this._cleanup();
     this._disposeWs();
     this._setRecognizing(true);
     this._setRecording(true);
 
-    const wakeEnabled = !!(this._startPayload && this._startPayload.wake_word_enabled);
-    const wakeWord = wakeEnabled ? safeTrim(this._startPayload && this._startPayload.wake_word) : '';
-    const wakeWords = wakeEnabled ? parseWakeWords(wakeWord) : [];
-    const wakeMatchMode = safeTrim(this._startPayload && this._startPayload.wake_match_mode) || 'contains';
-    const strict = wakeMatchMode === 'prefix';
-    const cooldownMs = Number(this._startPayload && this._startPayload.wake_cooldown_ms) || 0;
-    const wakeMaxPos = Number(this._startPayload && this._startPayload.wake_max_pos) || (strict ? 0 : 2);
+    const { wakeEnabled, wakeWord, wakeWords, strict, cooldownMs, wakeMaxPos } = wakeConfig;
 
     const sessionId = this._requestId || `asrws_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     let startupError = '';
@@ -288,14 +340,22 @@ export class VoiceKitWsRecorderManager {
     this._stopGraceTimer = setTimeout(() => {
       this._stopGraceTimer = null;
       this._stopping = true;
+      let stopFailed = false;
       try {
         if (this._mgr) this._mgr.stopHoldToTalk();
-      } catch (_) {
-        // ignore
+      } catch (e) {
+        stopFailed = true;
+        this._fail('voicekit_stop_hold_to_talk_failed', e);
       }
       this._wsReady = false;
       this._frameQueue = [];
       this._stopMicOnly();
+      this._disposeWs();
+      if (stopFailed) {
+        this._setRecognizing(false);
+        this._setRecording(false);
+        return;
+      }
       if (this._finalReceived || this._continuous) {
         this._setRecognizing(false);
         this._setRecording(false);
@@ -310,9 +370,11 @@ export class VoiceKitWsRecorderManager {
       }
       this._finalWaitTimer = setTimeout(() => {
         this._finalWaitTimer = null;
+        const timeoutInfo = { reason: 'final_wait_timeout' };
+        this._fail('voicekit_final_wait_timeout', timeoutInfo);
         if (this._onFinalTimeout) {
           try {
-            this._onFinalTimeout(this._lastPartialText, { reason: 'final_wait_timeout' });
+            this._onFinalTimeout(this._lastPartialText, timeoutInfo);
           } catch (_) {
             // ignore
           }

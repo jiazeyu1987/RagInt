@@ -60,16 +60,7 @@ def _detect_audio_mimetype(path: str) -> str:
     if len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0:
         return "audio/mpeg"
 
-    ext = str(os.path.splitext(str(path))[1] or "").strip().lower()
-    if ext in (".wav", ".wave"):
-        return "audio/wav"
-    if ext == ".mp3":
-        return "audio/mpeg"
-    if ext == ".ogg":
-        return "audio/ogg"
-    if ext == ".flac":
-        return "audio/flac"
-    return "application/octet-stream"
+    raise ValueError("audio_format_unsupported")
 
 
 def create_blueprint(deps):
@@ -81,6 +72,8 @@ def create_blueprint(deps):
         try:
             limit = int(limit)
         except (TypeError, ValueError):
+            return jsonify({"error": "invalid_limit"}), 400
+        if limit < 1 or limit > 200:
             return jsonify({"error": "invalid_limit"}), 400
         items = deps.recording_store.list(limit=limit)
         return jsonify({"items": items})
@@ -101,6 +94,8 @@ def create_blueprint(deps):
             return jsonify({"error": "stops_required"}), 400
         rid = str(data.get("recording_id") or "").strip() or f"rec_{int(time.time()*1000)}"
         raw_meta = data.get("metadata")
+        if raw_meta is not None and not isinstance(raw_meta, dict):
+            return jsonify({"error": "metadata_object_required"}), 400
         metadata = raw_meta if isinstance(raw_meta, dict) else {}
         info = deps.recording_store.create(
             recording_id=rid,
@@ -143,8 +138,10 @@ def create_blueprint(deps):
         try:
             deps.recording_store.set_display_name(recording_id, name)
             return jsonify({"ok": True, "recording_id": str(recording_id), "display_name": name})
-        except Exception as e:
+        except ValueError as e:
             return jsonify({"ok": False, "error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
 
     @bp.route("/api/recordings/<recording_id>", methods=["DELETE"])
     def delete_recording(recording_id: str):
@@ -153,8 +150,10 @@ def create_blueprint(deps):
         try:
             deps.recording_store.delete(recording_id)
             return jsonify({"ok": True})
-        except Exception as e:
+        except ValueError as e:
             return jsonify({"ok": False, "error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
 
     @bp.route("/api/recordings/<recording_id>/stop/<int:stop_index>", methods=["GET"])
     def get_recording_stop(recording_id: str, stop_index: int):
@@ -172,7 +171,10 @@ def create_blueprint(deps):
             return jsonify({"error": "bad_path"}), 400
         if not path.exists() or not path.is_file():
             return jsonify({"error": "not_found"}), 404
-        mimetype = _detect_audio_mimetype(str(path))
+        try:
+            mimetype = _detect_audio_mimetype(str(path))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 415
         return send_file(str(path), mimetype=mimetype, conditional=True)
 
     @bp.route("/api/recordings/<recording_id>/segment/<int:segment_id>/regenerate", methods=["POST"])

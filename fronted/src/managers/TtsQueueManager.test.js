@@ -141,6 +141,26 @@ describe('TtsQueueManager', () => {
     expect(() => manager._resolvePlaybackUrl('/api/recordings/rec_1/audio/a.wav')).toThrow('Invalid TTS baseUrl');
   });
 
+  test('fails fast when fetch concurrency is explicitly unsupported', () => {
+    expect(
+      () =>
+        new TtsQueueManager({
+          baseUrl: 'https://unit.test',
+          fetchConcurrency: 3,
+          currentAudioRef: { current: null },
+          audioContextRef: { current: null },
+        })
+    ).toThrow('Invalid TTS fetchConcurrency');
+
+    const manager = new TtsQueueManager({
+      baseUrl: 'https://unit.test',
+      currentAudioRef: { current: null },
+      audioContextRef: { current: null },
+    });
+
+    expect(() => manager.setFetchConcurrency(3, 'ui_change')).toThrow('Invalid TTS fetchConcurrency');
+  });
+
   test('stop emits play_cancelled for active request and clears current audio', () => {
     const emitClientEvent = jest.fn();
     const stopAudio = jest.fn();

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from backend.services.audio_utils import ensure_wav_bytes
+from backend.services.audio_utils import ensure_wav_bytes, patch_wav_header_sizes
 from backend.services.question_normalizer import normalize_question
 
 
@@ -159,8 +159,8 @@ class QaAudioCacheStore:
         return int(time.time() * 1000)
 
     def _safe_audio_path(self, rel_path: str) -> Path:
-        rel = str(rel_path or "").replace("\\", "/").lstrip("/")
-        if not rel or ".." in rel.split("/"):
+        rel = str(rel_path or "")
+        if not rel or "\\" in rel or rel.startswith("/") or ".." in rel.split("/"):
             raise ValueError("bad_rel_path")
         p = (self._root_dir / rel).resolve()
         base = self._root_dir.resolve()
@@ -258,43 +258,6 @@ class QaAudioCacheStore:
                         updated_at_ms=int(row["updated_at_ms"] or 0),
                     )
 
-                # Backward-compat fallback:
-                # if old rows were written with a legacy normalizer, compare by current
-                # normalized(question_text) in memory within the same TTS profile bucket.
-                rows = conn.execute(
-                    (
-                        """
-                    SELECT
-                        id, normalized_question, question_text, answer_text, audio_rel_path,
-                        tts_provider, tts_voice, tts_speed, source_request_id, created_at_ms, updated_at_ms
-                    FROM qa_audio_pairs
-                    WHERE """
-                        + " AND ".join(
-                            (["tts_speed = ?"] + (["tts_provider = ?"] if provider else []) + (["tts_voice = ?"] if voice else []))
-                        )
-                        + """
-                    ORDER BY updated_at_ms DESC
-                    LIMIT 200
-                    """
-                    ),
-                    tuple([float(speed)] + ([provider] if provider else []) + ([voice] if voice else [])),
-                ).fetchall()
-                for r in rows:
-                    if normalize_question(str(r["question_text"] or "")) != nq:
-                        continue
-                    return QaAudioPair(
-                        id=int(r["id"]),
-                        normalized_question=str(r["normalized_question"] or ""),
-                        question_text=str(r["question_text"] or ""),
-                        answer_text=str(r["answer_text"] or ""),
-                        audio_rel_path=str(r["audio_rel_path"] or ""),
-                        tts_provider=str(r["tts_provider"] or ""),
-                        tts_voice=str(r["tts_voice"] or ""),
-                        tts_speed=float(r["tts_speed"] or 1.0),
-                        source_request_id=str(r["source_request_id"] or ""),
-                        created_at_ms=int(r["created_at_ms"] or 0),
-                        updated_at_ms=int(r["updated_at_ms"] or 0),
-                    )
                 return None
             finally:
                 conn.close()
@@ -311,24 +274,14 @@ class QaAudioCacheStore:
             raise ValueError(f"qa_audio_file_empty pair_id={int(pair_id)} path={pair.audio_rel_path}")
         return p
 
-    @staticmethod
-    def _guess_sample_rate_by_provider(tts_provider: str) -> int:
-        p = str(tts_provider or "").strip().lower()
-        if p in ("edge", "modelscope", "bailian", "dashscope", "flash"):
-            return 16000
-        return 16000
-
     def _repair_audio_file_if_needed(self, path: Path, *, tts_provider: str) -> None:
         raw = path.read_bytes()
         if not raw:
             return
-        fixed = ensure_wav_bytes(
-            raw,
-            sample_rate=self._guess_sample_rate_by_provider(tts_provider),
-            channels=1,
-            bits_per_sample=16,
-        )
-        if not fixed or fixed == raw:
+        if not (len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WAVE"):
+            return
+        fixed, changed = patch_wav_header_sizes(raw)
+        if not changed:
             return
         tmp = path.with_name(f"{path.name}.{int(time.time() * 1000)}.fix")
         try:
@@ -660,7 +613,10 @@ class QaAudioCacheStore:
             for rel_path in deleted_paths:
                 if not rel_path:
                     continue
-                p = self._safe_audio_path(rel_path)
+                try:
+                    p = self._safe_audio_path(rel_path)
+                except ValueError:
+                    continue
                 if p.exists() and p.is_file():
                     p.unlink(missing_ok=True)
 

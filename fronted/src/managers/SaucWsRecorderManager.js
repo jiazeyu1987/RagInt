@@ -210,7 +210,7 @@ export class SaucWsRecorderManager {
     this._label = safeTrim(label);
     this._clientId = safeTrim(clientId);
     this._requestId = safeTrim(requestId);
-    this._targetSampleRate = Number(sampleRate) || 16000;
+    this._targetSampleRate = toInt(sampleRate, 16000, { min: 8000, max: 48000, name: 'sampleRate' });
     this._continuous = !!continuous;
 
     this._onStateChange = typeof onStateChange === 'function' ? onStateChange : null;
@@ -235,8 +235,8 @@ export class SaucWsRecorderManager {
     this._isRecognizing = false;
     this._stopGraceTimer = null;
     this._finalWaitTimer = null;
-    this._stopGraceMs = Math.max(0, Number(stopGraceMs) || 480);
-    this._finalWaitMs = Math.max(200, Number(finalWaitMs) || 1500);
+    this._stopGraceMs = toInt(stopGraceMs, 480, { min: 0, max: 5000, name: 'stopGraceMs' });
+    this._finalWaitMs = toInt(finalWaitMs, 1500, { min: 200, max: 30000, name: 'finalWaitMs' });
     this._lastPartialText = '';
     this._readyResolve = null;
     this._readyReject = null;
@@ -410,8 +410,9 @@ export class SaucWsRecorderManager {
     if (!this._ws || this._ws.readyState !== WebSocket.OPEN) return;
     try {
       this._ws.send(JSON.stringify(message));
-    } catch (_) {
-      // ignore
+    } catch (e) {
+      this._fail('sauc_proxy_control_send_failed', e);
+      throw e;
     }
   }
 
@@ -654,7 +655,14 @@ export class SaucWsRecorderManager {
       this._wsReady = false;
       this._frameQueue = [];
       this._stopMicOnly();
-      this._sendControlMessage({ type: 'stop' });
+      try {
+        this._sendControlMessage({ type: 'stop' });
+      } catch (_) {
+        this._disposeWs();
+        this._setRecognizing(false);
+        this._setRecording(false);
+        return;
+      }
 
       if (this._finalReceived || this._continuous) {
         this._disposeWs();
@@ -672,9 +680,11 @@ export class SaucWsRecorderManager {
       }
       this._finalWaitTimer = setTimeout(() => {
         this._finalWaitTimer = null;
+        const timeoutInfo = { reason: 'final_wait_timeout' };
+        this._fail('sauc_proxy_final_wait_timeout', timeoutInfo);
         if (this._onFinalTimeout) {
           try {
-            this._onFinalTimeout(this._lastPartialText, { reason: 'final_wait_timeout' });
+            this._onFinalTimeout(this._lastPartialText, timeoutInfo);
           } catch (_) {
             // ignore
           }

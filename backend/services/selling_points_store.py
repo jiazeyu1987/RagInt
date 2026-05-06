@@ -59,14 +59,11 @@ class SellingPointsStore:
                 conn.close()
 
     def _ensure_column(self, *, conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
-        try:
-            cols = conn.execute(f"PRAGMA table_info({table});").fetchall() or []
-            names = {str(r[1]) for r in cols if len(r) >= 2}
-            if column in names:
-                return
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl};")
-        except Exception:
+        cols = conn.execute(f"PRAGMA table_info({table});").fetchall() or []
+        names = {str(r[1]) for r in cols if len(r) >= 2}
+        if column in names:
             return
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl};")
 
     @staticmethod
     def _normalize_level(level: str | None, *, default: str | None = "public") -> str:
@@ -119,7 +116,7 @@ class SellingPointsStore:
             return False
         try:
             w = float(weight)
-        except Exception:
+        except (TypeError, ValueError):
             raise ValueError("selling_points_weight_invalid") from None
         w = max(-1000.0, min(w, 1000.0))
         if now_ms is None:
@@ -287,7 +284,7 @@ class SellingPointsStore:
     def pick_topn(*, points: list[SellingPoint], n: int) -> list[SellingPoint]:
         try:
             n = max(0, min(int(n or 0), 20))
-        except Exception:
+        except (TypeError, ValueError):
             raise ValueError("selling_points_topn_invalid") from None
         if n <= 0:
             return []

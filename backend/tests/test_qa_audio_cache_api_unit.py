@@ -66,6 +66,15 @@ def test_qa_audio_cache_api_detects_mimetype_from_bytes(tmp_path: Path):
     assert miss.get_json()["error"] == "not_found"
 
 
+def test_qa_audio_cache_api_rejects_unknown_audio_header_without_octet_stream(tmp_path: Path):
+    (tmp_path / "pair_1.wav").write_bytes(b"not-a-real-wav")
+
+    resp = _build_app(tmp_path).test_client().get("/api/qa_audio_cache/audio/1")
+
+    assert resp.status_code == 415
+    assert resp.get_json()["error"] == "audio_format_unsupported"
+
+
 def test_qa_audio_cache_api_returns_500_when_store_dependency_is_missing():
     c = _build_app_with_deps(_MissingStoreDeps()).test_client()
 

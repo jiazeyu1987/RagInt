@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 
 import pytest
 
@@ -59,6 +60,22 @@ def test_selling_points_store_fails_fast_on_invalid_tags_json(tmp_path, tags_jso
 
     with pytest.raises(ValueError, match="invalid selling_points.tags_json"):
         store.list(stop_name="A", limit=10)
+
+
+def test_selling_points_store_does_not_swallow_schema_migration_failure(tmp_path):
+    store = SellingPointsStore(tmp_path / "sp.db")
+
+    class BrokenConn:
+        def execute(self, *args, **kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        store._ensure_column(  # noqa: SLF001 - regression test for fail-fast schema migration.
+            conn=BrokenConn(),
+            table="selling_points",
+            column="status",
+            ddl='status TEXT NOT NULL DEFAULT "published"',
+        )
 
 
 @pytest.mark.parametrize(

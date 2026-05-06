@@ -674,7 +674,6 @@ export async function playWavStreamViaWebAudio(url, audioContextRef, currentAudi
     throw err;
   } finally {
     stopPlayback();
-    stopAllSources();
   }
 }
 

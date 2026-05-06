@@ -79,7 +79,7 @@ class HttpNavProvider(NavProvider):
         http_cfg = nav_cfg.http
         base_url = str(http_cfg.base_url or "").strip().rstrip("/")
         if not base_url:
-            return NavProviderResult(state="failed", reason="nav_http_base_url_missing")
+            raise ValueError("nav_http_base_url_missing")
 
         go_to_path = str(http_cfg.go_to_path or "/go_to").strip() or "/go_to"
         cancel_path = str(http_cfg.cancel_path or "/cancel").strip() or "/cancel"
@@ -93,8 +93,8 @@ class HttpNavProvider(NavProvider):
         try:
             with requests.post(f"{base_url}{go_to_path}", headers=headers, json=payload, timeout=10) as r:
                 r.raise_for_status()
-        except Exception as e:
-            return NavProviderResult(state="failed", reason=f"nav_http_go_to_failed:{type(e).__name__}")
+        except requests.RequestException as e:
+            raise RuntimeError(f"nav_http_go_to_failed:{type(e).__name__}") from e
 
         deadline = time.time() + float(timeout_s)
         while True:
@@ -105,10 +105,10 @@ class HttpNavProvider(NavProvider):
                         headers=headers,
                         json={"client_id": client_id, "request_id": request_id},
                         timeout=5,
-                    ) as _:
-                        pass
-                except Exception:
-                    pass
+                    ) as r:
+                        r.raise_for_status()
+                except requests.RequestException as e:
+                    raise RuntimeError(f"nav_http_cancel_failed:{type(e).__name__}") from e
                 return NavProviderResult(state="cancelled", reason="cancelled")
             if time.time() >= deadline:
                 return NavProviderResult(state="timeout", reason="nav_timeout")
@@ -122,14 +122,17 @@ class HttpNavProvider(NavProvider):
                 ) as r:
                     r.raise_for_status()
                     data = r.json()
-            except Exception:
-                data = None
+            except requests.RequestException as e:
+                raise RuntimeError(f"nav_http_state_failed:{type(e).__name__}") from e
+            except ValueError as e:
+                raise ValueError("nav_http_state_payload_invalid") from e
 
-            if isinstance(data, dict):
-                st = str(data.get("state") or "").strip().lower()
-                reason = str(data.get("reason") or data.get("error") or "").strip() or None
-                if st in ("arrived", "failed", "cancelled", "estop", "timeout"):
-                    return NavProviderResult(state=st, reason=reason)
+            if not isinstance(data, dict):
+                raise ValueError("nav_http_state_payload_invalid")
+            st = str(data.get("state") or "").strip().lower()
+            reason = str(data.get("reason") or data.get("error") or "").strip() or None
+            if st in ("arrived", "failed", "cancelled", "estop", "timeout"):
+                return NavProviderResult(state=st, reason=reason)
             time.sleep(poll_ms / 1000.0)
 
 

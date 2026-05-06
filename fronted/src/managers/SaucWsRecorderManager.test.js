@@ -84,6 +84,28 @@ describe('SaucWsRecorderManager', () => {
     ).toThrow('invalid_sauc_boolean_config:enableItn');
   });
 
+  test('fails fast when explicit timing config is invalid', () => {
+    expect(
+      () =>
+        new SaucWsRecorderManager({
+          stopGraceMs: 'slow',
+          saucOptions: {
+            segmentDurationMs: 200,
+          },
+        })
+    ).toThrow('invalid_sauc_numeric_config:stopGraceMs');
+
+    expect(
+      () =>
+        new SaucWsRecorderManager({
+          finalWaitMs: 50,
+          saucOptions: {
+            segmentDurationMs: 200,
+          },
+        })
+    ).toThrow('invalid_sauc_numeric_config:finalWaitMs');
+  });
+
   test('does not fall back to window origin for an invalid explicit base URL', async () => {
     fetch.mockResolvedValueOnce({
       ok: true,
@@ -165,15 +187,17 @@ describe('SaucWsRecorderManager', () => {
     );
   });
 
-  test('stop triggers final-timeout fallback when no final result arrives', () => {
+  test('stop reports final timeout when no final result arrives', () => {
     const onFinalTimeout = jest.fn();
+    const onError = jest.fn();
     const onStateChange = jest.fn();
     const onRecognizingChange = jest.fn();
 
     const mgr = new SaucWsRecorderManager({
       stopGraceMs: 10,
-      finalWaitMs: 50,
+      finalWaitMs: 200,
       onFinalTimeout,
+      onError,
       onStateChange,
       onRecognizingChange,
     });
@@ -201,7 +225,49 @@ describe('SaucWsRecorderManager', () => {
     expect(wsSend).toHaveBeenCalledWith(JSON.stringify({ type: 'stop' }));
 
     jest.runOnlyPendingTimers();
+    expect(onError).toHaveBeenCalledWith(
+      'sauc_proxy_final_wait_timeout',
+      expect.objectContaining({ reason: 'final_wait_timeout' })
+    );
     expect(onFinalTimeout).toHaveBeenCalledWith('', { reason: 'final_wait_timeout' });
+    expect(wsClose).toHaveBeenCalledTimes(1);
+    expect(onStateChange).toHaveBeenLastCalledWith(false);
+    expect(onRecognizingChange).toHaveBeenLastCalledWith(false);
+  });
+
+  test('stop exposes websocket stop control send failures', () => {
+    const onError = jest.fn();
+    const onStateChange = jest.fn();
+    const onRecognizingChange = jest.fn();
+    const wsClose = jest.fn();
+    const mgr = new SaucWsRecorderManager({
+      stopGraceMs: 10,
+      finalWaitMs: 200,
+      onError,
+      onStateChange,
+      onRecognizingChange,
+    });
+
+    const sendError = new Error('ws_send_failed');
+    mgr._ws = {
+      readyState: 1,
+      send: jest.fn(() => {
+        throw sendError;
+      }),
+      close: wsClose,
+      onopen: null,
+      onmessage: null,
+      onerror: null,
+      onclose: null,
+    };
+    mgr._recorder = { stop: jest.fn() };
+    mgr._setRecording(true);
+    mgr._setRecognizing(true);
+
+    mgr.stop();
+    expect(() => jest.advanceTimersByTime(10)).not.toThrow();
+
+    expect(onError).toHaveBeenCalledWith('sauc_proxy_control_send_failed', sendError);
     expect(wsClose).toHaveBeenCalledTimes(1);
     expect(onStateChange).toHaveBeenLastCalledWith(false);
     expect(onRecognizingChange).toHaveBeenLastCalledWith(false);
