@@ -94,7 +94,7 @@ def _build_app(work_dir: Path) -> tuple[Flask, _Deps]:
     return app, deps
 
 
-def _seed_products_and_bindings(deps: _Deps) -> None:
+def _seed_products_and_bindings(deps: _Deps, *, include_station_configs: bool = True) -> None:
     deps.pad_product_store.replace_hall_products(
         hall_id="hall_01",
         products=[
@@ -129,6 +129,17 @@ def _seed_products_and_bindings(deps: _Deps) -> None:
     )
     deps.pad_product_store.upsert_hall_binding(client_id="pad-a", hall_id="hall_01", hall_name="Hall One")
     deps.pad_product_store.upsert_hall_binding(client_id="pad-b", hall_id="hall_02", hall_name="Hall Two")
+    if include_station_configs:
+        for hall_id in ("hall_01", "hall_02"):
+            for station_key in ("station_a", "station_b"):
+                deps.pad_product_store.upsert_station_config(
+                    hall_id=hall_id,
+                    station_key=station_key,
+                    label=station_key,
+                    recording_id="recording_001",
+                    stop_index=1,
+                    stop_name=station_key,
+                )
     deps.pad_product_audio_service.save_uploaded_audio(
         product_id="product_001",
         filename="alpha.wav",
@@ -317,6 +328,24 @@ def test_current_audio_and_offline_assets_allow_cross_hall_online_but_require_re
     assert offline_image_wrong_hall.get_json()["error"] == "image_not_found"
 
 
+def test_file_send_failures_are_not_reported_as_bad_asset_paths(work_dir: Path, monkeypatch: pytest.MonkeyPatch):
+    # Given a valid current audio asset exists for the bound pad client
+    app, deps = _build_app(work_dir)
+    app.config["TESTING"] = True
+    _seed_products_and_bindings(deps)
+    client = app.test_client()
+
+    def fail_send_file(*args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        raise RuntimeError("send_file_dependency_failed")
+
+    monkeypatch.setattr("backend.api.pad.send_file", fail_send_file)
+
+    # When the underlying file sender fails unexpectedly
+    # Then the route fails fast instead of downgrading it to a bad path response
+    with pytest.raises(RuntimeError, match="send_file_dependency_failed"):
+        client.get("/api/pad/products/product_001/audio/current", headers={"X-Client-ID": "pad-a"})
+
+
 def test_upload_and_regenerate_switch_current_active_audio(work_dir: Path):
     app, deps = _build_app(work_dir)
     _seed_products_and_bindings(deps)
@@ -472,6 +501,7 @@ def test_scene_and_hotspot_endpoints_roundtrip_with_offline_manifest(work_dir: P
     )
     assert scene_background.status_code == 200
     assert "image/png" in str(scene_background.headers.get("content-type", "")).lower()
+    scene_background.close()
 
     update_scene = client.put(
         f"/api/pad/halls/current/scenes/{scene_id}",
@@ -518,6 +548,7 @@ def test_scene_and_hotspot_endpoints_roundtrip_with_offline_manifest(work_dir: P
     )
     assert offline_background.status_code == 200
     assert "image/png" in str(offline_background.headers.get("content-type", "")).lower()
+    offline_background.close()
 
     delete_hotspot = client.delete(
         f"/api/pad/halls/current/scenes/{scene_id}/hotspots/{hotspot_id}",
@@ -561,6 +592,7 @@ def test_station_endpoints_roundtrip_and_manifest_payload(work_dir: Path):
     app, deps = _build_app(work_dir)
     _seed_products_and_bindings(deps)
     hotspot = _seed_station_assets(deps)
+    _seed_station_assets(deps, station_key="station_b")
     client = app.test_client()
 
     stations = client.get("/api/pad/halls/current/stations", headers={"X-Client-ID": "pad-a"})
@@ -661,6 +693,36 @@ def test_station_endpoints_roundtrip_and_manifest_payload(work_dir: Path):
     assert delete_hotspot.status_code == 200
 
 
+def test_bound_station_without_config_returns_not_found(work_dir: Path):
+    app, deps = _build_app(work_dir)
+    _seed_products_and_bindings(deps, include_station_configs=False)
+    client = app.test_client()
+
+    response = client.get(
+        "/api/pad/halls/current/stations/display_slot_1/background",
+        headers={"X-Client-ID": "pad-a"},
+    )
+
+    assert response.status_code == 404
+    assert response.get_json()["error"] == "station_config_not_found"
+
+
+def test_bound_station_without_config_fails_listing_and_manifest_routes(work_dir: Path):
+    app, deps = _build_app(work_dir)
+    _seed_products_and_bindings(deps, include_station_configs=False)
+    client = app.test_client()
+
+    for path in (
+        "/api/pad/display/current",
+        "/api/pad/halls/current/stations",
+        "/api/pad/offline/manifest",
+    ):
+        response = client.get(path, headers={"X-Client-ID": "pad-a"})
+
+        assert response.status_code == 404
+        assert response.get_json()["error"] == "station_config_not_found"
+
+
 def test_station_timeline_route_rejects_legacy_timeline_events_payload(work_dir: Path):
     app, deps = _build_app(work_dir)
     _seed_products_and_bindings(deps)
@@ -690,6 +752,14 @@ def test_station_timeline_route_rejects_legacy_timeline_events_payload(work_dir:
 def test_station_wireframe_requires_background_and_allows_cross_hall_product_binding(work_dir: Path):
     app, deps = _build_app(work_dir)
     _seed_products_and_bindings(deps)
+    deps.pad_product_store.upsert_station_config(
+        hall_id="hall_01",
+        station_key="station_a",
+        label="Station A",
+        recording_id="recording_001",
+        stop_index=1,
+        stop_name="Station A",
+    )
     client = app.test_client()
 
     no_background = client.post(
@@ -728,6 +798,14 @@ def test_station_wireframe_requires_background_and_allows_cross_hall_product_bin
 def test_product_search_placeholder_hotspots_and_referenced_manifest_assets(work_dir: Path):
     app, deps = _build_app(work_dir)
     _seed_products_and_bindings(deps)
+    deps.pad_product_store.upsert_station_config(
+        hall_id="hall_01",
+        station_key="station_a",
+        label="Station A",
+        recording_id="recording_001",
+        stop_index=1,
+        stop_name="Station A",
+    )
     client = app.test_client()
 
     search = client.get("/api/pad/products/search?q=Beta", headers={"X-Client-ID": "pad-a"})
@@ -1088,6 +1166,22 @@ def test_station_hotspot_import_validates_payload(work_dir: Path):
     assert missing_product.get_json()["error"] == "product_not_found"
 
 
+def test_station_hotspot_import_rejects_malformed_json(work_dir: Path):
+    app, deps = _build_app(work_dir)
+    _seed_products_and_bindings(deps)
+    _seed_station_assets(deps)
+    client = app.test_client()
+
+    response = client.post(
+        "/api/pad/halls/current/stations/display_slot_1/hotspots/import",
+        headers={"X-Client-ID": "pad-a", "Content-Type": "application/json"},
+        data="{",
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "bad_json"
+
+
 def test_batch_default_tts_generation_is_visible_via_products_and_manifest_endpoints(work_dir: Path):
     app, deps = _build_app(work_dir)
     deps.pad_product_store.replace_hall_products(
@@ -1107,6 +1201,15 @@ def test_batch_default_tts_generation_is_visible_via_products_and_manifest_endpo
         ],
     )
     deps.pad_product_store.upsert_hall_binding(client_id="pad-a", hall_id="hall_01", hall_name="Hall One")
+    for station_key in ("station_a", "station_b"):
+        deps.pad_product_store.upsert_station_config(
+            hall_id="hall_01",
+            station_key=station_key,
+            label=station_key,
+            recording_id="recording_001",
+            stop_index=1,
+            stop_name=station_key,
+        )
     result = default_tts_script.run_batch(
         deps=deps,
         hall_ids=default_tts_script.select_hall_ids(["hall_01"]),

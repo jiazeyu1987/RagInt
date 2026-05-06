@@ -22,9 +22,7 @@ def _maybe_stream_cache_hit(
     if not (cache_enabled and kb_version and hasattr(history_store, "cache_get")):
         return None
 
-    cached_answer = None
-    with contextlib.suppress(Exception):
-        cached_answer = history_store.cache_get(question=question, kb_version=kb_version)
+    cached_answer = history_store.cache_get(question=question, kb_version=kb_version)
 
     if cached_answer:
         cached_answer = str(cached_answer or "")
@@ -62,11 +60,10 @@ def _maybe_stream_audio_cache_hit(
     if qa_audio_matcher is None:
         return None
 
-    hit = None
     qa_match_started = False
-    with contextlib.suppress(Exception):
-        from backend.services.qa_audio_matcher import TtsProfile
+    from backend.services.qa_audio_matcher import TtsProfile
 
+    try:
         if callable(timings_set):
             timings_set(request_id, t_qa_match_start_ms=int(time.time() * 1000))
             qa_match_started = True
@@ -79,10 +76,10 @@ def _maybe_stream_audio_cache_hit(
             classifier_chat_name=str(qa_audio_classifier_chat_name or "问题比对"),
             base_url=str(base_url or ""),
         )
-
-    if qa_match_started and callable(timings_set):
-        with contextlib.suppress(Exception):
-            timings_set(request_id, t_qa_match_end_ms=int(time.time() * 1000))
+    finally:
+        if qa_match_started and callable(timings_set):
+            with contextlib.suppress(Exception):
+                timings_set(request_id, t_qa_match_end_ms=int(time.time() * 1000))
 
     if not hit:
         return None

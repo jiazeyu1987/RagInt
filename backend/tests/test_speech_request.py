@@ -105,3 +105,43 @@ def test_parse_ask_request_disables_qa_audio_cache_lookup_for_tour_action():
         assert parsed is not None
         assert parsed.tour_action == "start"
         assert parsed.qa_audio_cache_lookup_enabled is False
+
+
+def test_parse_ask_request_rejects_non_object_guide():
+    app = Flask(__name__)
+    data = {"question": "hi", "guide": []}
+    with app.test_request_context("/api/ask", method="POST", json=data):
+        parsed, err = parse_ask_request(deps=_Deps(), data=data)
+        assert parsed is None
+        assert err is not None
+        assert err.status_code == 400
+
+
+def test_parse_ask_request_rejects_invalid_numeric_fields():
+    app = Flask(__name__)
+    data = {"question": "hi", "tts_speed": "fast"}
+    with app.test_request_context("/api/ask", method="POST", json=data):
+        parsed, err = parse_ask_request(deps=_Deps(), data=data)
+        assert parsed is None
+        assert err is not None
+        assert err.status_code == 400
+
+
+def test_parse_ask_request_rejects_invalid_header_tts_speed():
+    app = Flask(__name__)
+    data = {"question": "hi"}
+    with app.test_request_context("/api/ask", method="POST", json=data, headers={"X-TTS-Speed": "fast"}):
+        parsed, err = parse_ask_request(deps=_Deps(), data=data)
+        assert parsed is None
+        assert err is not None
+        assert err.status_code == 400
+
+
+def test_parse_ask_request_rejects_invalid_bool_fields():
+    app = Flask(__name__)
+    data = {"question": "hi", "qa_audio_cache_lookup_enabled": "maybe"}
+    with app.test_request_context("/api/ask", method="POST", json=data):
+        parsed, err = parse_ask_request(deps=_Deps(), data=data)
+        assert parsed is None
+        assert err is not None
+        assert err.status_code == 400

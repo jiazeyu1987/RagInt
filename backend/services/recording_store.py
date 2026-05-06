@@ -21,6 +21,10 @@ class RecordingInfo:
     metadata: dict
 
 
+class RecordingStoreDataError(ValueError):
+    pass
+
+
 class RecordingStore:
     """
     Persist tour recordings (per stop):
@@ -59,15 +63,11 @@ class RecordingStore:
                     );
                     """
                 )
-                # Backward compatible migration: add display_name column if missing.
-                try:
-                    cols = [str(r["name"]) for r in conn.execute("PRAGMA table_info(recordings);").fetchall()]
-                    if "display_name" not in cols:
-                        conn.execute("ALTER TABLE recordings ADD COLUMN display_name TEXT;")
-                    if "metadata_json" not in cols:
-                        conn.execute("ALTER TABLE recordings ADD COLUMN metadata_json TEXT;")
-                except Exception:
-                    pass
+                cols = [str(r["name"]) for r in conn.execute("PRAGMA table_info(recordings);").fetchall()]
+                if "display_name" not in cols:
+                    conn.execute("ALTER TABLE recordings ADD COLUMN display_name TEXT;")
+                if "metadata_json" not in cols:
+                    conn.execute("ALTER TABLE recordings ADD COLUMN metadata_json TEXT;")
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS recording_ask_events (
@@ -103,20 +103,26 @@ class RecordingStore:
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_rec_tts_lookup ON recording_tts_audio(recording_id, stop_index, seq);"
                 )
-                # Backward compatible migration: add updated_at_ms to support
-                # per-segment text/audio regeneration with cache-busting URLs.
-                try:
-                    cols_tts = [str(r["name"]) for r in conn.execute("PRAGMA table_info(recording_tts_audio);").fetchall()]
-                    if "updated_at_ms" not in cols_tts:
-                        conn.execute("ALTER TABLE recording_tts_audio ADD COLUMN updated_at_ms INTEGER;")
-                except Exception:
-                    pass
+                cols_tts = [str(r["name"]) for r in conn.execute("PRAGMA table_info(recording_tts_audio);").fetchall()]
+                if "updated_at_ms" not in cols_tts:
+                    conn.execute("ALTER TABLE recording_tts_audio ADD COLUMN updated_at_ms INTEGER;")
                 conn.commit()
             finally:
                 conn.close()
 
     def _now_ms(self) -> int:
         return int(time.time() * 1000)
+
+    def _load_json_field(self, *, value: str | None, field: str, recording_id: str, expected_type: type):
+        if value is None:
+            raise RecordingStoreDataError(f"recording_json_missing:{recording_id}:{field}")
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError as e:
+            raise RecordingStoreDataError(f"recording_json_invalid:{recording_id}:{field}") from e
+        if not isinstance(decoded, expected_type):
+            raise RecordingStoreDataError(f"recording_json_type_invalid:{recording_id}:{field}")
+        return decoded
 
     def create(self, *, recording_id: str, stops: list[str], metadata: dict | None = None) -> RecordingInfo:
         rid = str(recording_id or "").strip()
@@ -154,15 +160,17 @@ class RecordingStore:
     def finish(self, recording_id: str) -> None:
         rid = str(recording_id or "").strip()
         if not rid:
-            return
+            raise ValueError("recording_id_empty")
         finished_at_ms = self._now_ms()
         with self._lock:
             conn = self._connect()
             try:
-                conn.execute(
+                cur = conn.execute(
                     "UPDATE recordings SET finished_at_ms=? WHERE recording_id=?",
                     (int(finished_at_ms), rid),
                 )
+                if int(cur.rowcount or 0) <= 0:
+                    raise KeyError(f"recording_not_found:{rid}")
                 conn.commit()
             finally:
                 conn.close()
@@ -185,15 +193,20 @@ class RecordingStore:
                 out = []
                 for r in rows:
                     item = dict(r)
-                    try:
-                        item["metadata"] = json.loads(item.get("metadata_json") or "{}")
-                    except Exception:
-                        item["metadata"] = {}
-                    try:
-                        stops = json.loads(item.get("stops_json") or "[]")
-                        item["stop_count"] = len(stops) if isinstance(stops, list) else 0
-                    except Exception:
-                        item["stop_count"] = 0
+                    rid = str(item.get("recording_id") or "")
+                    item["metadata"] = self._load_json_field(
+                        value=item.get("metadata_json"),
+                        field="metadata_json",
+                        recording_id=rid,
+                        expected_type=dict,
+                    )
+                    stops = self._load_json_field(
+                        value=item.get("stops_json"),
+                        field="stops_json",
+                        recording_id=rid,
+                        expected_type=list,
+                    )
+                    item["stop_count"] = len(stops)
                     item.pop("metadata_json", None)
                     item.pop("stops_json", None)
                     out.append(item)
@@ -204,7 +217,7 @@ class RecordingStore:
     def get(self, recording_id: str) -> dict | None:
         rid = str(recording_id or "").strip()
         if not rid:
-            return None
+            raise ValueError("recording_id_empty")
         with self._lock:
             conn = self._connect()
             try:
@@ -215,14 +228,18 @@ class RecordingStore:
                 if not row:
                     return None
                 out = dict(row)
-                try:
-                    out["stops"] = json.loads(out.get("stops_json") or "[]")
-                except Exception:
-                    out["stops"] = []
-                try:
-                    out["metadata"] = json.loads(out.get("metadata_json") or "{}")
-                except Exception:
-                    out["metadata"] = {}
+                out["stops"] = self._load_json_field(
+                    value=out.get("stops_json"),
+                    field="stops_json",
+                    recording_id=rid,
+                    expected_type=list,
+                )
+                out["metadata"] = self._load_json_field(
+                    value=out.get("metadata_json"),
+                    field="metadata_json",
+                    recording_id=rid,
+                    expected_type=dict,
+                )
                 out.pop("stops_json", None)
                 out.pop("metadata_json", None)
                 return out
@@ -247,8 +264,14 @@ class RecordingStore:
     def delete(self, recording_id: str) -> None:
         rid = str(recording_id or "").strip()
         if not rid:
-            return
-        # Delete DB rows first (audio files are best-effort).
+            raise ValueError("recording_id_empty")
+        root = (self._root / rid).resolve()
+        base = self._root.resolve()
+        if not str(root).lower().startswith(str(base).lower() + os.sep.lower()):
+            raise ValueError("path_outside_store")
+        if root.exists() and root.is_dir():
+            shutil.rmtree(root)
+
         with self._lock:
             conn = self._connect()
             try:
@@ -258,17 +281,6 @@ class RecordingStore:
                 conn.commit()
             finally:
                 conn.close()
-
-        # Delete files.
-        try:
-            root = (self._root / rid).resolve()
-            base = self._root.resolve()
-            if not str(root).lower().startswith(str(base).lower() + os.sep.lower()):
-                raise ValueError("path_outside_store")
-            if root.exists() and root.is_dir():
-                shutil.rmtree(root, ignore_errors=True)
-        except Exception:
-            pass
 
     def _next_seq(self, *, conn: sqlite3.Connection, table: str, recording_id: str, stop_index: int) -> int:
         row = conn.execute(
@@ -281,13 +293,13 @@ class RecordingStore:
     def add_ask_event(self, *, recording_id: str, stop_index: int, request_id: str, kind: str, text: str | None) -> None:
         rid = str(recording_id or "").strip()
         if not rid:
-            return
+            raise ValueError("recording_id_empty")
         req = str(request_id or "").strip()
         if not req:
-            return
+            raise ValueError("request_id_empty")
         kind = str(kind or "").strip()
         if kind not in ("chunk", "segment", "done"):
-            return
+            raise ValueError("kind_invalid")
         t = None if text is None else str(text)
         created_at_ms = self._now_ms()
 
@@ -318,19 +330,15 @@ class RecordingStore:
     ) -> None:
         rid = str(recording_id or "").strip()
         if not rid:
-            return
+            raise ValueError("recording_id_empty")
         req = str(request_id or "").strip()
         if not req:
-            return
+            raise ValueError("request_id_empty")
         rel = str(rel_path or "").replace("\\", "/").lstrip("/")
         if not rel:
-            return
+            raise ValueError("rel_path_empty")
         created_at_ms = self._now_ms()
-        seg_i = None
-        try:
-            seg_i = int(segment_index) if segment_index is not None and str(segment_index).strip() != "" else None
-        except Exception:
-            seg_i = None
+        seg_i = int(segment_index) if segment_index is not None and str(segment_index).strip() != "" else None
 
         with self._lock:
             conn = self._connect()
@@ -361,11 +369,8 @@ class RecordingStore:
     def get_tts_segment(self, *, recording_id: str, segment_id: int) -> dict | None:
         rid = str(recording_id or "").strip()
         if not rid:
-            return None
-        try:
-            seg_id = int(segment_id)
-        except Exception:
-            return None
+            raise ValueError("recording_id_empty")
+        seg_id = int(segment_id)
         with self._lock:
             conn = self._connect()
             try:
@@ -385,14 +390,11 @@ class RecordingStore:
     def update_tts_segment(self, *, recording_id: str, segment_id: int, text: str | None, rel_path: str) -> dict | None:
         rid = str(recording_id or "").strip()
         if not rid:
-            return None
-        try:
-            seg_id = int(segment_id)
-        except Exception:
-            return None
+            raise ValueError("recording_id_empty")
+        seg_id = int(segment_id)
         rel = str(rel_path or "").replace("\\", "/").lstrip("/")
         if not rel:
-            return None
+            raise ValueError("rel_path_empty")
         now_ms = self._now_ms()
         with self._lock:
             conn = self._connect()
@@ -422,8 +424,10 @@ class RecordingStore:
     def count_tts_rel_path_refs(self, *, recording_id: str, rel_path: str, exclude_segment_id: int | None = None) -> int:
         rid = str(recording_id or "").strip()
         rel = str(rel_path or "").replace("\\", "/").lstrip("/")
-        if not rid or not rel:
-            return 0
+        if not rid:
+            raise ValueError("recording_id_empty")
+        if not rel:
+            raise ValueError("rel_path_empty")
         with self._lock:
             conn = self._connect()
             try:
@@ -444,11 +448,8 @@ class RecordingStore:
     def get_stop_payload(self, *, recording_id: str, stop_index: int, base_url: str) -> dict | None:
         rid = str(recording_id or "").strip()
         if not rid:
-            return None
-        try:
-            idx = int(stop_index)
-        except Exception:
-            return None
+            raise ValueError("recording_id_empty")
+        idx = int(stop_index)
 
         with self._lock:
             conn = self._connect()
@@ -459,14 +460,14 @@ class RecordingStore:
                 ).fetchone()
                 if not meta:
                     return None
-                stops = []
-                try:
-                    stops = json.loads(meta["stops_json"] or "[]")
-                except Exception:
-                    stops = []
-                if idx < 0 or (isinstance(stops, list) and idx >= len(stops)):
-                    # allow out-of-range queries (return empty)
-                    pass
+                stops = self._load_json_field(
+                    value=meta["stops_json"],
+                    field="stops_json",
+                    recording_id=rid,
+                    expected_type=list,
+                )
+                if idx < 0 or idx >= len(stops):
+                    return None
 
                 ev_rows = conn.execute(
                     """
@@ -524,7 +525,7 @@ class RecordingStore:
                 return {
                     "recording_id": rid,
                     "stop_index": int(idx),
-                    "stop_name": str(stops[idx] if isinstance(stops, list) and idx < len(stops) else ""),
+                    "stop_name": str(stops[idx] if idx < len(stops) else ""),
                     "chunks": effective_chunks,
                     "answer_text": answer_text,
                     "tail": tail,
@@ -564,20 +565,14 @@ class RecordingStore:
     def _audio_duration_ms_for_rel_path(self, recording_id: str, rel_path: str) -> int | None:
         rel = str(rel_path or "").replace("\\", "/").lstrip("/")
         if not rel:
-            return None
-        try:
-            path = self.safe_rel_audio_path(recording_id, rel)
-            path = self.ensure_within_audio_dir(recording_id, path)
-        except Exception:
-            return None
+            raise ValueError("rel_path_empty")
+        path = self.safe_rel_audio_path(recording_id, rel)
+        path = self.ensure_within_audio_dir(recording_id, path)
         if not path.exists() or not path.is_file():
-            return None
-        try:
-            with wave.open(str(path), "rb") as wf:
-                frames = int(wf.getnframes() or 0)
-                sample_rate = int(wf.getframerate() or 0)
-        except Exception:
-            return None
+            raise FileNotFoundError(f"audio_file_missing:{rel}")
+        with wave.open(str(path), "rb") as wf:
+            frames = int(wf.getnframes() or 0)
+            sample_rate = int(wf.getframerate() or 0)
         if sample_rate <= 0 or frames < 0:
-            return None
+            raise RecordingStoreDataError(f"audio_duration_invalid:{recording_id}:{rel}")
         return max(0, round((float(frames) / float(sample_rate)) * 1000))

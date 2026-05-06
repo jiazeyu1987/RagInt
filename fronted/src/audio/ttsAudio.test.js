@@ -2,6 +2,8 @@ import {
   resampleMono,
   encodeWavPcm16Mono,
   decodeAndConvertToWav16kMono,
+  playWavBytesViaDecodeAudioData,
+  playWavStreamViaWebAudio,
   unlockAudio,
 } from './ttsAudio';
 
@@ -56,6 +58,201 @@ describe('ttsAudio helpers', () => {
     expect(out.size).toBeGreaterThan(44);
     expect(close).toHaveBeenCalled();
 
+    window.AudioContext = originalAudioContext;
+  });
+
+  test('playWavStreamViaWebAudio rejects missing url without fallback playback', async () => {
+    const originalAudioContext = window.AudioContext;
+    const originalFetch = global.fetch;
+    window.AudioContext = undefined;
+    global.fetch = jest.fn();
+
+    await expect(
+      playWavStreamViaWebAudio('', { current: null }, { current: null }, null)
+    ).rejects.toThrow(/TTS stream URL is required/i);
+
+    expect(global.fetch).not.toHaveBeenCalled();
+
+    global.fetch = originalFetch;
+    window.AudioContext = originalAudioContext;
+  });
+
+  test('playWavStreamViaWebAudio fails streamed segment without refetch by default', async () => {
+    const originalAudioContext = window.AudioContext;
+    const originalFetch = global.fetch;
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    window.AudioContext = jest.fn().mockImplementation(() => ({}));
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      body: {
+        getReader: () => ({
+          read: jest
+            .fn()
+            .mockResolvedValueOnce({ done: false, value: new Uint8Array([1, 2, 3, 4]) })
+            .mockResolvedValueOnce({ done: true }),
+        }),
+      },
+    });
+
+    await expect(
+      playWavStreamViaWebAudio(
+        'https://unit.test/api/text_to_speech_stream?segment_index=0',
+        { current: null },
+        { current: null },
+        null
+      )
+    ).rejects.toThrow(/WAV header/i);
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith('[TTS] WebAudio streaming failed:', expect.any(Error));
+
+    warnSpy.mockRestore();
+    global.fetch = originalFetch;
+    window.AudioContext = originalAudioContext;
+  });
+
+  test('playWavStreamViaWebAudio rejects stream failure without refetching same url', async () => {
+    const originalAudioContext = window.AudioContext;
+    const originalFetch = global.fetch;
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    window.AudioContext = jest.fn().mockImplementation(() => ({
+      state: 'running',
+      decodeAudioData: jest.fn().mockRejectedValue(new Error('decode failed')),
+    }));
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: jest
+              .fn()
+              .mockResolvedValueOnce({ done: false, value: new Uint8Array([1, 2, 3, 4]) })
+              .mockResolvedValueOnce({ done: true }),
+          }),
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: jest.fn().mockResolvedValue(new ArrayBuffer(44)),
+      });
+
+    await expect(
+      playWavStreamViaWebAudio(
+        'https://unit.test/api/text_to_speech_stream?segment_index=0',
+        { current: null },
+        { current: null },
+        null,
+        { playbackRate: 1 }
+      )
+    ).rejects.toThrow(/WAV header/i);
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    warnSpy.mockRestore();
+    global.fetch = originalFetch;
+    window.AudioContext = originalAudioContext;
+  });
+
+  test('playWavStreamViaWebAudio rejects missing WebAudio', async () => {
+    const originalAudioContext = window.AudioContext;
+    window.AudioContext = undefined;
+
+    await expect(
+      playWavStreamViaWebAudio(
+        'https://unit.test/api/text_to_speech_stream?segment_index=0',
+        { current: null },
+        { current: null },
+        null
+      )
+    ).rejects.toThrow(/WebAudio is not supported/i);
+
+    window.AudioContext = originalAudioContext;
+  });
+
+  test('playWavBytesViaDecodeAudioData rejects AudioContext sample-rate construction failure', async () => {
+    const originalAudioContext = window.AudioContext;
+    const wavBytes = encodeWavPcm16Mono(new Float32Array([0, 0.1, -0.1, 0]), 16000);
+    const constructionError = new Error('sample-rate AudioContext rejected');
+    const sourceNode = {
+      playbackRate: { value: 1 },
+      connect: jest.fn(),
+      start: jest.fn(function start() {
+        if (typeof sourceNode.onended === 'function') sourceNode.onended();
+      }),
+      stop: jest.fn(),
+      onended: null,
+    };
+
+    window.AudioContext = jest.fn().mockImplementation((args) => {
+      if (args && args.sampleRate) throw constructionError;
+      return {
+        state: 'running',
+        sampleRate: 48000,
+        decodeAudioData: jest.fn().mockResolvedValue({
+          numberOfChannels: 1,
+          sampleRate: 16000,
+          length: 4,
+          duration: 0.001,
+          getChannelData: () => new Float32Array([0, 0.1, -0.1, 0]),
+        }),
+        createBufferSource: jest.fn().mockReturnValue(sourceNode),
+        destination: {},
+      };
+    });
+
+    await expect(
+      playWavBytesViaDecodeAudioData(wavBytes, { current: null }, { current: null }, { playbackRate: 1 })
+    ).rejects.toThrow(/sample-rate AudioContext rejected/i);
+
+    expect(window.AudioContext).toHaveBeenCalledTimes(1);
+
+    window.AudioContext = originalAudioContext;
+  });
+
+  test('playWavStreamViaWebAudio rejects target sample-rate AudioContext construction failure', async () => {
+    const originalAudioContext = window.AudioContext;
+    const originalFetch = global.fetch;
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const wavHeader = encodeWavPcm16Mono(new Float32Array([]), 16000);
+    const constructionError = new Error('stream AudioContext sample-rate rejected');
+    window.AudioContext = jest.fn().mockImplementation((args) => {
+      if (args && args.sampleRate) throw constructionError;
+      return {
+        state: 'running',
+        sampleRate: 48000,
+        currentTime: 0,
+        destination: {},
+        createBuffer: jest.fn(),
+        createBufferSource: jest.fn(),
+      };
+    });
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      body: {
+        getReader: () => ({
+          read: jest
+            .fn()
+            .mockResolvedValueOnce({ done: false, value: wavHeader })
+            .mockResolvedValueOnce({ done: true }),
+        }),
+      },
+    });
+
+    await expect(
+      playWavStreamViaWebAudio(
+        'https://unit.test/api/text_to_speech_stream?segment_index=0',
+        { current: null },
+        { current: null },
+        null
+      )
+    ).rejects.toThrow(/stream AudioContext sample-rate rejected/i);
+
+    expect(window.AudioContext).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    warnSpy.mockRestore();
+    global.fetch = originalFetch;
     window.AudioContext = originalAudioContext;
   });
 

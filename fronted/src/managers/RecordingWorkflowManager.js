@@ -74,41 +74,25 @@ export class RecordingWorkflowManager {
   _setLoading(v) {
     const setIsLoading = this._deps.setIsLoading;
     if (typeof setIsLoading !== 'function') return;
-    try {
-      setIsLoading(!!v);
-    } catch (_) {
-      // ignore
-    }
+    setIsLoading(!!v);
   }
 
   _setRecording(v) {
     const onRecordingChange = this._deps.onRecordingChange;
     if (typeof onRecordingChange !== 'function') return;
-    try {
-      onRecordingChange(!!v);
-    } catch (_) {
-      // ignore
-    }
+    onRecordingChange(!!v);
   }
 
   _setRecognizing(v) {
     const onRecognizingChange = this._deps.onRecognizingChange;
     if (typeof onRecognizingChange !== 'function') return;
-    try {
-      onRecognizingChange(!!v);
-    } catch (_) {
-      // ignore
-    }
+    onRecognizingChange(!!v);
   }
 
   _setAsrStage(stage, extra = null) {
     const onAsrStageChange = this._deps.onAsrStageChange;
     if (typeof onAsrStageChange !== 'function') return;
-    try {
-      onAsrStageChange(String(stage || 'idle').trim() || 'idle', extra);
-    } catch (_) {
-      // ignore
-    }
+    onAsrStageChange(String(stage || 'idle').trim() || 'idle', extra);
   }
 
   _appendOrReplaceInputText(nextText) {
@@ -116,24 +100,16 @@ export class RecordingWorkflowManager {
     if (typeof setInputText !== 'function') return;
     const t = safeTrim(nextText);
     if (!t) return;
-    try {
-      setInputText(t);
-      this._session.setLastAppliedInputText(t);
-    } catch (_) {
-      // ignore
-    }
+    setInputText(t);
+    this._session.setLastAppliedInputText(t);
   }
 
   _replaceInputText(nextText) {
     const setInputText = this._deps.setInputText;
     if (typeof setInputText !== 'function') return;
     const t = safeTrim(nextText);
-    try {
-      setInputText(t);
-      this._session.setLastAppliedInputText(t);
-    } catch (_) {
-      // ignore
-    }
+    setInputText(t);
+    this._session.setLastAppliedInputText(t);
   }
 
   _getFinalTimeoutStrategy() {
@@ -205,10 +181,9 @@ export class RecordingWorkflowManager {
     if (!this._recorder) return;
     try {
       this._recorder.stop();
-    } catch (_) {
-      // ignore
+    } finally {
+      this._recordStartedAtMs = 0;
     }
-    this._recordStartedAtMs = 0;
   }
 
   _snapshotBaseText() {
@@ -218,11 +193,7 @@ export class RecordingWorkflowManager {
       this._session.reset('');
       return;
     }
-    try {
-      this._wsBaseText = safeTrim(getInputText());
-    } catch (_) {
-      this._wsBaseText = '';
-    }
+    this._wsBaseText = safeTrim(getInputText());
     this._session.reset(this._wsBaseText);
   }
 
@@ -233,11 +204,7 @@ export class RecordingWorkflowManager {
     const getInputText = this._deps.getInputText;
     let currentInput = '';
     if (typeof getInputText === 'function') {
-      try {
-        currentInput = safeTrim(getInputText());
-      } catch (_) {
-        currentInput = '';
-      }
+      currentInput = safeTrim(getInputText());
     }
     return this._session.composeInputText(recognizedText, currentInput);
   }
@@ -403,11 +370,7 @@ export class RecordingWorkflowManager {
     if (!this._recorder) return false;
 
     const unlockAudio = this._deps.unlockAudio;
-    try {
-      if (typeof unlockAudio === 'function') unlockAudio();
-    } catch (_) {
-      // ignore
-    }
+    if (typeof unlockAudio === 'function') unlockAudio();
 
     this._snapshotBaseText();
     this._setLoading(true);
@@ -426,7 +389,7 @@ export class RecordingWorkflowManager {
         this._setLoading(false);
         this._setRecognizing(false);
         if (this._log) this._log('[REC] start returned false');
-        return false;
+        throw new Error('recorder_start_failed');
       }
       return true;
     } catch (e) {
@@ -434,7 +397,7 @@ export class RecordingWorkflowManager {
       this._setRecognizing(false);
       this._setAsrStage('error', { message: safeTrim(e && e.message ? e.message : e) });
       if (this._log) this._log('[REC] start failed', e);
-      return false;
+      throw e;
     }
   }
 
@@ -501,13 +464,9 @@ export class RecordingWorkflowManager {
       });
 
       const started = await this.start();
-      if (!started) return '';
+      if (!started) throw new Error('recorder_start_failed');
       stopTimer = setTimeout(() => {
-        try {
-          this.stop();
-        } catch (_) {
-          // ignore
-        }
+        this.stop();
       }, maxMs);
 
       const text = await p;

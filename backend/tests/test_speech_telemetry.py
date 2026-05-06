@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from backend.api.speech_telemetry import AskStreamTelemetry
 from backend.orchestrators.stream_payloads import make_chunk, make_segment
 
@@ -35,3 +37,26 @@ def test_telemetry_emits_first_text_and_segment_once():
     assert names.count("first_tts_segment") == 1
     assert events.events[-1]["segment_seq"] == 7
 
+
+class _FailingEvents:
+    def emit(self, **kw):  # noqa: ANN003
+        raise RuntimeError("event store unavailable")
+
+
+class _FailingTimings:
+    def set(self, request_id: str, **kw):  # noqa: ARG002, ANN003
+        raise RuntimeError("timing store unavailable")
+
+
+def test_telemetry_timing_write_failure_is_not_hidden():
+    t = AskStreamTelemetry(event_store=_Events(), ask_timings=_FailingTimings(), request_id="r1", client_id="c1")
+
+    with pytest.raises(RuntimeError, match="timing store unavailable"):
+        t.on_payload(make_chunk("a", done=False))
+
+
+def test_telemetry_event_write_failure_is_not_hidden():
+    t = AskStreamTelemetry(event_store=_FailingEvents(), ask_timings=_Timings(), request_id="r1", client_id="c1")
+
+    with pytest.raises(RuntimeError, match="event store unavailable"):
+        t.on_payload(make_segment("seg", segment_seq=7, done=False))

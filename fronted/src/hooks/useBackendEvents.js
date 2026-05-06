@@ -7,6 +7,12 @@ export function useBackendEvents(requestId, { intervalMs = 1000, limit = 80, ena
   const [lastError, setLastError] = useState(null);
   const [error, setError] = useState(null);
 
+  function requireEventsPayload(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('events_response_invalid');
+    if (!Array.isArray(data.items)) throw new Error('events_items_invalid');
+    return data;
+  }
+
   useEffect(() => {
     let cancelled = false;
     let timer = null;
@@ -18,9 +24,11 @@ export function useBackendEvents(requestId, { intervalMs = 1000, limit = 80, ena
 
     const tick = async () => {
       try {
-        const data = await fetchJson(`/api/events?request_id=${encodeURIComponent(rid)}&limit=${encodeURIComponent(String(limit || 80))}`);
+        const data = requireEventsPayload(
+          await fetchJson(`/api/events?request_id=${encodeURIComponent(rid)}&limit=${encodeURIComponent(String(limit || 80))}`)
+        );
         if (cancelled) return;
-        setItems((data && data.items) || []);
+        setItems(data.items);
         setLastError((data && data.last_error) || null);
         setError(null);
       } catch (e) {

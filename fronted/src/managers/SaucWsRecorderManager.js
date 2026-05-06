@@ -4,23 +4,30 @@ function safeTrim(v) {
   return String(v == null ? '' : v).trim();
 }
 
-function toInt(value, fallback, { min = null, max = null } = {}) {
+function toInt(value, fallback, { min = null, max = null, name = 'value' } = {}) {
+  const missing = value == null || (typeof value === 'string' && value.trim() === '');
+  if (missing) return fallback;
   const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
+  if (!Number.isFinite(n)) throw new Error(`invalid_sauc_numeric_config:${name}`);
   let out = Math.round(n);
-  if (Number.isFinite(min)) out = Math.max(Number(min), out);
-  if (Number.isFinite(max)) out = Math.min(Number(max), out);
+  if (Number.isFinite(min) && out < Number(min)) throw new Error(`invalid_sauc_numeric_config:${name}`);
+  if (Number.isFinite(max) && out > Number(max)) throw new Error(`invalid_sauc_numeric_config:${name}`);
   return out;
 }
 
-function toBool(value, fallback = false) {
+function toBool(value, fallback = false, name = 'value') {
+  const missing = value == null || (typeof value === 'string' && value.trim() === '');
+  if (missing) return !!fallback;
   if (typeof value === 'boolean') return value;
-  if (typeof value === 'number') return value !== 0;
-  const text = String(value == null ? '' : value).trim().toLowerCase();
-  if (!text) return !!fallback;
+  if (typeof value === 'number') {
+    if (value === 1) return true;
+    if (value === 0) return false;
+    throw new Error(`invalid_sauc_boolean_config:${name}`);
+  }
+  const text = String(value).trim().toLowerCase();
   if (text === '1' || text === 'true' || text === 'yes' || text === 'on') return true;
   if (text === '0' || text === 'false' || text === 'no' || text === 'off') return false;
-  return !!fallback;
+  throw new Error(`invalid_sauc_boolean_config:${name}`);
 }
 
 function normalizeSaucOptions(raw) {
@@ -31,12 +38,12 @@ function normalizeSaucOptions(raw) {
     appKey: safeTrim(src.appKey),
     accessKey: safeTrim(src.accessKey),
     modelName: safeTrim(src.modelName) || 'bigmodel',
-    segmentDurationMs: toInt(src.segmentDurationMs, 200, { min: 50, max: 1000 }),
-    enableItn: toBool(src.enableItn, true),
-    enablePunc: toBool(src.enablePunc, true),
-    enableDdc: toBool(src.enableDdc, true),
-    showUtterances: toBool(src.showUtterances, true),
-    enableNonstream: toBool(src.enableNonstream, false),
+    segmentDurationMs: toInt(src.segmentDurationMs, 200, { min: 50, max: 1000, name: 'segmentDurationMs' }),
+    enableItn: toBool(src.enableItn, true, 'enableItn'),
+    enablePunc: toBool(src.enablePunc, true, 'enablePunc'),
+    enableDdc: toBool(src.enableDdc, true, 'enableDdc'),
+    showUtterances: toBool(src.showUtterances, true, 'showUtterances'),
+    enableNonstream: toBool(src.enableNonstream, false, 'enableNonstream'),
   };
 }
 
@@ -52,7 +59,7 @@ function buildSaucProxyWsUrl(baseUrl, path = '/api/asr/sauc/ws', query = {}) {
       u.hash = '';
       originUrl = u;
     } catch (_) {
-      originUrl = null;
+      throw new Error('invalid_sauc_base_url');
     }
   }
   if (!originUrl) {
@@ -79,7 +86,7 @@ function buildHttpUrl(baseUrl, path = '/api/asr/sauc/health') {
       const u = new URL(base);
       return new URL(path, `${u.protocol}//${u.host}`).toString();
     } catch (_) {
-      // fallback below
+      throw new Error('invalid_sauc_base_url');
     }
   }
   if (typeof window !== 'undefined' && window.location && window.location.origin) {
@@ -166,27 +173,15 @@ function summarizeSaucProxyHint(proxy, healthErr) {
 
 async function parseWsMessageData(data) {
   if (typeof data === 'string') {
-    try {
-      return JSON.parse(data);
-    } catch (_) {
-      return null;
-    }
+    return JSON.parse(data);
   }
   if (data instanceof ArrayBuffer) {
-    try {
-      const text = new TextDecoder('utf-8').decode(new Uint8Array(data));
-      return JSON.parse(text);
-    } catch (_) {
-      return null;
-    }
+    const text = new TextDecoder('utf-8').decode(new Uint8Array(data));
+    return JSON.parse(text);
   }
   if (typeof Blob !== 'undefined' && data instanceof Blob) {
-    try {
-      const text = await data.text();
-      return JSON.parse(text);
-    } catch (_) {
-      return null;
-    }
+    const text = await data.text();
+    return JSON.parse(text);
   }
   return null;
 }
@@ -421,7 +416,18 @@ export class SaucWsRecorderManager {
   }
 
   async _handleServerMessage(rawData) {
-    const msg = await parseWsMessageData(rawData);
+    let msg = null;
+    try {
+      msg = await parseWsMessageData(rawData);
+    } catch (e) {
+      const err = {
+        error: safeTrim(e && e.message) || 'invalid_json',
+        data_type: Object.prototype.toString.call(rawData),
+      };
+      if (!this._wsReady) this._rejectReady(new Error('sauc_proxy_message_parse_failed'));
+      this._fail('sauc_proxy_message_parse_failed', err);
+      return;
+    }
     if (!msg || typeof msg !== 'object') return;
 
     const type = safeTrim(msg.type).toLowerCase();
@@ -582,7 +588,7 @@ export class SaucWsRecorderManager {
       }
     };
 
-    const recommendedChunkMs = toInt(opts.segmentDurationMs, 200, { min: 100, max: 200 });
+    const recommendedChunkMs = Math.max(100, Math.min(200, Number(opts.segmentDurationMs) || 200));
 
     this._recorder = createMicRecorder({
       dstSampleRate: this._targetSampleRate,

@@ -32,22 +32,38 @@ class AskRequest:
     qa_audio_cache_lookup_enabled: bool | None
 
 
+def _bad_request(error: str, **payload) -> Response:
+    body = {"error": error}
+    body.update(payload)
+    resp = jsonify(body)
+    resp.status_code = 400
+    return resp
+
+
 def _normalize_guide(guide) -> dict:
-    return guide if isinstance(guide, dict) else {}
+    if guide is None:
+        return {}
+    if not isinstance(guide, dict):
+        raise ValueError("guide_must_be_object")
+    return guide
 
 
 def _as_int_or_none(value):
-    try:
-        return int(value) if value is not None and str(value).strip() != "" else None
-    except Exception:
+    if value is None or str(value).strip() == "":
         return None
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid_integer") from exc
 
 
 def _as_float_or_none(value):
-    try:
-        return float(value) if value is not None and str(value).strip() != "" else None
-    except Exception:
+    if value is None or str(value).strip() == "":
         return None
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid_float") from exc
 
 
 def _as_bool_or_none(value):
@@ -62,7 +78,7 @@ def _as_bool_or_none(value):
         return True
     if s in ("0", "false", "no", "n", "off"):
         return False
-    return None
+    raise ValueError("invalid_boolean")
 
 
 def _compute_action_type(*, guide: dict) -> str:
@@ -78,17 +94,21 @@ def _compute_action_type(*, guide: dict) -> str:
 
 
 def parse_ask_request(*, deps, data: dict | None) -> tuple[AskRequest | None, Response | None]:
+    if data is not None and not isinstance(data, dict):
+        return None, _bad_request("json_body_must_be_object")
+
     if not data or not str(data.get("question") or "").strip():
-        resp = jsonify({"error": "No question"})
-        resp.status_code = 400
-        return None, resp
+        return None, _bad_request("No question")
 
     question = str(data.get("question") or "")
     agent_id = str((data.get("agent_id") or "")).strip()
     conversation_name = str(
         (data.get("conversation_name") or data.get("chat_name") or getattr(deps, "ragflow_default_chat_name", "") or "")
     ).strip()
-    guide = _normalize_guide(data.get("guide") or {})
+    try:
+        guide = _normalize_guide(data.get("guide"))
+    except ValueError as exc:
+        return None, _bad_request(str(exc), field="guide")
 
     client_id = get_client_id(flask_request, data=data, default="-")
     kind = str((data.get("kind") or "ask")).strip() or "ask"
@@ -97,17 +117,23 @@ def parse_ask_request(*, deps, data: dict | None) -> tuple[AskRequest | None, Re
 
     recording_id = str((data.get("recording_id") or flask_request.headers.get("X-Recording-ID") or "")).strip() or None
     stop_name = str((guide.get("stop_name") or "")).strip() or None
-    stop_index = _as_int_or_none(guide.get("stop_index", None))
+    try:
+        stop_index = _as_int_or_none(guide.get("stop_index", None))
+    except ValueError as exc:
+        return None, _bad_request(str(exc), field="guide.stop_index")
     tour_action = str((guide.get("tour_action") or "")).strip() or None
     action_type = _compute_action_type(guide=guide)
     tts_provider = str((data.get("tts_provider") or flask_request.headers.get("X-TTS-Provider") or "")).strip() or None
     tts_voice = str((data.get("tts_voice") or flask_request.headers.get("X-TTS-Voice") or "")).strip() or None
-    tts_speed = _as_float_or_none(data.get("tts_speed"))
-    if tts_speed is None:
-        tts_speed = _as_float_or_none(flask_request.headers.get("X-TTS-Speed"))
-    qa_answer_target_chars = _as_int_or_none(data.get("qa_answer_target_chars"))
-    qa_audio_cache_confidence_threshold = _as_float_or_none(data.get("qa_audio_cache_confidence_threshold"))
-    qa_audio_cache_lookup_enabled = _as_bool_or_none(data.get("qa_audio_cache_lookup_enabled"))
+    try:
+        tts_speed = _as_float_or_none(data.get("tts_speed"))
+        if tts_speed is None:
+            tts_speed = _as_float_or_none(flask_request.headers.get("X-TTS-Speed"))
+        qa_answer_target_chars = _as_int_or_none(data.get("qa_answer_target_chars"))
+        qa_audio_cache_confidence_threshold = _as_float_or_none(data.get("qa_audio_cache_confidence_threshold"))
+        qa_audio_cache_lookup_enabled = _as_bool_or_none(data.get("qa_audio_cache_lookup_enabled"))
+    except ValueError as exc:
+        return None, _bad_request(str(exc))
     if tour_action:
         qa_audio_cache_lookup_enabled = False
 

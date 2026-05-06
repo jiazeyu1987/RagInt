@@ -43,17 +43,26 @@ class StreamingTtsRecorder:
             self._audio_file = None
             self._tmp_path = None
             self._final_rel = None
+            raise RuntimeError(f"tts_recording_open_failed:{e}") from e
 
     def write(self, chunk: bytes) -> None:
-        if not chunk or self._audio_file is None:
+        if not chunk:
+            return
+        if self._audio_file is None:
+            if self.enabled:
+                raise RuntimeError("tts_recording_write_failed:recording_file_not_open")
             return
         try:
             self._audio_file.write(chunk)
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
             self._audio_file = None
+            if self.enabled:
+                raise RuntimeError(f"tts_recording_write_failed:{e}") from e
 
     def finalize(self) -> None:
         if self._audio_file is None or self._tmp_path is None or self._final_rel is None:
+            if self.enabled:
+                raise RuntimeError("tts_recording_finalize_failed:recording_file_not_open")
             return
         if not self.enabled:
             return
@@ -61,8 +70,9 @@ class StreamingTtsRecorder:
             self._audio_file.flush()
             self._audio_file.close()
             self._audio_file = None
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
             self._audio_file = None
+            raise RuntimeError(f"tts_recording_finalize_failed:{e}") from e
         try:
             audio_dir = self.recording_store.audio_dir(self.recording_id)
             final_path = (audio_dir / self._final_rel).resolve()
@@ -78,6 +88,7 @@ class StreamingTtsRecorder:
             self._tmp_path = None
         except Exception as e:  # noqa: BLE001
             self.logger.warning(f"[REC] tts_save_failed recording_id={self.recording_id} err={e}")
+            raise RuntimeError(f"tts_recording_finalize_failed:{e}") from e
 
     def cleanup(self) -> None:
         if self._audio_file is not None:

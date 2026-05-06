@@ -18,6 +18,9 @@ export function SellingPointsPanel({ stopName, hideTitle } = {}) {
     }
     try {
       const res = await listSellingPoints({ stopName: sn, limit: 50 });
+      if (res && res.ok === false) {
+        throw new Error(String(res.error || 'fetch_failed'));
+      }
       setItems(Array.isArray(res && res.items) ? res.items : []);
       setErr('');
     } catch (e) {

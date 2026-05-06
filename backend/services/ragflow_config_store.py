@@ -57,13 +57,13 @@ class RagflowConfigStore:
             return None
         sid = str(row["scope_id"] or fallback_scope_id or "").strip()
         if not sid:
-            return None
-        try:
-            cfg = json.loads(str(row["config_json"] or "{}"))
-        except Exception:
-            cfg = {}
+            raise ValueError("ragflow_config.scope_id must be non-empty for existing records")
+        raw_config = row["config_json"]
+        if raw_config is None:
+            raise ValueError(f"ragflow_config.config_json is required for scope_id={sid!r}")
+        cfg = json.loads(str(raw_config))
         if not isinstance(cfg, dict):
-            cfg = {}
+            raise ValueError(f"ragflow_config.config_json must decode to an object for scope_id={sid!r}")
         return RagflowConfigRecord(
             scope_id=sid,
             config=cfg,
@@ -90,7 +90,9 @@ class RagflowConfigStore:
 
     def upsert(self, *, scope_id: str = "global", config: dict, now_ms: int | None = None) -> RagflowConfigRecord | None:
         sid = str(scope_id or "").strip() or "global"
-        cfg = config if isinstance(config, dict) else {}
+        if not isinstance(config, dict):
+            raise TypeError("config must be a dict")
+        cfg = config
         if now_ms is None:
             now_ms = int(time.time() * 1000)
         payload = json.dumps(cfg, ensure_ascii=False, separators=(",", ":"))

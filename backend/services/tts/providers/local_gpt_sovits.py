@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import logging
 import threading
 import urllib.parse
@@ -43,27 +42,21 @@ def stream_local_gpt_sovits(
     # - Legacy local TTS adapter (historical): POST {text_lang, ref_audio_path, prompt_lang, ...} to /tts
     # - GPT-SoVITS api.py: GET/POST to / with {text_language, refer_wav_path, prompt_language, ...}
     def _normalize_to_root(u: str) -> str:
-        try:
-            parsed = urllib.parse.urlparse(u)
-            path = parsed.path or "/"
-            if path.endswith("/tts"):
-                path = path[: -len("/tts")] or "/"
-            if not path.endswith("/"):
-                path = path + "/"
-            return urllib.parse.urlunparse(parsed._replace(path=path))
-        except Exception:
-            return u
+        parsed = urllib.parse.urlparse(u)
+        path = parsed.path or "/"
+        if path.endswith("/tts"):
+            path = path[: -len("/tts")] or "/"
+        if not path.endswith("/"):
+            path = path + "/"
+        return urllib.parse.urlunparse(parsed._replace(path=path))
 
     def _ensure_tts_endpoint(u: str) -> str:
-        try:
-            parsed = urllib.parse.urlparse(u)
-            path = parsed.path or ""
-            # api_v2 expects /tts
-            if not path.endswith("/tts"):
-                path = (path.rstrip("/") + "/tts") if path else "/tts"
-            return urllib.parse.urlunparse(parsed._replace(path=path))
-        except Exception:
-            return u.rstrip("/") + "/tts"
+        parsed = urllib.parse.urlparse(u)
+        path = parsed.path or ""
+        # api_v2 expects /tts
+        if not path.endswith("/tts"):
+            path = (path.rstrip("/") + "/tts") if path else "/tts"
+        return urllib.parse.urlunparse(parsed._replace(path=path))
 
     payload_legacy = {
         "text": text,
@@ -90,66 +83,44 @@ def stream_local_gpt_sovits(
     if cancel_event.is_set():
         return
 
-    candidates = []
     lp = (local_provider or "").strip().lower()
     if lp == "sovtts2":
-        candidates.append(("api_v2", url, payload_legacy))
+        kind, cand_url, payload = ("api_v2", _ensure_tts_endpoint(url), payload_legacy)
     elif lp == "sovtts1":
-        # If sovtts1 is configured to point to /tts, try api_v2 first to avoid a noisy POST / 400.
-        try:
-            parsed = urllib.parse.urlparse(url)
-            path = (parsed.path or "").lower()
-        except Exception:
-            path = ""
-        if path.endswith("/tts"):
-            candidates.append(("api_v2", url, payload_legacy))
-        candidates.append(("api_py_root", _normalize_to_root(url), payload_gpt_sovits))
-        # Some legacy deployments still expect /tts even for "sovtts1".
-        candidates.append(("legacy_tts", _ensure_tts_endpoint(url), payload_legacy))
+        kind, cand_url, payload = ("api_py_root", _normalize_to_root(url), payload_gpt_sovits)
     else:
-        candidates.append(("api_v2", url, payload_legacy))
-        candidates.append(("api_py_root", _normalize_to_root(url), payload_gpt_sovits))
-        candidates.append(("legacy_tts", _ensure_tts_endpoint(url), payload_legacy))
+        raise ValueError(f"unknown_local_tts_provider:{lp}")
 
-    last_err = None
-    for kind, cand_url, payload in candidates:
-        if cancel_event.is_set():
-            return
-        try:
-            logger.info(f"[{request_id}] local_tts_request kind={kind} url={cand_url} timeout_s={timeout_s} chars={len(text)}")
-            r = requests.post(
-                cand_url,
-                json=payload,
-                headers=headers,
-                stream=True,
-                timeout=timeout_s,
-            )
-        except Exception as e:
-            last_err = e
-            continue
+    if cancel_event.is_set():
+        return
 
-        try:
-            ct = str(r.headers.get("Content-Type") or "").lower()
-            logger.info(f"[{request_id}] local_tts_response kind={kind} status={r.status_code} ct={ct}")
-            if r.status_code != 200:
-                with contextlib.suppress(Exception):
-                    body = (r.text or "")[:200]
-                    logger.warning(f"[{request_id}] local_tts_non_200 kind={kind} status={r.status_code} body={body}")
-                last_err = RuntimeError(f"local_tts_non_200:{r.status_code}")
-                continue
+    logger.info(f"[{request_id}] local_tts_request kind={kind} url={cand_url} timeout_s={timeout_s} chars={len(text)}")
+    r = requests.post(
+        cand_url,
+        json=payload,
+        headers=headers,
+        stream=True,
+        timeout=timeout_s,
+    )
 
-            for chunk in r.iter_content(chunk_size=4096):
-                if cancel_event.is_set():
-                    logger.info(f"[{request_id}] local_tts_cancelled")
-                    break
-                if chunk:
-                    yield chunk
-            return
-        finally:
-            with contextlib.suppress(Exception):
-                r.close()
+    try:
+        ct = str(r.headers.get("Content-Type") or "").lower()
+        logger.info(f"[{request_id}] local_tts_response kind={kind} status={r.status_code} ct={ct}")
+        if r.status_code != 200:
+            body = (r.text or "")[:200]
+            logger.warning(f"[{request_id}] local_tts_non_200 kind={kind} status={r.status_code} body={body}")
+            raise RuntimeError(f"local_tts_non_200:{r.status_code}")
 
-    if last_err is not None:
-        raise RuntimeError(f"local TTS request failed: {last_err}")
-    raise RuntimeError("local TTS request failed: no candidate endpoint succeeded")
-
+        emitted_bytes = 0
+        for chunk in r.iter_content(chunk_size=4096):
+            if cancel_event.is_set():
+                logger.info(f"[{request_id}] local_tts_cancelled")
+                break
+            if chunk:
+                emitted_bytes += len(chunk)
+                yield chunk
+        if not cancel_event.is_set() and emitted_bytes == 0:
+            raise RuntimeError(f"local_tts_empty_output:{kind}")
+        return
+    finally:
+        r.close()

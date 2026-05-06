@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 
 from backend.services.pad_product_image_service import (
+    SUPPORTED_IMAGE_MIMETYPES,
     _detect_image_dimensions,
     _detect_image_mimetype,
     _guess_extension,
@@ -43,12 +44,12 @@ class PadHallSceneService:
         if not payload:
             raise ValueError("image_file_empty")
         scene_id = f"scene_{uuid.uuid4().hex}"
-        detected_mimetype = _detect_image_mimetype(filename=filename, image_bytes=payload) or str(mimetype or "").strip().lower()
-        if detected_mimetype not in {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"}:
+        detected_mimetype = _detect_image_mimetype(filename=filename, image_bytes=payload)
+        if detected_mimetype not in SUPPORTED_IMAGE_MIMETYPES:
             raise ValueError("image_format_unsupported")
         width, height = _detect_image_dimensions(filename=filename, image_bytes=payload)
         ext = _guess_extension(filename=filename, mimetype=detected_mimetype)
-        stored_name = f"scene_bg_{_safe_file_part(scene_id, fallback='scene')}_{int(time.time() * 1000)}{ext}"
+        stored_name = f"scene_bg_{_safe_file_part(scene_id, field_name='scene_id')}_{time.time_ns()}{ext}"
         rel_path, _ = self._write_scene_background_bytes(
             hall_id=hall_id,
             scene_id=scene_id,
@@ -85,12 +86,12 @@ class PadHallSceneService:
         payload = bytes(image_bytes or b"")
         if not payload:
             raise ValueError("image_file_empty")
-        detected_mimetype = _detect_image_mimetype(filename=filename, image_bytes=payload) or str(mimetype or "").strip().lower()
-        if detected_mimetype not in {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"}:
+        detected_mimetype = _detect_image_mimetype(filename=filename, image_bytes=payload)
+        if detected_mimetype not in SUPPORTED_IMAGE_MIMETYPES:
             raise ValueError("image_format_unsupported")
         width, height = _detect_image_dimensions(filename=filename, image_bytes=payload)
         ext = _guess_extension(filename=filename, mimetype=detected_mimetype)
-        stored_name = f"scene_bg_{_safe_file_part(scene_id, fallback='scene')}_{int(time.time() * 1000)}{ext}"
+        stored_name = f"scene_bg_{_safe_file_part(scene_id, field_name='scene_id')}_{time.time_ns()}{ext}"
         rel_path, _ = self._write_scene_background_bytes(
             hall_id=str(scene.get("hall_id") or ""),
             scene_id=scene_id,

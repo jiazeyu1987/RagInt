@@ -14,6 +14,17 @@ export class TourController {
     this.deps = deps || {};
   }
 
+  _makeError(code, error) {
+    const err = new Error(`${code}: ${String((error && error.message) || 'operation_failed')}`);
+    err.code = code;
+    try {
+      err.cause = error;
+    } catch (_) {
+      // ignore
+    }
+    return err;
+  }
+
   setDeps(next) {
     this.deps = { ...(this.deps || {}), ...(next || {}) };
   }
@@ -74,7 +85,7 @@ export class TourController {
       tourStopDurationsRef,
       tourStopTargetCharsRef,
     } = this.deps;
-    if (typeof fetchJson !== 'function') return null;
+    if (typeof fetchJson !== 'function') throw new Error('tour_plan_fetch_unavailable');
 
     let plannedStops = null;
     try {
@@ -131,8 +142,14 @@ export class TourController {
         if (typeof setTourStopTargetChars === 'function') setTourStopTargetChars([]);
         if (tourStopTargetCharsRef) tourStopTargetCharsRef.current = [];
       }
-    } catch (_) {
-      return plannedStops;
+    } catch (error) {
+      const err = new Error(`tour_plan_failed: ${String((error && error.message) || 'request_failed')}`);
+      try {
+        err.cause = error;
+      } catch (_) {
+        // ignore
+      }
+      throw err;
     }
 
     return plannedStops;
@@ -166,8 +183,6 @@ export class TourController {
       tourRecordingEnabledRef,
       playTourRecordingEnabledRef,
       selectedTourRecordingIdRef,
-      setPlayTourRecordingEnabled,
-      setSelectedTourRecordingId,
       startTourRecordingArchive,
       loadTourRecordingMeta,
       setTourStops,
@@ -179,8 +194,8 @@ export class TourController {
     this._ensurePreferredAudioContext();
     try {
       if (typeof interruptCurrentRun === 'function') interruptCurrentRun(RUN_REASON.TOUR_START);
-    } catch (_) {
-      // ignore
+    } catch (error) {
+      throw error;
     }
     const { allow } = this._snapshotInterruptEpoch();
 
@@ -217,49 +232,30 @@ export class TourController {
     }
     if (!allow()) return;
 
-    const clearPlaybackMode = () => {
-      try {
-        if (typeof setPlayTourRecordingEnabled === 'function') setPlayTourRecordingEnabled(false);
-      } catch (_) {
-        // ignore
-      }
-      try {
-        if (typeof setSelectedTourRecordingId === 'function') setSelectedTourRecordingId('');
-      } catch (_) {
-        // ignore
-      }
-      if (playTourRecordingEnabledRef) playTourRecordingEnabledRef.current = false;
-      if (selectedTourRecordingIdRef) selectedTourRecordingIdRef.current = '';
-    };
-
     let plannedStops = null;
-    let attemptedPlaybackRid = '';
-    try {
-      const playRid =
-        playTourRecordingEnabledRef && playTourRecordingEnabledRef.current && selectedTourRecordingIdRef
-          ? String(selectedTourRecordingIdRef.current || '').trim()
-          : '';
-      attemptedPlaybackRid = playRid;
-      if (playRid) {
-        if (typeof loadTourRecordingMeta === 'function') {
-          const meta = await loadTourRecordingMeta(playRid);
-          const stops = meta && Array.isArray(meta.stops) ? meta.stops.map((s) => String(s || '').trim()).filter(Boolean) : [];
-          if (stops.length) {
-            plannedStops = stops;
-            if (typeof setTourStops === 'function') setTourStops(stops);
-          } else {
-            clearPlaybackMode();
-            plannedStops = await this._fetchTourPlan();
-          }
-        } else {
-          clearPlaybackMode();
-          plannedStops = await this._fetchTourPlan();
+    const playRid =
+      playTourRecordingEnabledRef && playTourRecordingEnabledRef.current && selectedTourRecordingIdRef
+        ? String(selectedTourRecordingIdRef.current || '').trim()
+        : '';
+    if (playRid) {
+      if (typeof loadTourRecordingMeta !== 'function') throw new Error('tour_recording_meta_loader_missing');
+      let meta = null;
+      try {
+        meta = await loadTourRecordingMeta(playRid);
+      } catch (error) {
+        const err = new Error(`tour_recording_meta_failed: ${String((error && error.message) || playRid)}`);
+        try {
+          err.cause = error;
+        } catch (_) {
+          // ignore
         }
-      } else {
-        plannedStops = await this._fetchTourPlan();
+        throw err;
       }
-    } catch (_) {
-      if (attemptedPlaybackRid) clearPlaybackMode();
+      const stops = meta && Array.isArray(meta.stops) ? meta.stops.map((s) => String(s || '').trim()).filter(Boolean) : [];
+      if (!stops.length) throw new Error(`tour_recording_stops_missing: ${playRid}`);
+      plannedStops = stops;
+      if (typeof setTourStops === 'function') setTourStops(stops);
+    } else {
       plannedStops = await this._fetchTourPlan();
     }
     if (!allow()) return;
@@ -274,8 +270,8 @@ export class TourController {
       if (!playRid && tourRecordingEnabledRef && tourRecordingEnabledRef.current && typeof startTourRecordingArchive === 'function') {
         await startTourRecordingArchive(plannedStops || []);
       }
-    } catch (_) {
-      // ignore
+    } catch (error) {
+      throw this._makeError('tour_recording_archive_failed', error);
     }
     if (!allow()) return;
 
@@ -318,8 +314,8 @@ export class TourController {
         const cached = pipeline && typeof pipeline.getPrefetch === 'function' ? pipeline.getPrefetch(stopIndex) : null;
         if (cached && cached.answerText) setAnswer(String(cached.answerText || ''));
       }
-    } catch (_) {
-      // ignore
+    } catch (error) {
+      throw error;
     }
 
     const stopName = typeof getTourStopName === 'function' ? getTourStopName(Number(stopIndex)) : '';
@@ -335,21 +331,21 @@ export class TourController {
     const requestId = `tts_resume_${stopIndex}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     try {
       if (typeof ttsMgr.resetForRun === 'function') ttsMgr.resetForRun({ requestId });
-    } catch (_) {
-      // ignore
+    } catch (error) {
+      throw this._makeError('tour_resume_failed', error);
     }
     if (typeof allow === 'function' && !allow()) return true;
 
     if (hasAudioSegments && typeof ttsMgr.enqueueAudioUrl === 'function') {
       for (const s of saved.audioSegments) {
         if (typeof allow === 'function' && !allow()) return true;
+        const url = s && s.audio_url ? String(s.audio_url || '').trim() : '';
+        if (!url) continue;
+        const text = s && s.text ? String(s.text || '') : '';
         try {
-          const url = s && s.audio_url ? String(s.audio_url || '').trim() : '';
-          if (!url) continue;
-          const text = s && s.text ? String(s.text || '') : '';
           ttsMgr.enqueueAudioUrl(url, { stopIndex: Number(stopIndex), text });
-        } catch (_) {
-          // ignore
+        } catch (error) {
+          throw this._makeError('tour_resume_failed', error);
         }
       }
     } else if (hasTextSegments) {
@@ -357,8 +353,8 @@ export class TourController {
         if (typeof allow === 'function' && !allow()) return true;
         try {
           if (typeof ttsMgr.enqueueText === 'function') ttsMgr.enqueueText(s, { stopIndex: Number(stopIndex) });
-        } catch (_) {
-          // ignore
+        } catch (error) {
+          throw this._makeError('tour_resume_failed', error);
         }
       }
     }
@@ -366,15 +362,15 @@ export class TourController {
       if (typeof allow === 'function' && !allow()) return true;
       if (typeof ttsMgr.markRagDone === 'function') ttsMgr.markRagDone();
       if (typeof ttsMgr.ensureRunning === 'function') ttsMgr.ensureRunning();
-    } catch (_) {
-      // ignore
+    } catch (error) {
+      throw this._makeError('tour_resume_failed', error);
     }
 
     try {
       if (typeof allow === 'function' && !allow()) return true;
       if (typeof ttsMgr.waitForIdle === 'function') await ttsMgr.waitForIdle();
-    } catch (_) {
-      // ignore
+    } catch (error) {
+      throw this._makeError('tour_resume_failed', error);
     }
     if (typeof allow === 'function' && !allow()) return true;
 
@@ -420,8 +416,8 @@ export class TourController {
     const requestId = `tts_resume_question_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     try {
       if (typeof ttsMgr.resetForRun === 'function') ttsMgr.resetForRun({ requestId });
-    } catch (_) {
-      // ignore
+    } catch (error) {
+      throw this._makeError('tour_question_resume_failed', error);
     }
 
     try {
@@ -442,8 +438,8 @@ export class TourController {
       if (typeof ttsMgr.markRagDone === 'function') ttsMgr.markRagDone();
       if (typeof ttsMgr.ensureRunning === 'function') ttsMgr.ensureRunning();
       if (typeof ttsMgr.waitForIdle === 'function') await ttsMgr.waitForIdle();
-    } catch (_) {
-      // ignore
+    } catch (error) {
+      throw this._makeError('tour_question_resume_failed', error);
     }
 
     return { resumed: true, stopIndex };
@@ -493,8 +489,8 @@ export class TourController {
         }
         return;
       }
-    } catch (_) {
-      // ignore
+    } catch (error) {
+      throw error;
     }
     if (!allow()) return;
 

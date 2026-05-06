@@ -6,6 +6,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
+from typing import Any
 
 from backend.infra.redis_client import create_redis_client
 
@@ -179,6 +180,30 @@ class RedisEventStore:
         clean = [str(p).strip() for p in parts if str(p).strip()]
         return ":".join([self._prefix] + clean)
 
+    def _decode_event_record(self, raw: Any) -> dict:
+        obj = json.loads(raw)
+        if not isinstance(obj, dict):
+            raise ValueError("event record must be a JSON object")
+
+        required = ("ts_ms", "request_id", "client_id", "kind", "name", "level", "fields")
+        missing = [key for key in required if key not in obj]
+        if missing:
+            raise ValueError(f"event record missing required fields: {', '.join(missing)}")
+
+        try:
+            int(obj["ts_ms"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("event record ts_ms must be an integer timestamp") from exc
+
+        for key in ("request_id", "client_id", "kind", "name", "level"):
+            if not str(obj.get(key) or "").strip():
+                raise ValueError(f"event record {key} must be a non-empty string")
+
+        if not isinstance(obj.get("fields"), dict):
+            raise ValueError("event record fields must be a JSON object")
+
+        return obj
+
     def emit(
         self,
         *,
@@ -202,32 +227,21 @@ class RedisEventStore:
             fields=dict(fields or {}),
         )
         raw = rec.to_ndjson()
-        try:
-            gk = self._k("events", "global")
-            rk = self._k("events", "rid", rid)
-            pipe = self._client.pipeline()
-            pipe.lpush(gk, raw)
-            pipe.ltrim(gk, 0, self._global_max - 1)
-            pipe.lpush(rk, raw)
-            pipe.ltrim(rk, 0, self._per_request_max - 1)
-            pipe.expire(rk, int(max(60.0, self._ttl_s)))
-            pipe.execute()
-        except Exception:
-            return
+        gk = self._k("events", "global")
+        rk = self._k("events", "rid", rid)
+        pipe = self._client.pipeline()
+        pipe.lpush(gk, raw)
+        pipe.ltrim(gk, 0, self._global_max - 1)
+        pipe.lpush(rk, raw)
+        pipe.ltrim(rk, 0, self._per_request_max - 1)
+        pipe.expire(rk, int(max(60.0, self._ttl_s)))
+        pipe.execute()
 
     def _load_list(self, key: str, *, limit: int) -> list[dict]:
-        try:
-            raws = self._client.lrange(key, 0, max(0, limit - 1)) or []
-        except Exception:
-            return []
+        raws = self._client.lrange(key, 0, max(0, limit - 1)) or []
         items = []
         for s in reversed(list(raws)):  # restore chronological order (oldest->newest)
-            try:
-                obj = json.loads(s)
-            except Exception:
-                continue
-            if isinstance(obj, dict):
-                items.append(obj)
+            items.append(self._decode_event_record(s))
         return items
 
     def list_events(self, *, request_id: str, limit: int = 200, since_ms: int | None = None) -> list[dict]:

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from backend.api.speech_pipeline import AskContext, LifecycleStreamMiddleware, apply_stream_middlewares
 from backend.orchestrators.stream_payloads import make_chunk
 
@@ -72,7 +74,7 @@ def test_lifecycle_emits_start_and_done_and_clears_active():
     assert deps.request_registry.clears == [("c1", "ask", "r1")]
 
 
-def test_lifecycle_on_exception_emits_failed_and_yields_done():
+def test_lifecycle_on_exception_emits_failed_and_reraises():
     deps = _Deps()
     parsed = SimpleNamespace(request_id="r1", client_id="c1", kind="ask", agent_id="")
     ctx = AskContext(deps=deps, parsed=parsed, data={}, t_submit=0.0)
@@ -82,13 +84,29 @@ def test_lifecycle_on_exception_emits_failed_and_yields_done():
         raise RuntimeError("boom")
 
     out = apply_stream_middlewares(ctx, raw(), [LifecycleStreamMiddleware()])
-    items = _drain(out)
-    assert items[0]["chunk"] == "x"
-    assert items[-1]["done"] is True
-    assert "错误:" in items[-1]["chunk"]
+    assert next(out)["chunk"] == "x"
+    with pytest.raises(RuntimeError, match="boom"):
+        next(out)
     names = [e.get("name") for e in deps.event_store.events]
     assert "ask_stream_failed" in names
     assert deps.request_registry.clears == [("c1", "ask", "r1")]
+
+
+def test_lifecycle_agent_no_data_error_is_not_converted_to_success_chunk():
+    deps = _Deps()
+    parsed = SimpleNamespace(request_id="r1", client_id="c1", kind="agent", agent_id="agent_1")
+    ctx = AskContext(deps=deps, parsed=parsed, data={}, t_submit=0.0)
+
+    def raw():
+        raise RuntimeError("ragflow_agent_completion_no_data")
+        yield make_chunk("unreachable", done=False)
+
+    out = apply_stream_middlewares(ctx, raw(), [LifecycleStreamMiddleware()])
+    with pytest.raises(RuntimeError, match="ragflow_agent_completion_no_data"):
+        next(out)
+    names = [e.get("name") for e in deps.event_store.events]
+    assert "ask_stream_failed" in names
+    assert deps.request_registry.clears == [("c1", "agent", "r1")]
 
 
 def test_lifecycle_on_close_cancels_and_emits_disconnect():
@@ -109,4 +127,3 @@ def test_lifecycle_on_close_cancels_and_emits_disconnect():
     assert "ask_client_disconnect" in names
     assert deps.request_registry.cancels == [("r1", "client_disconnect")]
     assert deps.request_registry.clears == [("c1", "ask", "r1")]
-

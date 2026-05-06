@@ -4,14 +4,17 @@ import copy
 
 from flask import Blueprint, jsonify, request
 
-from backend.api.ragflow_config_cache import get_ragflow_app_config, get_ragflow_bundle, get_ragflow_config
+from backend.config import RagflowAppConfig
 from backend.api.ragflow_tour_history_utils import (
+    RagflowTourHistoryContractError,
     build_stops_meta,
     build_tour_templates,
-    fallback_stops,
+    load_ragflow_config_dict,
     normalize_stops,
     parse_history_query,
+    parse_json_object_request,
     parse_tour_plan_request,
+    require_history_items,
 )
 
 
@@ -19,22 +22,26 @@ def create_blueprint(deps):
     bp = Blueprint("ragflow_tour_history_api", __name__)
     rag_chat_manager = getattr(deps, "ragflow_chat_manager", None) or getattr(deps, "ragflow_service", None)
 
+    @bp.errorhandler(RagflowTourHistoryContractError)
+    def handle_contract_error(exc):
+        return jsonify({"ok": False, "error": exc.error, "detail": exc.detail}), exc.status_code
+
     @bp.route("/api/ragflow/chats", methods=["GET"])
     def ragflow_list_chats():
         return jsonify(rag_chat_manager.list_chats())
 
     @bp.route("/api/ragflow/chats/clear_sessions", methods=["POST"])
     def ragflow_clear_chat_sessions():
-        data = request.get_json(silent=True) or {}
-        chat_name = str((data.get("chat_name") if isinstance(data, dict) else "") or "").strip()
+        data = parse_json_object_request(request)
+        chat_name = str(data.get("chat_name") or "").strip()
         result = rag_chat_manager.clear_chat_sessions(chat_name)
         status = 200 if result.get("ok") else 500
         return jsonify(result), status
 
     @bp.route("/api/ragflow/chats/new_session", methods=["POST"])
     def ragflow_create_chat_session():
-        data = request.get_json(silent=True) or {}
-        chat_name = str((data.get("chat_name") if isinstance(data, dict) else "") or "").strip()
+        data = parse_json_object_request(request)
+        chat_name = str(data.get("chat_name") or "").strip()
         result = rag_chat_manager.create_new_session(chat_name)
         status = 200 if result.get("ok") else 500
         return jsonify(result), status
@@ -42,16 +49,12 @@ def create_blueprint(deps):
     @bp.route("/api/ragflow/agents", methods=["GET"])
     def ragflow_list_agents():
         res = rag_chat_manager.list_agents()
-        try:
-            deps.logger.info(f"ragflow_agents_list count={len(res.get('agents') or [])}")
-        except Exception:
-            pass
+        deps.logger.info(f"ragflow_agents_list count={len(res.get('agents') or [])}")
         return jsonify(res)
 
     @bp.route("/api/ragflow/config", methods=["GET"])
     def ragflow_get_config():
-        cfg = deps.ragflow_service.load_config() or {}
-        cfg = cfg if isinstance(cfg, dict) else {}
+        cfg = load_ragflow_config_dict(deps=deps)
         return jsonify(
             {
                 "ok": True,
@@ -63,12 +66,11 @@ def create_blueprint(deps):
 
     @bp.route("/api/ragflow/config", methods=["PUT"])
     def ragflow_set_config():
-        data = request.get_json(silent=True) or {}
+        data = parse_json_object_request(request)
         if "api_key" not in data:
             return jsonify({"ok": False, "error": "api_key_required"}), 400
         api_key = str(data.get("api_key") or "").strip()
-        cfg = deps.ragflow_service.load_config(force=True) or {}
-        cfg = copy.deepcopy(cfg if isinstance(cfg, dict) else {})
+        cfg = copy.deepcopy(load_ragflow_config_dict(deps=deps, force=True))
         cfg.pop("__meta", None)
         cfg["api_key"] = api_key
         deps.ragflow_service.save_config(cfg)
@@ -90,40 +92,49 @@ def create_blueprint(deps):
         q = parse_history_query(request)
         if q.sort_mode in ("count", "freq", "frequency"):
             items = deps.history_store.list_by_count(limit=q.limit, desc=q.desc)
+            items = require_history_items(items, source="history_store.list_by_count")
             return jsonify({"sort": "count", "items": items})
         items = deps.history_store.list_by_time(limit=q.limit, desc=q.desc)
+        items = require_history_items(items, source="history_store.list_by_time")
         return jsonify({"sort": "time", "items": items})
 
     @bp.route("/api/tour/stops", methods=["GET"])
     def api_tour_stops():
-        app_cfg = get_ragflow_app_config(deps=deps)
-        stops = list(app_cfg.tour.stops or [])
-        source = "default"
-        if stops:
-            source = "ragflow_config.tour.stops"
-        else:
-            stops = fallback_stops()
-        stops = normalize_stops(stops)
-        return jsonify({"stops": stops, "source": source})
+        cfg = load_ragflow_config_dict(deps=deps)
+        app_cfg = RagflowAppConfig.from_any(cfg)
+        stops = normalize_stops(app_cfg.tour.stops or [])
+        if not stops:
+            return (
+                jsonify(
+                    {
+                        "ok": False,
+                        "error": "tour_stops_required",
+                        "detail": "ragflow_config.tour.stops_required",
+                    }
+                ),
+                500,
+            )
+        return jsonify({"stops": stops, "source": "ragflow_config.tour.stops"})
 
     @bp.route("/api/tour/meta", methods=["GET"])
     def api_tour_meta():
-        cfg = get_ragflow_config(deps=deps)
-        meta = deps.tour_planner.get_meta(cfg if isinstance(cfg, dict) else {})
+        cfg = load_ragflow_config_dict(deps=deps)
+        meta = deps.tour_planner.get_meta(cfg)
         return jsonify(meta)
 
     @bp.route("/api/tour/templates", methods=["GET"])
     def api_tour_templates():
-        cfg, app_cfg = get_ragflow_bundle(deps=deps)
-        templates = build_tour_templates(app_cfg=app_cfg, raw_cfg=(cfg if isinstance(cfg, dict) else {}))
+        cfg = load_ragflow_config_dict(deps=deps)
+        app_cfg = RagflowAppConfig.from_any(cfg)
+        templates = build_tour_templates(app_cfg=app_cfg, raw_cfg=cfg)
         return jsonify({"templates": templates})
 
     @bp.route("/api/tour/plan", methods=["POST"])
     def api_tour_plan():
-        cfg = get_ragflow_config(deps=deps)
-        data = request.get_json() or {}
+        cfg = load_ragflow_config_dict(deps=deps)
+        data = parse_json_object_request(request)
         zone, profile, duration_s, stops_override, stop_durations_override = parse_tour_plan_request(
-            data if isinstance(data, dict) else {}
+            data
         )
         if stops_override:
             plan = deps.tour_planner.make_plan_from_stops(
@@ -136,7 +147,7 @@ def create_blueprint(deps):
             )
         else:
             plan = deps.tour_planner.make_plan(
-                cfg if isinstance(cfg, dict) else {},
+                cfg,
                 zone=zone,
                 profile=profile,
                 duration_s=duration_s,

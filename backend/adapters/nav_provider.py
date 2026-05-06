@@ -137,8 +137,10 @@ def build_nav_provider(config: dict) -> NavProvider:
     nav_cfg = NavConfig.from_any(get_nested(config, ["nav"], {}) or {})
     provider = str((nav_cfg.provider or "disabled")).strip().lower()
     if provider == "mock":
-        return MockNavProvider()
+        raise ValueError("nav_provider_mock_not_allowed")
     if provider == "http":
+        if not str(nav_cfg.http.base_url or "").strip():
+            raise ValueError("nav_http_base_url_missing")
         return HttpNavProvider()
     raise ValueError("nav_disabled")
 

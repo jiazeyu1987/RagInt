@@ -56,13 +56,14 @@ def build_asr_filter_prompt(*, prompt_template: str, asr_text: str, domain_terms
     return prompt.strip()
 
 
-def parse_asr_filter_response(*, raw_text: str, fallback_text: str) -> str:
-    fallback = str(fallback_text or "").strip()
+def parse_asr_filter_response(*, raw_text: str) -> str:
     payload = try_parse_json_like(extract_json(raw_text))
     if not isinstance(payload, dict):
         payload = try_parse_json_like(raw_text)
     if not isinstance(payload, dict):
-        return fallback
+        raise ValueError("invalid_asr_filter_response")
 
     text = str(payload.get("text") or "").strip()
-    return text or fallback
+    if not text:
+        raise ValueError("invalid_asr_filter_response")
+    return text

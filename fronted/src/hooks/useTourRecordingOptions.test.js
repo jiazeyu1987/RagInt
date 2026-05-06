@@ -41,6 +41,7 @@ describe('useTourRecordingOptions', () => {
     await hook.flush();
     expect(hook.result().options).toHaveLength(1);
     expect(hook.result().ready).toBe(true);
+    expect(hook.result().error).toBe('');
     expect(hook.result().options[0].recording_id).toBe('rec-1');
     expect(hook.result().options[0].label).toContain('1.25x');
 
@@ -49,6 +50,42 @@ describe('useTourRecordingOptions', () => {
     });
     expect(fetchJson).toHaveBeenCalledWith('/api/recordings?limit=10');
 
+    hook.unmount();
+  });
+
+  test('reports backend failure instead of silent empty options', async () => {
+    fetchJson.mockResolvedValue({ ok: false, error: 'recordings_store_failed' });
+
+    const hook = renderHook((p) => useTourRecordingOptions(p), {
+      enabled: true,
+      limit: 10,
+      currentPlaybackSpeed: 1.0,
+    });
+
+    await hook.flush();
+    await hook.flush();
+
+    expect(hook.result().ready).toBe(true);
+    expect(hook.result().options).toEqual([]);
+    expect(hook.result().error).toBe('recordings_store_failed');
+    hook.unmount();
+  });
+
+  test('reports invalid response shape instead of silent empty options', async () => {
+    fetchJson.mockResolvedValue({ items: {} });
+
+    const hook = renderHook((p) => useTourRecordingOptions(p), {
+      enabled: true,
+      limit: 10,
+      currentPlaybackSpeed: 1.0,
+    });
+
+    await hook.flush();
+    await hook.flush();
+
+    expect(hook.result().ready).toBe(true);
+    expect(hook.result().options).toEqual([]);
+    expect(hook.result().error).toBe('recordings_invalid_response');
     hook.unmount();
   });
 });

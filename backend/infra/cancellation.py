@@ -107,10 +107,7 @@ class _RedisCancelEvent:
         self._key = key
 
     def is_set(self) -> bool:
-        try:
-            v = self._client.get(self._key)
-        except Exception:
-            return False
+        v = self._client.get(self._key)
         return bool(v and str(v).strip())
 
 
@@ -143,15 +140,11 @@ class RedisRequestRegistry:
         now = time.time()
         bucket = int(now // max(0.1, float(window_s)))
         key = self._k("rl", cid, k, str(bucket))
-        try:
-            pipe = self._client.pipeline()
-            pipe.incr(key, 1)
-            pipe.expire(key, int(max(1.0, float(window_s) * 2.0)))
-            count, _ = pipe.execute()
-            return int(count) <= int(limit)
-        except Exception:
-            # Fail-open to avoid hard outages when Redis is transiently unavailable.
-            return True
+        pipe = self._client.pipeline()
+        pipe.incr(key, 1)
+        pipe.expire(key, int(max(1.0, float(window_s) * 2.0)))
+        count, _ = pipe.execute()
+        return int(count) <= int(limit)
 
     def register(
         self,
@@ -170,33 +163,27 @@ class RedisRequestRegistry:
 
         active_key = self._k("active", cid, k)
         if cancel_previous:
-            try:
-                prev = self._client.get(active_key)
-            except Exception:
-                prev = None
+            prev = self._client.get(active_key)
             if prev and str(prev).strip() and str(prev).strip() != rid:
                 self.cancel(str(prev).strip(), reason=cancel_reason)
 
         info_key = self._k("info", rid)
-        try:
-            now = time.time()
-            pipe = self._client.pipeline()
-            pipe.hset(
-                info_key,
-                mapping={
-                    "request_id": rid,
-                    "client_id": cid,
-                    "kind": k,
-                    "created_at": str(now),
-                    "canceled_at": "",
-                    "cancel_reason": "",
-                },
-            )
-            pipe.expire(info_key, int(max(10.0, self._ttl_s)))
-            pipe.set(active_key, rid, ex=int(max(10.0, self._ttl_s)))
-            pipe.execute()
-        except Exception:
-            pass
+        now = time.time()
+        pipe = self._client.pipeline()
+        pipe.hset(
+            info_key,
+            mapping={
+                "request_id": rid,
+                "client_id": cid,
+                "kind": k,
+                "created_at": str(now),
+                "canceled_at": "",
+                "cancel_reason": "",
+            },
+        )
+        pipe.expire(info_key, int(max(10.0, self._ttl_s)))
+        pipe.set(active_key, rid, ex=int(max(10.0, self._ttl_s)))
+        pipe.execute()
 
         return self.get_cancel_event(rid)
 
@@ -207,12 +194,9 @@ class RedisRequestRegistry:
         if not rid:
             return
         active_key = self._k("active", cid, k)
-        try:
-            cur = self._client.get(active_key)
-            if cur and str(cur).strip() == rid:
-                self._client.delete(active_key)
-        except Exception:
-            return
+        cur = self._client.get(active_key)
+        if cur and str(cur).strip() == rid:
+            self._client.delete(active_key)
 
     def cancel(self, request_id: str, *, reason: str = "cancelled") -> bool:
         rid = str(request_id or "").strip()
@@ -221,24 +205,18 @@ class RedisRequestRegistry:
         cancel_key = self._k("cancel", rid)
         info_key = self._k("info", rid)
         now = time.time()
-        try:
-            pipe = self._client.pipeline()
-            pipe.set(cancel_key, "1", ex=int(max(10.0, self._ttl_s)))
-            pipe.hset(info_key, mapping={"canceled_at": str(now), "cancel_reason": str(reason or "cancelled")})
-            pipe.expire(info_key, int(max(10.0, self._ttl_s)))
-            pipe.execute()
-            return True
-        except Exception:
-            return True
+        pipe = self._client.pipeline()
+        pipe.set(cancel_key, "1", ex=int(max(10.0, self._ttl_s)))
+        pipe.hset(info_key, mapping={"canceled_at": str(now), "cancel_reason": str(reason or "cancelled")})
+        pipe.expire(info_key, int(max(10.0, self._ttl_s)))
+        pipe.execute()
+        return True
 
     def cancel_active(self, *, client_id: str, kind: str, reason: str = "cancelled") -> str | None:
         cid = str(client_id or "-").strip() or "-"
         k = str(kind or "ask").strip() or "ask"
         active_key = self._k("active", cid, k)
-        try:
-            rid = self._client.get(active_key)
-        except Exception:
-            rid = None
+        rid = self._client.get(active_key)
         if not rid or not str(rid).strip():
             return None
         self.cancel(str(rid).strip(), reason=reason)
@@ -254,34 +232,31 @@ class RedisRequestRegistry:
         rid = str(request_id or "").strip()
         if not rid:
             return False
-        try:
-            v = self._client.get(self._k("cancel", rid))
-        except Exception:
-            return False
+        v = self._client.get(self._k("cancel", rid))
         return bool(v and str(v).strip())
 
     def get_info(self, request_id: str) -> dict | None:
         rid = str(request_id or "").strip()
         if not rid:
             return None
-        try:
-            data = self._client.hgetall(self._k("info", rid)) or {}
-        except Exception:
-            return None
+        data = self._client.hgetall(self._k("info", rid)) or {}
         if not isinstance(data, dict) or not data:
             return None
 
-        def fnum(v):
-            try:
-                return float(v) if str(v).strip() else None
-            except Exception:
+        def fnum(field: str):
+            v = data.get(field)
+            if not str(v or "").strip():
                 return None
+            try:
+                return float(v)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"cancel info {field} must be a numeric timestamp") from exc
 
         return {
             "request_id": str(data.get("request_id") or rid),
             "client_id": str(data.get("client_id") or "-"),
             "kind": str(data.get("kind") or "unknown"),
-            "created_at": fnum(data.get("created_at")),
-            "canceled_at": fnum(data.get("canceled_at")),
+            "created_at": fnum("created_at"),
+            "canceled_at": fnum("canceled_at"),
             "cancel_reason": str(data.get("cancel_reason") or "") or None,
         }

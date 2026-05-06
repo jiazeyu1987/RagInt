@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 
 from backend.app import create_app
 
@@ -39,6 +40,77 @@ def test_ops_heartbeat_and_config_flow(tmp_path):
     assert r5.status_code == 200
     assert r5.get_json()["config_version"] == 1
     assert r5.get_json()["config"]["k"] == "v"
+
+
+def test_ops_devices_fail_when_stored_meta_json_is_invalid(tmp_path):
+    db_path = tmp_path / "ops.db"
+    os.environ["RAGINT_OPS_DB_PATH"] = str(db_path)
+    os.environ.pop("RAGINT_OPS_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_ADMIN_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_VIEW_TOKEN", None)
+    os.environ["RAGINT_OPS_OPEN_ACCESS"] = "1"
+    os.environ.pop("RAGINT_DEVICE_SHARED_SECRET", None)
+    os.environ.pop("RAGINT_DEVICE_AUTH_REQUIRED", None)
+
+    app = create_app()
+    c = app.test_client()
+    assert c.post("/api/ops/heartbeat", json={"device_id": "d1", "meta": {"ok": True}}).status_code == 200
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE devices SET meta_json = ? WHERE device_id = ?", ("[1,2,3]", "d1"))
+
+    r = c.get("/api/ops/devices")
+    assert r.status_code == 500
+    assert (r.get_json(silent=True) or {}).get("ok") is not True
+
+
+def test_ops_config_fail_when_stored_config_json_is_malformed(tmp_path):
+    db_path = tmp_path / "ops.db"
+    os.environ["RAGINT_OPS_DB_PATH"] = str(db_path)
+    os.environ.pop("RAGINT_OPS_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_ADMIN_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_VIEW_TOKEN", None)
+    os.environ["RAGINT_OPS_OPEN_ACCESS"] = "1"
+    os.environ.pop("RAGINT_DEVICE_SHARED_SECRET", None)
+    os.environ.pop("RAGINT_DEVICE_AUTH_REQUIRED", None)
+
+    app = create_app()
+    c = app.test_client()
+    assert c.post("/api/ops/config", json={"device_id": "d1", "config": {"k": "v"}}).status_code == 200
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE device_configs SET config_json = ? WHERE device_id = ?", ("{bad", "d1"))
+
+    r = c.get("/api/ops/config?device_id=d1")
+    assert r.status_code == 500
+    assert (r.get_json(silent=True) or {}).get("ok") is not True
+
+
+def test_ops_audit_fail_when_stored_payload_json_is_invalid(tmp_path):
+    db_path = tmp_path / "ops.db"
+    os.environ["RAGINT_OPS_DB_PATH"] = str(db_path)
+    os.environ.pop("RAGINT_OPS_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_ADMIN_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_VIEW_TOKEN", None)
+    os.environ["RAGINT_OPS_OPEN_ACCESS"] = "1"
+    os.environ.pop("RAGINT_DEVICE_SHARED_SECRET", None)
+    os.environ.pop("RAGINT_DEVICE_AUTH_REQUIRED", None)
+
+    app = create_app()
+    c = app.test_client()
+    deps = app.config["deps"]
+    event_id = deps.ops_store.audit(
+        actor_kind="ops",
+        actor_id="tester",
+        action="probe",
+        target_kind="device",
+        target_id="d1",
+        payload={"ok": True},
+    )
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE ops_audit SET payload_json = ? WHERE id = ?", ("42", event_id))
+
+    r = c.get("/api/ops/audit")
+    assert r.status_code == 500
+    assert (r.get_json(silent=True) or {}).get("ok") is not True
 
 
 def test_ops_token_protects_admin_endpoints(tmp_path):

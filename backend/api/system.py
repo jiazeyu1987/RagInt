@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from json import JSONDecodeError
 
 from flask import Blueprint, Response, jsonify, request
 
@@ -23,7 +24,12 @@ def create_blueprint(deps):
 
     @bp.route("/api/openapi.json", methods=["GET"])
     def api_openapi():
-        data = load_openapi_or_default(base_dir=deps.base_dir)
+        try:
+            data = load_openapi_or_default(base_dir=deps.base_dir)
+        except FileNotFoundError:
+            return error_json(error="openapi_spec_required", status=500)
+        except JSONDecodeError as exc:
+            return error_json(error="openapi_spec_invalid", detail=str(exc), status=500)
         return jsonify(data)
 
     @bp.route("/api/version", methods=["GET"])
@@ -44,7 +50,10 @@ def create_blueprint(deps):
 
     @bp.route("/api/events", methods=["GET"])
     def api_events():
-        q = parse_event_query(request)
+        try:
+            q = parse_event_query(request)
+        except ValueError as exc:
+            return bad_request_json(error=str(exc))
         if q.request_id:
             items = deps.event_store.list_events(request_id=q.request_id, limit=q.limit, since_ms=q.since_ms)
             last_error = deps.event_store.last_error(request_id=q.request_id)
@@ -66,6 +75,8 @@ def create_blueprint(deps):
         """
         event = parse_client_event(req=request, data=(request.get_json() or {}))
         if not ingest_client_event(deps=deps, event=event):
+            if event.request_id and event.name:
+                return error_json(error="client_event_ingest_failed", status=500)
             return bad_request_json(error="request_id_and_name_required")
         return ok_json()
 

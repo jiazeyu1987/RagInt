@@ -6,8 +6,8 @@ From repo root:
 
 - `python -m backend`
   - ASR WS runs via VoiceKit at `/voicekit/ws/asr`
-  - 依赖：建议安装 `asr-voicekit`（例如安装已构建的 wheel）
-  - 若希望缺失 VoiceKit 时启动直接失败：设置 `RAGINT_REQUIRE_VOICEKIT=1`
+  - 依赖：必须安装 `asr-voicekit`（例如安装已构建的 wheel）
+  - 缺失 VoiceKit 时启动会直接失败，不会跳过 `/voicekit/ws/asr`
 
 Key endpoints:
 
@@ -39,7 +39,7 @@ Security defaults:
 ### TTS speed
 
 - Client can send optional `tts_speed` (multiplier) to `/api/text_to_speech` (and stream/saved variants) to speed up speech.
-- Best-effort provider support: `modelscope`(bailian/dashscope), `edge`, `sapi` support per-request speed; others degrade to default.
+- Provider support: `modelscope`(bailian/dashscope), `edge`, and `sapi` support per-request speed. Unsupported providers fail instead of degrading to a default.
 
 ### KB version + Q&A cache
 

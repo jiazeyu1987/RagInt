@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from types import SimpleNamespace
 
 from backend.services.qa_audio_matcher import QaAudioMatcher
@@ -116,6 +118,28 @@ class _RagflowHighMismatch:
         return _SessionHighMismatchJson()
 
 
+class _SessionInvalidJson:
+    def ask(self, _prompt: str, stream: bool = False):  # noqa: ARG002
+        if stream:
+            return iter([])
+        return "classifier says probably yes without json"
+
+
+class _RagflowInvalidJson:
+    def get_session(self, _name: str):  # noqa: ARG002
+        return _SessionInvalidJson()
+
+
+class _RagflowBroken:
+    def get_session(self, _name: str):  # noqa: ARG002
+        raise RuntimeError("ragflow unavailable")
+
+
+class _RagflowMissingSession:
+    def get_session(self, _name: str):  # noqa: ARG002
+        return None
+
+
 class _Pair:
     def __init__(self, pid: int, question: str, answer: str):
         self.id = pid
@@ -209,6 +233,13 @@ def test_parse_classification_picks_last_valid_json_object():
     assert parsed["confidence"] == 0.999
 
 
+def test_parse_classification_raises_on_invalid_json_contract():
+    matcher = QaAudioMatcher(store=_Store(), ragflow_service=_Ragflow(), tts_service=_Tts())
+
+    with pytest.raises(ValueError, match="invalid_classifier_json"):
+        matcher._parse_classification("classifier says probably yes without json")
+
+
 def test_low_confidence_classifier_match_can_pass_with_soft_accept():
     matcher = QaAudioMatcher(store=_StoreLowRecall(), ragflow_service=_RagflowLowConfidence(), tts_service=_Tts())
     hit = matcher.find_match(
@@ -256,3 +287,38 @@ def test_entity_mismatch_forces_reject_even_with_high_classifier_confidence():
     assert float(dbg.get("classifier_confidence") or 1.0) <= 0.2
     assert "\u5bfc\u4e1d" in set(dbg.get("entity_query_terms") or [])
     assert "\u5bfc\u7ba1" in set(dbg.get("entity_candidate_terms") or [])
+
+
+def test_classifier_model_dependency_error_is_not_silenced():
+    matcher = QaAudioMatcher(store=_Store(), ragflow_service=_RagflowBroken(), tts_service=_Tts())
+
+    with pytest.raises(RuntimeError, match="ragflow unavailable"):
+        matcher._ask_classifier_model(prompt="x", classifier_chat_name="qa_cls")
+
+
+def test_classifier_missing_session_is_not_treated_as_empty_no_match():
+    matcher = QaAudioMatcher(store=_StoreLowRecall(), ragflow_service=_RagflowMissingSession(), tts_service=_Tts())
+
+    with pytest.raises(RuntimeError, match="qa_audio_classifier_session_missing"):
+        matcher.find_match(
+            question="9*0=閸?",
+            tts_profile=TtsProfile(provider="flash", voice="", speed=1.0),
+            top_k=20,
+            threshold=0.85,
+            classifier_chat_name="missing_qa_cls",
+            base_url="http://127.0.0.1:5000",
+        )
+
+
+def test_find_match_raises_when_classifier_returns_invalid_json():
+    matcher = QaAudioMatcher(store=_StoreLowRecall(), ragflow_service=_RagflowInvalidJson(), tts_service=_Tts())
+
+    with pytest.raises(ValueError, match="invalid_classifier_json"):
+        matcher.find_match(
+            question="9*0=鍑?",
+            tts_profile=TtsProfile(provider="flash", voice="", speed=1.0),
+            top_k=20,
+            threshold=0.85,
+            classifier_chat_name="闂姣斿",
+            base_url="http://127.0.0.1:5000",
+        )

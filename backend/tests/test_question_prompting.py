@@ -3,6 +3,9 @@ from __future__ import annotations
 import logging
 import threading
 
+import pytest
+
+from backend.orchestrators.ask_policies import apply_selling_points_topn_hint
 from backend.orchestrators.conversation_orchestrator import AskInput, ConversationOrchestrator
 from backend.orchestrators.question_prompting import apply_explanation_script_requirements, extract_base_question
 
@@ -109,6 +112,44 @@ def test_apply_explanation_script_requirements_ignores_audience_profile():
         audience_profile="儿童",
     )
     assert out == "请回答"
+
+
+def test_apply_selling_points_topn_hint_fails_fast_when_store_list_fails():
+    class _FailingSellingPointsStore:
+        def list(self, **_kwargs):  # noqa: ANN003
+            raise RuntimeError("selling_points_store_unavailable")
+
+        def pick_topn(self, **_kwargs):  # noqa: ANN003
+            raise AssertionError("pick_topn must not run when list fails")
+
+    # Given guide mode requires selling points for a known stop
+    # When the selling-points store cannot list required context
+    # Then the ask pipeline exposes the failure instead of answering without it
+    with pytest.raises(RuntimeError, match="selling_points_store_unavailable"):
+        apply_selling_points_topn_hint(
+            "guide question",
+            guide={"enabled": True, "stop_name": "A1"},
+            selling_points_store=_FailingSellingPointsStore(),
+        )
+
+
+def test_apply_selling_points_topn_hint_fails_fast_when_pick_topn_fails():
+    class _FailingSellingPointsStore:
+        def list(self, **_kwargs):  # noqa: ANN003
+            return [object()]
+
+        def pick_topn(self, **_kwargs):  # noqa: ANN003
+            raise RuntimeError("selling_points_rank_failed")
+
+    # Given guide mode has listed selling points for the stop
+    # When ranking the required guide context fails
+    # Then the failure is visible to the caller
+    with pytest.raises(RuntimeError, match="selling_points_rank_failed"):
+        apply_selling_points_topn_hint(
+            "guide question",
+            guide={"enabled": True, "stop_name": "A1"},
+            selling_points_store=_FailingSellingPointsStore(),
+        )
 
 
 def test_apply_explanation_script_requirements_strips_existing_constraint_block():

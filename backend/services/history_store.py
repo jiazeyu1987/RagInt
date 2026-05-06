@@ -78,6 +78,28 @@ class HistoryStore:
             finally:
                 conn.close()
 
+    @staticmethod
+    def _required_text(value: object, *, field_name: str, normalized_question: str, kb_version: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError(
+                f"qa_cache.{field_name} is required for normalized_question={normalized_question!r} kb_version={kb_version!r}"
+            )
+        return text
+
+    @staticmethod
+    def _required_int(value: object, *, field_name: str, normalized_question: str, kb_version: str) -> int:
+        if value is None or str(value).strip() == "":
+            raise ValueError(
+                f"qa_cache.{field_name} is required for normalized_question={normalized_question!r} kb_version={kb_version!r}"
+            )
+        try:
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"qa_cache.{field_name} must be an integer for normalized_question={normalized_question!r} kb_version={kb_version!r}"
+            ) from exc
+
     def add_entry(
         self,
         *,
@@ -232,7 +254,18 @@ class HistoryStore:
                 if not row:
                     return None
 
-                expires_at_ms = int(row["expires_at_ms"] or 0)
+                answer = self._required_text(
+                    row["answer"],
+                    field_name="answer",
+                    normalized_question=qn,
+                    kb_version=kv,
+                )
+                expires_at_ms = self._required_int(
+                    row["expires_at_ms"],
+                    field_name="expires_at_ms",
+                    normalized_question=qn,
+                    kb_version=kv,
+                )
                 if expires_at_ms > 0 and int(now_ms) >= expires_at_ms:
                     conn.execute(
                         "DELETE FROM qa_cache WHERE normalized_question = ? AND kb_version = ?",
@@ -250,7 +283,7 @@ class HistoryStore:
                     (int(now_ms), qn, kv),
                 )
                 conn.commit()
-                return str(row["answer"] or "")
+                return answer
             finally:
                 conn.close()
 

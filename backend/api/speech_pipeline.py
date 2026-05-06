@@ -8,7 +8,6 @@ from flask import Response
 from backend.api.speech_rate_limit import maybe_rate_limited_response
 from backend.api.speech_recording import AskRecordingSink
 from backend.api.speech_telemetry import AskStreamTelemetry
-from backend.orchestrators.stream_payloads import make_chunk
 
 
 @dataclass
@@ -135,7 +134,7 @@ class LifecycleStreamMiddleware:
                 )
                 return
             except Exception as e:
-                deps.logger.error(f"[{ctx.request_id}] 流式响应异常: {e}", exc_info=True)
+                deps.logger.error(f"[{ctx.request_id}] stream response failed: {e}", exc_info=True)
                 deps.event_store.emit(
                     request_id=ctx.request_id,
                     client_id=ctx.client_id,
@@ -144,14 +143,7 @@ class LifecycleStreamMiddleware:
                     level="error",
                     err=str(e),
                 )
-                if ctx.agent_id and "ragflow_agent_completion_no_data" in str(e):
-                    msg = (
-                        f"智能体接口暂时不可用（RAGFlow /api/v1/agents/{ctx.agent_id}/completions 无输出）。\n"
-                        f"请检查RAGFlow 服务日志/版本或接口权限。"
-                    )
-                    yield make_chunk(msg, done=True)
-                else:
-                    yield make_chunk(f"错误: {str(e)}", done=True)
+                raise
             finally:
                 deps.request_registry.clear_active(client_id=ctx.client_id, kind=ctx.kind, request_id=ctx.request_id)
 
@@ -171,4 +163,3 @@ def apply_stream_middlewares(ctx: AskContext, stream: Iterable[dict], middleware
     for mw in middlewares:
         out = mw.wrap(ctx, out)
     return out
-

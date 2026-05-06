@@ -10,18 +10,15 @@ import uuid
 from pathlib import Path
 
 
-def _safe_path_part(value: str, *, fallback: str = "item") -> str:
+def _safe_path_part(value: str, *, field_name: str) -> str:
     text = str(value or "").strip()
     if not text:
-        text = fallback
-    out = []
-    for ch in text:
-        if ch.isalnum() or ch in {"-", "_", "."}:
-            out.append(ch)
-        else:
-            out.append("_")
-    normalized = "".join(out).strip("._")
-    return normalized or fallback
+        raise ValueError(f"{field_name}_required")
+    if text != text.strip("._"):
+        raise ValueError(f"{field_name}_invalid")
+    if any(not (ch.isalnum() or ch in {"-", "_", "."}) for ch in text):
+        raise ValueError(f"{field_name}_invalid")
+    return text
 
 
 def _normalize_rel_path(value: str) -> str:
@@ -29,6 +26,14 @@ def _normalize_rel_path(value: str) -> str:
     if not rel or ".." in rel.split("/"):
         raise ValueError("bad_path")
     return rel
+
+
+def _normalize_optional_rel_path(value: str | None, current: str) -> str:
+    if value is None:
+        return str(current or "")
+    if not str(value or "").strip():
+        return ""
+    return _normalize_rel_path(value)
 
 
 def _normalize_hotspot_measure(value, *, field_name: str) -> float:
@@ -485,7 +490,7 @@ class PadProductStore:
         return self._image_root
 
     def product_audio_dir(self, product_id: str) -> Path:
-        pid = _safe_path_part(product_id, fallback="product")
+        pid = _safe_path_part(product_id, field_name="product_id")
         target = (self.audio_root() / pid).resolve()
         base = self.audio_root().resolve()
         if not str(target).lower().startswith(str(base).lower() + os.sep.lower()):
@@ -494,7 +499,7 @@ class PadProductStore:
         return target
 
     def product_image_dir(self, product_id: str) -> Path:
-        pid = _safe_path_part(product_id, fallback="product")
+        pid = _safe_path_part(product_id, field_name="product_id")
         target = (self.image_root() / pid).resolve()
         base = self.image_root().resolve()
         if not str(target).lower().startswith(str(base).lower() + os.sep.lower()):
@@ -503,8 +508,8 @@ class PadProductStore:
         return target
 
     def scene_background_dir(self, *, hall_id: str, scene_id: str) -> Path:
-        hid = _safe_path_part(hall_id, fallback="hall")
-        sid = _safe_path_part(scene_id, fallback="scene")
+        hid = _safe_path_part(hall_id, field_name="hall_id")
+        sid = _safe_path_part(scene_id, field_name="scene_id")
         target = (self.image_root() / "scenes" / hid / sid).resolve()
         base = self.image_root().resolve()
         if not str(target).lower().startswith(str(base).lower() + os.sep.lower()):
@@ -513,8 +518,9 @@ class PadProductStore:
         return target
 
     def station_asset_dir(self, *, hall_id: str, station_key: str) -> Path:
-        hid = _safe_path_part(hall_id, fallback="hall")
-        skey = _safe_path_part(_normalize_station_key(station_key), fallback="station")
+        hid = _safe_path_part(hall_id, field_name="hall_id")
+        _safe_path_part(station_key, field_name="station_key")
+        skey = _normalize_station_key(station_key)
         target = (self.image_root() / "stations" / hid / skey).resolve()
         base = self.image_root().resolve()
         if not str(target).lower().startswith(str(base).lower() + os.sep.lower()):
@@ -523,30 +529,31 @@ class PadProductStore:
         return target
 
     def build_audio_rel_path(self, *, product_id: str, filename: str) -> str:
-        pid = _safe_path_part(product_id, fallback="product")
+        pid = _safe_path_part(product_id, field_name="product_id")
         fname = str(filename or "").replace("\\", "/").lstrip("/")
         if not fname or ".." in fname.split("/"):
             raise ValueError("bad_filename")
         return f"{pid}/{fname}"
 
     def build_image_rel_path(self, *, product_id: str, filename: str) -> str:
-        pid = _safe_path_part(product_id, fallback="product")
+        pid = _safe_path_part(product_id, field_name="product_id")
         fname = str(filename or "").replace("\\", "/").lstrip("/")
         if not fname or ".." in fname.split("/"):
             raise ValueError("bad_filename")
         return f"{pid}/{fname}"
 
     def build_scene_background_rel_path(self, *, hall_id: str, scene_id: str, filename: str) -> str:
-        hid = _safe_path_part(hall_id, fallback="hall")
-        sid = _safe_path_part(scene_id, fallback="scene")
+        hid = _safe_path_part(hall_id, field_name="hall_id")
+        sid = _safe_path_part(scene_id, field_name="scene_id")
         fname = str(filename or "").replace("\\", "/").lstrip("/")
         if not fname or ".." in fname.split("/"):
             raise ValueError("bad_filename")
         return f"scenes/{hid}/{sid}/{fname}"
 
     def build_station_asset_rel_path(self, *, hall_id: str, station_key: str, filename: str) -> str:
-        hid = _safe_path_part(hall_id, fallback="hall")
-        skey = _safe_path_part(_normalize_station_key(station_key), fallback="station")
+        hid = _safe_path_part(hall_id, field_name="hall_id")
+        _safe_path_part(station_key, field_name="station_key")
+        skey = _normalize_station_key(station_key)
         fname = str(filename or "").replace("\\", "/").lstrip("/")
         if not fname or ".." in fname.split("/"):
             raise ValueError("bad_filename")
@@ -569,65 +576,48 @@ class PadProductStore:
         raise ValueError("path_outside_image_root")
 
     def delete_product_audio_dir(self, product_id: str) -> None:
-        pid = _safe_path_part(product_id, fallback="product")
+        pid = _safe_path_part(product_id, field_name="product_id")
         target = (self.audio_root() / pid).resolve()
         base = self.audio_root().resolve()
         if not str(target).lower().startswith(str(base).lower() + os.sep.lower()):
-            return
-        try:
-            if target.exists() and target.is_dir():
-                shutil.rmtree(target, ignore_errors=True)
-        except Exception:
-            pass
+            raise ValueError("path_outside_audio_root")
+        if target.exists() and target.is_dir():
+            shutil.rmtree(target)
 
     def delete_product_image_dir(self, product_id: str) -> None:
-        pid = _safe_path_part(product_id, fallback="product")
+        pid = _safe_path_part(product_id, field_name="product_id")
         target = (self.image_root() / pid).resolve()
         base = self.image_root().resolve()
         if not str(target).lower().startswith(str(base).lower() + os.sep.lower()):
-            return
-        try:
-            if target.exists() and target.is_dir():
-                shutil.rmtree(target, ignore_errors=True)
-        except Exception:
-            pass
+            raise ValueError("path_outside_image_root")
+        if target.exists() and target.is_dir():
+            shutil.rmtree(target)
 
     def delete_scene_background_dir(self, *, hall_id: str, scene_id: str) -> None:
-        hid = _safe_path_part(hall_id, fallback="hall")
-        sid = _safe_path_part(scene_id, fallback="scene")
+        hid = _safe_path_part(hall_id, field_name="hall_id")
+        sid = _safe_path_part(scene_id, field_name="scene_id")
         target = (self.image_root() / "scenes" / hid / sid).resolve()
         base = self.image_root().resolve()
         if not str(target).lower().startswith(str(base).lower() + os.sep.lower()):
-            return
-        try:
-            if target.exists() and target.is_dir():
-                shutil.rmtree(target, ignore_errors=True)
-        except Exception:
-            pass
+            raise ValueError("path_outside_image_root")
+        if target.exists() and target.is_dir():
+            shutil.rmtree(target)
 
     def delete_station_asset_dir(self, *, hall_id: str, station_key: str) -> None:
-        hid = _safe_path_part(hall_id, fallback="hall")
-        skey = _safe_path_part(_normalize_station_key(station_key), fallback="station")
+        hid = _safe_path_part(hall_id, field_name="hall_id")
+        _safe_path_part(station_key, field_name="station_key")
+        skey = _normalize_station_key(station_key)
         target = (self.image_root() / "stations" / hid / skey).resolve()
         base = self.image_root().resolve()
         if not str(target).lower().startswith(str(base).lower() + os.sep.lower()):
-            return
-        try:
-            if target.exists() and target.is_dir():
-                shutil.rmtree(target, ignore_errors=True)
-        except Exception:
-            pass
+            raise ValueError("path_outside_image_root")
+        if target.exists() and target.is_dir():
+            shutil.rmtree(target)
 
     def delete_image_rel_path(self, rel_path: str) -> None:
-        try:
-            target = self.resolve_image_rel_path(rel_path)
-        except Exception:
-            return
-        try:
-            if target.exists() and target.is_file():
-                target.unlink()
-        except Exception:
-            pass
+        target = self.resolve_image_rel_path(rel_path)
+        if target.exists() and target.is_file():
+            target.unlink()
 
     def upsert_display_binding(
         self,
@@ -903,30 +893,7 @@ class PadProductStore:
                 ).fetchall()
             finally:
                 conn.close()
-        items = [dict(row) for row in rows]
-        if items:
-            return items
-        fallback_ids = []
-        for station_id in ("station_a", "station_b"):
-            station = self.get_station_config(hall_id=hid, station_key=station_id)
-            if station and (
-                str(station.get("label") or "").strip()
-                or str(station.get("recording_id") or "").strip()
-                or str(station.get("background_rel_path") or "").strip()
-                or str(station.get("wireframe_rel_path") or "").strip()
-                or self.list_station_hotspots(hall_id=hid, station_key=station_id)
-            ):
-                fallback_ids.append(
-                    {
-                        "hall_id": hid,
-                        "station_id": station_id,
-                        "label": str(station.get("label") or "").strip(),
-                        "sort_order": len(fallback_ids),
-                        "created_at_ms": int(station.get("created_at_ms") or 0),
-                        "updated_at_ms": int(station.get("updated_at_ms") or 0),
-                    }
-                )
-        return fallback_ids
+        return [dict(row) for row in rows]
 
     def resolve_display_station_ids(self, *, client_id: str) -> list[tuple[str, str]]:
         binding = self.get_display_binding(client_id, enabled_only=True)
@@ -1488,9 +1455,9 @@ class PadProductStore:
         source = str(source_type or "").strip().lower()
         if source not in {"recorded", "tts"}:
             raise ValueError("source_type_invalid")
-        rel = str(rel_path or "").replace("\\", "/").lstrip("/")
-        if not rel:
+        if not str(rel_path or "").strip():
             raise ValueError("rel_path_required")
+        rel = _normalize_rel_path(rel_path)
         mime = str(mimetype or "").strip() or "application/octet-stream"
         now_ms = self._now_ms()
         asset_id = f"audio_{uuid.uuid4().hex}"
@@ -1611,9 +1578,9 @@ class PadProductStore:
             raise ValueError("product_id_required")
         if not self.get_product(pid):
             raise ValueError("product_not_found")
-        rel = str(rel_path or "").replace("\\", "/").lstrip("/")
-        if not rel:
+        if not str(rel_path or "").strip():
             raise ValueError("rel_path_required")
+        rel = _normalize_rel_path(rel_path)
         mime = str(mimetype or "").strip()
         if not mime:
             raise ValueError("mimetype_required")
@@ -1720,7 +1687,6 @@ class PadProductStore:
         sid = str(scene_id or "").strip()
         hid = str(hall_id or "").strip()
         scene_name = str(name or "").strip()
-        rel = str(background_rel_path or "").replace("\\", "/").lstrip("/")
         mimetype = str(background_mimetype or "").strip()
         if not sid:
             raise ValueError("scene_id_required")
@@ -1728,8 +1694,9 @@ class PadProductStore:
             raise ValueError("hall_id_required")
         if not scene_name:
             raise ValueError("scene_name_required")
-        if not rel:
+        if not str(background_rel_path or "").strip():
             raise ValueError("background_rel_path_required")
+        rel = _normalize_rel_path(background_rel_path)
         if not mimetype:
             raise ValueError("background_mimetype_required")
         width = int(base_width or 0)
@@ -1904,12 +1871,12 @@ class PadProductStore:
         base_height: int,
     ) -> dict | None:
         sid = str(scene_id or "").strip()
-        rel = str(background_rel_path or "").replace("\\", "/").lstrip("/")
         mimetype = str(background_mimetype or "").strip()
         if not sid:
             raise ValueError("scene_id_required")
-        if not rel:
+        if not str(background_rel_path or "").strip():
             raise ValueError("background_rel_path_required")
+        rel = _normalize_rel_path(background_rel_path)
         if not mimetype:
             raise ValueError("background_mimetype_required")
         width = int(base_width or 0)
@@ -2176,7 +2143,7 @@ class PadProductStore:
             "updated_at_ms": 0,
         }
 
-    def get_station_config(self, *, hall_id: str, station_key: str) -> dict:
+    def get_station_config(self, *, hall_id: str, station_key: str) -> dict | None:
         hid = str(hall_id or "").strip()
         key = _normalize_station_key(station_key)
         if not hid:
@@ -2211,7 +2178,7 @@ class PadProductStore:
             finally:
                 conn.close()
         if not row:
-            return self._station_config_defaults(hall_id=hid, station_key=key)
+            return None
         item = self._station_config_defaults(hall_id=hid, station_key=key)
         item.update(dict(row))
         return item
@@ -2221,9 +2188,12 @@ class PadProductStore:
         if not hid:
             return []
         catalog = self.list_hall_stations(hall_id=hid)
-        if catalog:
-            return [self.get_station_config(hall_id=hid, station_key=str(item.get("station_id") or "")) for item in catalog]
-        return [self.get_station_config(hall_id=hid, station_key=station_key) for station_key in ("station_a", "station_b")]
+        items: list[dict] = []
+        for item in catalog:
+            station = self.get_station_config(hall_id=hid, station_key=str(item.get("station_id") or ""))
+            if station:
+                items.append(station)
+        return items
 
     def list_display_station_configs(self, *, client_id: str) -> list[dict]:
         binding = self.get_display_binding(client_id, enabled_only=True)
@@ -2233,6 +2203,8 @@ class PadProductStore:
         items: list[dict] = []
         for slot_key, station_id in self.resolve_display_station_ids(client_id=client_id):
             station = self.get_station_config(hall_id=hall_id, station_key=station_id)
+            if not station:
+                raise ValueError("station_config_not_found")
             station["slot_key"] = slot_key
             station["station_id"] = station_id
             narration_state = self.get_station_narration_nodes_state(hall_id=hall_id, station_id=station_id)
@@ -2256,7 +2228,7 @@ class PadProductStore:
         if not hid:
             raise ValueError("hall_id_required")
         self.upsert_hall_station(hall_id=hid, station_id=key, label=str(label or "").strip() or key)
-        current = self.get_station_config(hall_id=hid, station_key=key)
+        current = self.get_station_config(hall_id=hid, station_key=key) or self._station_config_defaults(hall_id=hid, station_key=key)
         now_ms = self._now_ms()
         normalized_stop_index = None if stop_index is None or str(stop_index).strip() == "" else int(stop_index)
         with self._lock:
@@ -2309,7 +2281,10 @@ class PadProductStore:
             finally:
                 conn.close()
         self._ensure_default_control_hotspots(hall_id=hid, station_key=key)
-        return self.get_station_config(hall_id=hid, station_key=key)
+        updated = self.get_station_config(hall_id=hid, station_key=key)
+        if not updated:
+            raise RuntimeError("station_config_insert_failed")
+        return updated
 
     def update_station_visual_assets(
         self,
@@ -2327,11 +2302,17 @@ class PadProductStore:
         key = _normalize_station_key(station_key)
         if not hid:
             raise ValueError("hall_id_required")
-        current = self.get_station_config(hall_id=hid, station_key=key)
+        current = self.get_station_config(hall_id=hid, station_key=key) or self._station_config_defaults(hall_id=hid, station_key=key)
         now_ms = self._now_ms()
-        next_background_rel_path = str(background_rel_path) if background_rel_path is not None else str(current.get("background_rel_path") or "")
+        next_background_rel_path = _normalize_optional_rel_path(
+            background_rel_path,
+            str(current.get("background_rel_path") or ""),
+        )
         next_background_mimetype = str(background_mimetype) if background_mimetype is not None else str(current.get("background_mimetype") or "")
-        next_wireframe_rel_path = str(wireframe_rel_path) if wireframe_rel_path is not None else str(current.get("wireframe_rel_path") or "")
+        next_wireframe_rel_path = _normalize_optional_rel_path(
+            wireframe_rel_path,
+            str(current.get("wireframe_rel_path") or ""),
+        )
         next_wireframe_mimetype = str(wireframe_mimetype) if wireframe_mimetype is not None else str(current.get("wireframe_mimetype") or "")
         next_base_width = int(base_width) if base_width is not None else int(current.get("base_width") or 0)
         next_base_height = int(base_height) if base_height is not None else int(current.get("base_height") or 0)
@@ -2387,7 +2368,10 @@ class PadProductStore:
             finally:
                 conn.close()
         self._ensure_default_control_hotspots(hall_id=hid, station_key=key)
-        return self.get_station_config(hall_id=hid, station_key=key)
+        updated = self.get_station_config(hall_id=hid, station_key=key)
+        if not updated:
+            raise RuntimeError("station_config_insert_failed")
+        return updated
 
     def list_station_hotspots(self, *, hall_id: str, station_key: str) -> list[dict]:
         hid = str(hall_id or "").strip()
@@ -2904,6 +2888,8 @@ class PadProductStore:
         if not isinstance(events, list) or not events:
             return []
         station_cfg = self.get_station_config(hall_id=hall_id, station_key=station_id)
+        if not station_cfg:
+            raise ValueError("station_config_not_found")
         recording_id = str(station_cfg.get("recording_id") or "").strip()
         stop_index = station_cfg.get("stop_index")
         stop_name = str(station_cfg.get("stop_name") or "").strip()
@@ -3107,14 +3093,11 @@ class PadProductStore:
         legacy_events = self.list_station_narration_timeline_events(hall_id=hid, station_id=sid)
         if not legacy_events:
             return {"narration_nodes": [], "narration_nodes_error": ""}
-        try:
-            migrated_nodes = self._build_narration_nodes_from_legacy_events(
-                hall_id=hid,
-                station_id=sid,
-                events=legacy_events,
-            )
-        except ValueError as exc:
-            return {"narration_nodes": [], "narration_nodes_error": str(exc)}
+        migrated_nodes = self._build_narration_nodes_from_legacy_events(
+            hall_id=hid,
+            station_id=sid,
+            events=legacy_events,
+        )
         persisted = self._persist_station_narration_nodes(hall_id=hid, station_id=sid, nodes=migrated_nodes)
         return {"narration_nodes": persisted, "narration_nodes_error": ""}
 

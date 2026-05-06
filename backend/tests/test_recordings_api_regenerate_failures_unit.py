@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import uuid
+import wave
 from pathlib import Path
 
 import pytest
@@ -83,8 +84,19 @@ def _build_app(work_dir: Path, *, tts_mode: str = "ok") -> tuple[Flask, _Deps]:
     return app, deps
 
 
+def _write_wav(path: Path, *, duration_ms: int = 100, sample_rate: int = 16000) -> None:
+    frames = max(1, round((duration_ms / 1000) * sample_rate))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(b"\x00\x00" * frames)
+
+
 def _seed_segment(deps: _Deps, *, recording_id: str = "rec_test") -> int:
     deps.recording_store.create(recording_id=recording_id, stops=["Stop A"])
+    _write_wav(deps.recording_store.audio_dir(recording_id) / "ask_1_0.wav")
     deps.recording_store.add_tts_audio(
         recording_id=recording_id,
         stop_index=0,
@@ -108,6 +120,33 @@ def test_regenerate_segment_not_found_returns_404(work_dir: Path):
     body = r.get_json()
     assert body["ok"] is False
     assert body["error"] == "segment_not_found"
+
+
+def test_regenerate_recording_not_found_returns_404(work_dir: Path):
+    app, _deps = _build_app(work_dir, tts_mode="ok")
+
+    c = app.test_client()
+    r = c.post("/api/recordings/rec_absent/segment/1/regenerate", json={"text": "new text"})
+    assert r.status_code == 404
+    body = r.get_json()
+    assert body["ok"] is False
+    assert body["error"] == "not_found"
+
+
+def test_regenerate_segment_store_error_does_not_return_success(work_dir: Path, monkeypatch):
+    app, deps = _build_app(work_dir, tts_mode="ok")
+    deps.recording_store.create(recording_id="rec_store_error", stops=["Stop A"])
+
+    def _raise_get_segment(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise RuntimeError("segment lookup failed")
+
+    monkeypatch.setattr(deps.recording_store, "get_tts_segment", _raise_get_segment)
+
+    c = app.test_client()
+    r = c.post("/api/recordings/rec_store_error/segment/1/regenerate", json={"text": "new text"})
+    assert r.status_code == 500
+    body = r.get_json(silent=True)
+    assert not (body and body.get("ok") is True)
 
 
 def test_regenerate_tts_failed_returns_502(work_dir: Path):
@@ -165,3 +204,21 @@ def test_regenerate_audio_write_failed_returns_500(work_dir: Path, monkeypatch):
     assert body["ok"] is False
     assert body["error"] == "audio_write_failed"
     assert "disk full" in str(body.get("detail") or "")
+
+
+def test_regenerate_old_audio_cleanup_store_error_returns_500(work_dir: Path, monkeypatch):
+    app, deps = _build_app(work_dir, tts_mode="ok")
+    seg_id = _seed_segment(deps, recording_id="rec_cleanup_fail")
+
+    def _raise_count(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise RuntimeError("count failed")
+
+    monkeypatch.setattr(deps.recording_store, "count_tts_rel_path_refs", _raise_count)
+
+    c = app.test_client()
+    r = c.post(f"/api/recordings/rec_cleanup_fail/segment/{seg_id}/regenerate", json={"text": "new text"})
+    assert r.status_code == 500
+    body = r.get_json()
+    assert body["ok"] is False
+    assert body["error"] == "old_audio_cleanup_failed"
+    assert "count failed" in str(body.get("detail") or "")

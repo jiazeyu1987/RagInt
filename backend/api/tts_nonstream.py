@@ -85,3 +85,4 @@ def stream_tts_audio(*, deps, ctx: TtsRequestContext, app_config: dict, provider
             endpoint=endpoint,
             err=str(e),
         )
+        raise

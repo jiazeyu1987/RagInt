@@ -6,19 +6,18 @@ import struct
 import time
 from pathlib import Path
 
+SUPPORTED_IMAGE_MIMETYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"}
 
-def _safe_file_part(value: str, *, fallback: str = "file") -> str:
+
+def _safe_file_part(value: str, *, field_name: str = "file_part") -> str:
     text = str(value or "").strip()
     if not text:
-        text = fallback
-    out = []
-    for ch in text:
-        if ch.isalnum() or ch in {"-", "_", "."}:
-            out.append(ch)
-        else:
-            out.append("_")
-    normalized = "".join(out).strip("._")
-    return normalized or fallback
+        raise ValueError(f"{field_name}_required")
+    if text != text.strip("._"):
+        raise ValueError(f"{field_name}_invalid")
+    if any(not (ch.isalnum() or ch in {"-", "_", "."}) for ch in text):
+        raise ValueError(f"{field_name}_invalid")
+    return text
 
 
 def _detect_image_mimetype(*, filename: str, image_bytes: bytes | None = None) -> str:
@@ -34,24 +33,10 @@ def _detect_image_mimetype(*, filename: str, image_bytes: bytes | None = None) -
     if head.startswith(b"BM"):
         return "image/bmp"
 
-    ext = str(Path(filename).suffix or "").strip().lower()
-    if ext == ".png":
-        return "image/png"
-    if ext in {".jpg", ".jpeg"}:
-        return "image/jpeg"
-    if ext == ".gif":
-        return "image/gif"
-    if ext == ".webp":
-        return "image/webp"
-    if ext == ".bmp":
-        return "image/bmp"
     return ""
 
 
 def _guess_extension(*, filename: str, mimetype: str) -> str:
-    ext = str(Path(filename).suffix or "").strip().lower()
-    if ext:
-        return ext
     mime = str(mimetype or "").strip().lower()
     if mime == "image/png":
         return ".png"
@@ -63,7 +48,7 @@ def _guess_extension(*, filename: str, mimetype: str) -> str:
         return ".webp"
     if mime == "image/bmp":
         return ".bmp"
-    return ".bin"
+    raise ValueError("image_format_unsupported")
 
 
 def _detect_image_dimensions(*, filename: str, image_bytes: bytes | None = None) -> tuple[int, int]:
@@ -163,11 +148,11 @@ class PadProductImageService:
         payload = bytes(image_bytes or b"")
         if not payload:
             raise ValueError("image_file_empty")
-        detected_mimetype = _detect_image_mimetype(filename=filename, image_bytes=payload) or str(mimetype or "").strip().lower()
-        if detected_mimetype not in {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"}:
+        detected_mimetype = _detect_image_mimetype(filename=filename, image_bytes=payload)
+        if detected_mimetype not in SUPPORTED_IMAGE_MIMETYPES:
             raise ValueError("image_format_unsupported")
         ext = _guess_extension(filename=filename, mimetype=detected_mimetype)
-        stored_name = f"image_{_safe_file_part(product_id, fallback='product')}_{int(time.time() * 1000)}{ext}"
+        stored_name = f"image_{_safe_file_part(product_id, field_name='product_id')}_{time.time_ns()}{ext}"
         rel_path, _final_path = self._write_image_bytes(product_id=product_id, filename=stored_name, image_bytes=payload)
         return self._store.create_image_asset(
             product_id=product_id,

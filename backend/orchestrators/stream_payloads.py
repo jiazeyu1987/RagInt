@@ -25,14 +25,30 @@ def make_segment(segment: str, *, done: bool = False, segment_seq: int | None = 
     return payload
 
 
-def get_chunk(payload: dict) -> str | None:
+def get_chunk(payload: dict) -> str:
+    if not isinstance(payload, dict):
+        raise TypeError(f"stream payload must be dict, got {type(payload).__name__}")
+    if "chunk" not in payload:
+        raise ValueError("stream payload missing chunk")
     v = payload.get("chunk")
-    return None if v is None else str(v)
+    if v is None:
+        raise ValueError("stream payload chunk is None")
+    if not isinstance(v, str):
+        raise TypeError(f"stream payload chunk must be str, got {type(v).__name__}")
+    return v
 
 
-def get_segment(payload: dict) -> str | None:
+def get_segment(payload: dict) -> str:
+    if not isinstance(payload, dict):
+        raise TypeError(f"stream payload must be dict, got {type(payload).__name__}")
+    if "segment" not in payload:
+        raise ValueError("stream payload missing segment")
     v = payload.get("segment")
-    return None if v is None else str(v)
+    if v is None:
+        raise ValueError("stream payload segment is None")
+    if not isinstance(v, str):
+        raise TypeError(f"stream payload segment must be str, got {type(v).__name__}")
+    return v
 
 
 def is_done(payload: dict) -> bool:
@@ -48,20 +64,34 @@ def classify_text_event(payload: dict) -> tuple[str | None, str | None]:
       - ("chunk", "<text>")
       - (None, None) for non-text payloads
     """
+    if not isinstance(payload, dict):
+        raise TypeError(f"stream payload must be dict, got {type(payload).__name__}")
     if is_done(payload):
         return "done", None
-    if has_nonempty_segment(payload):
-        return "segment", str(get_segment(payload) or "")
-    if has_nonempty_chunk(payload):
-        return "chunk", str(get_chunk(payload) or "")
-    return None, None
+    has_segment = "segment" in payload
+    has_chunk = "chunk" in payload
+    if has_segment:
+        segment = get_segment(payload)
+        return ("segment", segment) if segment.strip() else (None, None)
+    if has_chunk:
+        chunk = get_chunk(payload)
+        return ("chunk", chunk) if chunk.strip() else (None, None)
+    if "meta" in payload:
+        return None, None
+    if set(payload) <= {"done"}:
+        return None, None
+    raise ValueError("unknown stream payload schema")
 
 
 def has_nonempty_chunk(payload: dict) -> bool:
+    if not isinstance(payload, dict) or "chunk" not in payload:
+        return False
     c = get_chunk(payload)
     return bool(c and c.strip())
 
 
 def has_nonempty_segment(payload: dict) -> bool:
+    if not isinstance(payload, dict) or "segment" not in payload:
+        return False
     s = get_segment(payload)
     return bool(s and s.strip())

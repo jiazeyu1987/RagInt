@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import wave
 from pathlib import Path
 
 from flask import Flask
@@ -54,8 +55,19 @@ def _build_app(tmp_path: Path) -> tuple[Flask, _Deps]:
     return app, deps
 
 
+def _write_wav(path: Path, *, duration_ms: int = 100, sample_rate: int = 16000) -> None:
+    frames = max(1, round((duration_ms / 1000) * sample_rate))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(b"\x00\x00" * frames)
+
+
 def _seed_recording(deps: _Deps, recording_id: str = "rec_test") -> int:
     deps.recording_store.create(recording_id=recording_id, stops=["站点A"])
+    _write_wav(deps.recording_store.audio_dir(recording_id) / "ask_1_0.wav")
     deps.recording_store.add_tts_audio(
         recording_id=recording_id,
         stop_index=0,

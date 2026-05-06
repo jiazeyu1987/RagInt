@@ -671,10 +671,55 @@ def test_station_narration_nodes_report_invalid_legacy_timeline(work_dir: Path):
         ],
     )
 
-    narration_state = store.get_station_narration_nodes_state(hall_id="hall_01", station_id="station_a")
+    with pytest.raises(ValueError, match="legacy_timeline_focus_switch_unsupported"):
+        store.get_station_narration_nodes_state(hall_id="hall_01", station_id="station_a")
 
-    assert narration_state["narration_nodes"] == []
-    assert narration_state["narration_nodes_error"] == "legacy_timeline_focus_switch_unsupported"
+
+def test_missing_station_config_is_not_reported_as_default_config(work_dir: Path):
+    store = _store(work_dir)
+    store.upsert_hall_station(hall_id="hall_01", station_id="station_a", label="Station A")
+
+    assert store.get_station_config(hall_id="hall_01", station_key="station_a") is None
+    assert store.list_station_configs(hall_id="hall_empty") == []
+    assert store.list_station_configs(hall_id="hall_01") == []
+
+
+def test_station_config_does_not_create_hall_station_catalog_entry(work_dir: Path):
+    store = _store(work_dir)
+    now_ms = store._now_ms()
+    conn = store._connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO pad_hall_station_configs (
+                hall_id, station_key, label, recording_id, stop_index, stop_name,
+                background_rel_path, background_mimetype, wireframe_rel_path, wireframe_mimetype,
+                base_width, base_height, created_at_ms, updated_at_ms
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "hall_01",
+                "station_a",
+                "Station A",
+                "recording_001",
+                0,
+                "Stop A",
+                "",
+                "",
+                "",
+                "",
+                0,
+                0,
+                int(now_ms),
+                int(now_ms),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert store.list_hall_stations(hall_id="hall_01") == []
 
 
 def test_station_hotspot_validates_product_scope_and_custom_station_ids(work_dir: Path):
@@ -970,3 +1015,102 @@ def test_replace_station_hotspots_validates_required_fields(work_dir: Path):
                 }
             ],
         )
+
+
+def test_delete_image_rel_path_fails_fast_for_invalid_path(work_dir: Path):
+    store = _store(work_dir)
+
+    with pytest.raises(ValueError, match="bad_path"):
+        store.delete_image_rel_path("../outside.png")
+
+
+def test_asset_rel_paths_fail_fast_before_persisting_unsafe_paths(work_dir: Path):
+    # Given product, scene, and station assets are persisted through the store boundary
+    store = _store(work_dir)
+    store.replace_hall_products(
+        hall_id="hall_01",
+        products=[_product(product_id="product_001", sort_order=1, name="Product A")],
+    )
+    scene = store.create_hall_scene(
+        scene_id="scene_001",
+        hall_id="hall_01",
+        name="Scene One",
+        sort_order=1,
+        background_rel_path="scenes/hall_01/scene_001/scene.png",
+        background_mimetype="image/png",
+        base_width=1200,
+        base_height=800,
+    )
+    store.upsert_station_config(
+        hall_id="hall_01",
+        station_key="station_a",
+        label="Station A",
+        recording_id="recording_001",
+        stop_index=0,
+        stop_name="Station A",
+    )
+
+    # When unsafe relative paths are supplied
+    # Then the store rejects them before any later file-serving fallback can be involved
+    with pytest.raises(ValueError, match="bad_path"):
+        store.create_audio_asset(
+            product_id="product_001",
+            source_type="recorded",
+            text_snapshot="",
+            rel_path="../outside.wav",
+            mimetype="audio/wav",
+        )
+    with pytest.raises(ValueError, match="bad_path"):
+        store.create_image_asset(
+            product_id="product_001",
+            rel_path="product_001/../outside.png",
+            mimetype="image/png",
+        )
+    with pytest.raises(ValueError, match="bad_path"):
+        store.update_hall_scene_background(
+            scene_id=scene["scene_id"],
+            background_rel_path="../outside.png",
+            background_mimetype="image/png",
+            base_width=1200,
+            base_height=800,
+        )
+    with pytest.raises(ValueError, match="bad_path"):
+        store.update_station_visual_assets(
+            hall_id="hall_01",
+            station_key="station_a",
+            background_rel_path="../outside.png",
+            background_mimetype="image/png",
+        )
+
+    assert store.get_current_audio_asset("product_001") is None
+    assert store.list_product_image_assets("product_001") == []
+    assert store.get_hall_scene("scene_001")["background_rel_path"] == "scenes/hall_01/scene_001/scene.png"
+    assert store.get_station_config(hall_id="hall_01", station_key="station_a")["background_rel_path"] == ""
+
+
+def test_safe_path_part_rejects_invalid_ids(work_dir: Path):
+    store = _store(work_dir)
+
+    with pytest.raises(ValueError, match="product_id_required"):
+        store.build_audio_rel_path(product_id="", filename="a.wav")
+
+    with pytest.raises(ValueError, match="product_id_invalid"):
+        store.delete_product_image_dir("../bad")
+
+    with pytest.raises(ValueError, match="station_key_invalid"):
+        store.build_station_asset_rel_path(hall_id="hall_01", station_key="../bad", filename="background.png")
+
+
+def test_delete_product_image_dir_propagates_delete_failure(work_dir: Path, monkeypatch: pytest.MonkeyPatch):
+    store = _store(work_dir)
+    target = store.product_image_dir("product_001")
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "image.png").write_bytes(b"image")
+
+    def fail_rmtree(*args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        raise PermissionError("locked")
+
+    monkeypatch.setattr("backend.services.pad_product_store.shutil.rmtree", fail_rmtree)
+
+    with pytest.raises(PermissionError, match="locked"):
+        store.delete_product_image_dir("product_001")

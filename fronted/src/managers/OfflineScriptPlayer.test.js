@@ -36,6 +36,51 @@ describe('OfflineScriptPlayer', () => {
     );
   });
 
+  test('rejects manifest when items is not an array', async () => {
+    fetchJson.mockResolvedValueOnce({ title: 'bad', items: {} });
+    const emitClientEvent = jest.fn();
+    const player = new OfflineScriptPlayer({ emitClientEvent });
+
+    await expect(player.playAll()).rejects.toThrow('offline_manifest_items_invalid');
+    expect(player.isPlaying()).toBe(false);
+    expect(emitClientEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'offline_play_failed',
+        fields: expect.objectContaining({ error: 'offline_manifest_items_invalid' }),
+      })
+    );
+  });
+
+  test('rejects manifest when backend reports ok false', async () => {
+    fetchJson.mockResolvedValueOnce({ ok: false, error: 'manifest_not_found' });
+    const emitClientEvent = jest.fn();
+    const player = new OfflineScriptPlayer({ emitClientEvent });
+
+    await expect(player.playAll()).rejects.toThrow('manifest_not_found');
+    expect(player.isPlaying()).toBe(false);
+    expect(emitClientEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'offline_play_failed',
+        fields: expect.objectContaining({ error: 'manifest_not_found' }),
+      })
+    );
+  });
+
+  test('propagates fetchJson errors without leaving playback active', async () => {
+    fetchJson.mockRejectedValueOnce(new Error('HTTP 500 /api/offline/manifest'));
+    const emitClientEvent = jest.fn();
+    const player = new OfflineScriptPlayer({ emitClientEvent });
+
+    await expect(player.playAll()).rejects.toThrow('HTTP 500 /api/offline/manifest');
+    expect(player.isPlaying()).toBe(false);
+    expect(emitClientEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'offline_play_failed',
+        fields: expect.objectContaining({ error: 'HTTP 500 /api/offline/manifest' }),
+      })
+    );
+  });
+
   test('plays manifest items and emits lifecycle events', async () => {
     fetchJson.mockResolvedValueOnce({
       title: 'guided',

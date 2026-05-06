@@ -134,7 +134,9 @@ class TTSSvc:
         segment_index=None,
         cancel_event: threading.Event | None = None,
     ):
-        provider_norm = (provider or "").strip().lower() or "local"
+        provider_norm = (provider or "").strip().lower()
+        if not provider_norm:
+            raise ValueError("tts_provider_required")
         self.tts_state_update(request_id, segment_index, provider_norm, endpoint)
         yield from stream_tts(
             text=text,

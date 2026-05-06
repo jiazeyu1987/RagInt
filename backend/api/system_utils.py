@@ -40,31 +40,42 @@ def diagnostics_authorized(req) -> bool:
 
 def load_openapi_or_default(*, base_dir: str | Path):
     path = (Path(base_dir) / "openapi.json").resolve()
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {"openapi": "3.0.3", "info": {"title": "RagInt Backend API", "version": "0.0.0"}, "paths": {}}
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def build_diagnostics_zip(*, deps, cfg_loader) -> bytes:
     buf = BytesIO()
+    errors: list[dict] = []
+
+    def record_entry_error(entry: str, exc: Exception) -> None:
+        errors.append({"entry": entry, "error": str(exc), "type": type(exc).__name__})
+
     with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as z:
         z.writestr("version.json", json.dumps({"name": "ragint-backend", "version": get_version()}, ensure_ascii=False, indent=2))
 
-        with contextlib.suppress(Exception):
+        try:
             cfg = cfg_loader(deps=deps)
             z.writestr("config.json", json.dumps(redact_secrets(cfg), ensure_ascii=False, indent=2))
+        except Exception as exc:
+            record_entry_error("config.json", exc)
 
-        with contextlib.suppress(Exception):
+        try:
             recent_events = deps.event_store.list_recent(limit=500)
             z.writestr("events_recent.json", json.dumps({"items": recent_events}, ensure_ascii=False, indent=2))
             z.writestr("asr_timeline_recent.json", json.dumps(build_recent_asr_timeline_report(recent_events), ensure_ascii=False, indent=2))
+        except Exception as exc:
+            record_entry_error("events_recent.json", exc)
 
-        with contextlib.suppress(Exception):
+        try:
             path = (Path(deps.base_dir) / "openapi.json").resolve()
             if path.exists():
                 z.write(str(path), arcname="openapi.json")
+        except Exception as exc:
+            record_entry_error("openapi.json", exc)
+
+        if errors:
+            z.writestr("diagnostics_errors.json", json.dumps({"items": errors}, ensure_ascii=False, indent=2))
     buf.seek(0)
     return buf.getvalue()
 
@@ -92,12 +103,12 @@ def parse_event_query(req) -> EventQuery:
     request_id = str((req.args.get("request_id") or req.headers.get("X-Request-ID") or "")).strip()
     try:
         limit = int(req.args.get("limit") or 200)
-    except Exception:
-        limit = 200
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid_limit") from exc
     try:
         since_ms = int(req.args.get("since_ms")) if req.args.get("since_ms") is not None else None
-    except Exception:
-        since_ms = None
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid_since_ms") from exc
     fmt = str((req.args.get("format") or "json")).strip().lower()
     return EventQuery(request_id=request_id, limit=limit, since_ms=since_ms, fmt=fmt)
 

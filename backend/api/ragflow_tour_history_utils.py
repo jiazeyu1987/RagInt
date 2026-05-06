@@ -2,6 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from werkzeug.exceptions import BadRequest
+
+
+class RagflowTourHistoryContractError(RuntimeError):
+    def __init__(self, *, error: str, detail: str, status_code: int = 500):
+        super().__init__(detail)
+        self.error = error
+        self.detail = detail
+        self.status_code = int(status_code)
+
 
 @dataclass(frozen=True)
 class HistoryQuery:
@@ -13,26 +23,57 @@ class HistoryQuery:
 def parse_history_query(req) -> HistoryQuery:
     sort_mode = (req.args.get("sort") or "time").strip().lower()
     order = (req.args.get("order") or "desc").strip().lower()
+    raw_limit = req.args.get("limit") if "limit" in req.args else 100
     try:
-        limit = int(req.args.get("limit") or 100)
-    except Exception:
-        limit = 100
+        limit = int(raw_limit)
+    except (TypeError, ValueError) as exc:
+        raise RagflowTourHistoryContractError(
+            error="history_query_invalid",
+            detail="history query limit must be an integer",
+            status_code=400,
+        ) from exc
     return HistoryQuery(sort_mode=sort_mode, desc=(order != "asc"), limit=limit)
 
 
-def fallback_stops() -> list[str]:
-    return [
-        "company_overview",
-        "core_products",
-        "orthopedics",
-        "urology",
-        "other_products_and_scenarios",
-        "summary_and_qa",
-    ]
+def parse_json_object_request(req) -> dict:
+    try:
+        data = req.get_json()
+    except BadRequest as exc:
+        raise RagflowTourHistoryContractError(
+            error="request_body_invalid",
+            detail="request body must be valid JSON object",
+            status_code=400,
+        ) from exc
+    if not isinstance(data, dict):
+        raise RagflowTourHistoryContractError(
+            error="request_body_invalid",
+            detail="request body must be valid JSON object",
+            status_code=400,
+        )
+    return data
 
 
 def normalize_stops(stops) -> list[str]:
     return [str(s).strip() for s in list(stops or []) if str(s).strip()]
+
+
+def require_history_items(items, *, source: str) -> list:
+    if not isinstance(items, list):
+        raise RagflowTourHistoryContractError(
+            error="history_store_invalid_response",
+            detail=f"{source} must return a list",
+        )
+    return items
+
+
+def load_ragflow_config_dict(*, deps, force: bool = False) -> dict:
+    cfg = deps.ragflow_service.load_config(force=bool(force))
+    if not isinstance(cfg, dict):
+        raise RagflowTourHistoryContractError(
+            error="ragflow_config_invalid",
+            detail="ragflow_service.load_config must return a dict",
+        )
+    return cfg
 
 
 def build_tour_templates(*, app_cfg, raw_cfg) -> list[dict]:
@@ -51,35 +92,20 @@ def build_tour_templates(*, app_cfg, raw_cfg) -> list[dict]:
 
     if templates:
         return templates
-
-    try:
-        tour_cfg = (raw_cfg or {}).get("tour_planner") if isinstance(raw_cfg, dict) else {}
-        routes = tour_cfg.get("routes") if isinstance(tour_cfg, dict) else None
-        if not isinstance(routes, dict):
-            return []
-        for zone, stops in routes.items():
-            if len(templates) >= 3:
-                break
-            if not isinstance(stops, list) or not stops:
-                continue
-            z = str(zone or "").strip()
-            ss = normalize_stops(stops)
-            if not z or not ss:
-                continue
-            templates.append({"id": z, "name": z, "zone": z, "profile": "", "stops": ss, "source": "tour_planner.routes"})
-    except Exception:
-        return []
-    return templates
+    return []
 
 
 def _normalize_stop_durations_override(raw) -> dict[str, int] | list[int] | None:
     if isinstance(raw, list):
         out: list[int] = []
-        for v in raw:
+        for idx, v in enumerate(raw):
             try:
                 n = int(v)
-            except Exception:
-                n = 0
+            except (TypeError, ValueError) as exc:
+                raise RagflowTourHistoryContractError(
+                    error="tour_plan_request_invalid",
+                    detail=f"stop_durations_s_override[{idx}] must be an integer",
+                ) from exc
             out.append(max(0, n))
         if any(x > 0 for x in out):
             return out
@@ -93,8 +119,11 @@ def _normalize_stop_durations_override(raw) -> dict[str, int] | list[int] | None
                 continue
             try:
                 n = int(v)
-            except Exception:
-                n = 0
+            except (TypeError, ValueError) as exc:
+                raise RagflowTourHistoryContractError(
+                    error="tour_plan_request_invalid",
+                    detail=f"stop_durations_s_override.{key} must be an integer",
+                ) from exc
             if n > 0:
                 out[key] = n
         return out or None
@@ -116,10 +145,37 @@ def parse_tour_plan_request(
 
 
 def build_stops_meta(plan) -> list[dict]:
+    out = []
     try:
-        out = []
-        for name, d, tc in zip(list(plan.stops), list(plan.stop_durations_s), list(plan.stop_target_chars)):
-            out.append({"name": str(name), "duration_s": int(d), "target_chars": int(tc)})
-        return out
-    except Exception:
-        return [{"name": str(s)} for s in list(plan.stops)]
+        stops = list(plan.stops)
+        durations = list(plan.stop_durations_s)
+        target_chars = list(plan.stop_target_chars)
+    except (AttributeError, TypeError) as exc:
+        raise RagflowTourHistoryContractError(
+            error="tour_plan_invalid",
+            detail="plan stops metadata must include stops, stop_durations_s, and stop_target_chars lists",
+        ) from exc
+
+    if not (len(stops) == len(durations) == len(target_chars)):
+        raise RagflowTourHistoryContractError(
+            error="tour_plan_invalid",
+            detail="plan stops metadata lists must have the same length",
+        )
+
+    for idx, (name, d, tc) in enumerate(zip(stops, durations, target_chars)):
+        try:
+            duration_s = int(d)
+        except (TypeError, ValueError) as exc:
+            raise RagflowTourHistoryContractError(
+                error="tour_plan_invalid",
+                detail=f"plan.stop_durations_s[{idx}] must be an integer",
+            ) from exc
+        try:
+            target_char_count = int(tc)
+        except (TypeError, ValueError) as exc:
+            raise RagflowTourHistoryContractError(
+                error="tour_plan_invalid",
+                detail=f"plan.stop_target_chars[{idx}] must be an integer",
+            ) from exc
+        out.append({"name": str(name), "duration_s": duration_s, "target_chars": target_char_count})
+    return out

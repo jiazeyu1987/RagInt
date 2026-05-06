@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from backend.services.ragflow_chat_manager import RagflowChatManager
 
 
@@ -59,3 +61,25 @@ def test_chat_manager_delegates_service_methods():
     assert mgr.clear_chat_sessions("展厅聊天")["ok"] is True
     assert mgr.ask_chat(chat_name="展厅聊天", question="hello") == "ok"
     assert mgr.ask_chat_once(chat_name="展厅聊天", question="hello", create_if_missing=True, session_name="tmp") == "ok_once"
+
+
+def test_chat_manager_propagates_list_chats_failures():
+    class _FailingSvc(_Svc):
+        def list_chats(self):
+            raise RuntimeError("ragflow_not_initialized")
+
+    mgr = RagflowChatManager(ragflow_service=_FailingSvc(), default_session=None)
+
+    with pytest.raises(RuntimeError, match="ragflow_not_initialized"):
+        mgr.list_chats()
+
+
+def test_chat_manager_propagates_list_agents_failures():
+    class _FailingSvc(_Svc):
+        def list_agents(self):
+            raise RuntimeError("ragflow_agents_fetch_failed")
+
+    mgr = RagflowChatManager(ragflow_service=_FailingSvc(), default_session=None)
+
+    with pytest.raises(RuntimeError, match="ragflow_agents_fetch_failed"):
+        mgr.list_agents()

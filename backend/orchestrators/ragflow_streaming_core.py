@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import os
 import time
 
@@ -25,25 +24,6 @@ _ASK_TRACE_LOG_ENABLED = str(os.environ.get("RAGINT_ASK_TRACE_LOG", "0") or "0")
     "y",
     "on",
 )
-
-
-def _safe_rag_nonstream_content(rag_session, question: str, logger, request_id: str) -> str:
-    """
-    Best-effort fallback for SDK stream protocol mismatches (e.g. missing chunk_id).
-    """
-    try:
-        resp = rag_session.ask(question, stream=False)
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"[{request_id}] rag_nonstream_fallback_failed err={e}", exc_info=True)
-        return ""
-    if hasattr(resp, "content"):
-        return str(getattr(resp, "content") or "")
-    if isinstance(resp, dict):
-        for key in ("content", "answer", "text"):
-            val = resp.get(key)
-            if isinstance(val, str) and val:
-                return val
-    return str(resp or "")
 
 
 def _stream_ragflow_response(
@@ -107,28 +87,6 @@ def _stream_ragflow_response(
                 chunk = next(response_iter)
             except StopIteration:
                 break
-            except KeyError as e:
-                # ragflow-sdk (some versions) may assume a field (chunk_id) that is
-                # missing in streamed frames. Do not abort the whole run; fallback once.
-                if str(e).strip("'\"") == "chunk_id":
-                    logger.warning(f"[{request_id}] rag_stream_chunk_protocol_mismatch key={e} -> fallback_nonstream")
-                    fallback_content = _safe_rag_nonstream_content(
-                        rag_session=rag_session,
-                        question=question_for_rag,
-                        logger=logger,
-                        request_id=request_id,
-                    )
-                    if fallback_content:
-                        new_part, last_ragflow_content = _diff_stream_content(
-                            content=str(fallback_content), last_content=last_ragflow_content
-                        )
-                        new_part = think_sanitizer.feed(new_part)
-                        if new_part:
-                            yield make_chunk(new_part)
-                            last_complete_content += new_part
-                    _close_response_safely(response)
-                    break
-                raise
             if cancel_event.is_set():
                 logger.info(f"[{request_id}] ask_cancelled_during_rag_stream client_id={client_id}")
                 _close_response_safely(response)
@@ -255,8 +213,7 @@ def _stream_ragflow_response(
         logger.info(
             f"[{request_id}] 流式响应结束 total_dt={time.perf_counter() - t_submit:.3f}s total_chunks={chunk_count}"
         )
-        with contextlib.suppress(Exception):
-            timings_set(request_id, t_rag_done=time.perf_counter())
+        timings_set(request_id, t_rag_done=time.perf_counter())
 
         if _ASK_TRACE_LOG_ENABLED:
             answer_preview = str(last_complete_content or "").strip().replace("\n", " ")[:200]
@@ -264,10 +221,9 @@ def _stream_ragflow_response(
 
         if settings.text_cleaner and settings.tts_buffer:
             if carry_segment_text:
-                with contextlib.suppress(Exception):
-                    settings.tts_buffer.current_sentence = (
-                        carry_segment_text + " " + (settings.tts_buffer.current_sentence or "")
-                    ).strip()
+                settings.tts_buffer.current_sentence = (
+                    carry_segment_text + " " + (settings.tts_buffer.current_sentence or "")
+                ).strip()
                 carry_segment_text = ""
             for seg in settings.tts_buffer.finalize():
                 if cancel_event.is_set():
@@ -336,6 +292,7 @@ def _stream_ragflow_response(
         logger.info(f"[{request_id}] ask_stream_generator_exit (client_disconnect?)")
         raise
     except Exception as e:
+        _close_response_safely(response)
         logger.error(f"[{request_id}] 流式响应异常: {e}", exc_info=True)
         if agent_id and "ragflow_agent_completion_no_data" in str(e):
             msg = (

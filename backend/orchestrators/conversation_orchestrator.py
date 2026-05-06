@@ -17,7 +17,6 @@ from backend.orchestrators.ragflow_config import RagflowRuntimeConfig
 from backend.orchestrators.ragflow_streaming import (
     AskStreamOutcome,
     RagflowStreamSettings,
-    _stream_ragflow_unavailable_fallback,
 )
 from backend.orchestrators.stream_payloads import make_chunk, make_done, make_meta
 from backend.orchestrators.text_cleaning import _init_text_cleaning
@@ -143,7 +142,7 @@ class ConversationOrchestrator:
         if not outcome.save_allowed or outcome.blocked:
             return
 
-        with contextlib.suppress(Exception):
+        try:
             self._history_store.add_entry(
                 request_id=request_id,
                 question=question,
@@ -153,14 +152,16 @@ class ConversationOrchestrator:
                 agent_id=agent_id,
             )
 
-            if outcome.cache_put_allowed and cache_enabled and kb_version and hasattr(self._history_store, "cache_put"):
-                with contextlib.suppress(Exception):
-                    self._history_store.cache_put(
-                        question=question,
-                        answer=outcome.answer,
-                        kb_version=kb_version,
-                        ttl_s=cache_ttl_s,
-                    )
+            if outcome.cache_put_allowed and cache_enabled and kb_version:
+                cache_put = getattr(self._history_store, "cache_put", None)
+                if not callable(cache_put):
+                    raise RuntimeError("history_store_cache_put_required")
+                cache_put(
+                    question=question,
+                    answer=outcome.answer,
+                    kb_version=kb_version,
+                    ttl_s=cache_ttl_s,
+                )
 
             if (
                 outcome.cache_put_allowed
@@ -168,20 +169,25 @@ class ConversationOrchestrator:
                 and self._qa_audio_matcher is not None
                 and not str(inp.recording_id or "").strip()
             ):
-                with contextlib.suppress(Exception):
-                    from backend.services.qa_audio_matcher import TtsProfile
+                from backend.services.qa_audio_matcher import TtsProfile
 
-                    self._qa_audio_matcher.schedule_upsert_from_answer(
-                        question=question,
-                        answer=outcome.answer,
-                        request_id=request_id,
-                        tts_profile=TtsProfile(
-                            provider=str(inp.tts_provider or "").strip(),
-                            voice=str(inp.tts_voice or "").strip(),
-                            speed=float(inp.tts_speed if inp.tts_speed is not None else 1.0),
-                        ),
-                        app_config=app_config if isinstance(app_config, dict) else {},
-                    )
+                self._qa_audio_matcher.schedule_upsert_from_answer(
+                    question=question,
+                    answer=outcome.answer,
+                    request_id=request_id,
+                    tts_profile=TtsProfile(
+                        provider=str(inp.tts_provider or "").strip(),
+                        voice=str(inp.tts_voice or "").strip(),
+                        speed=float(inp.tts_speed if inp.tts_speed is not None else 1.0),
+                    ),
+                    app_config=app_config if isinstance(app_config, dict) else {},
+                )
+        except Exception:
+            log_error = getattr(self._logger, "error", None)
+            if callable(log_error):
+                with contextlib.suppress(Exception):
+                    log_error(f"[{request_id}] ask_finalize_failed", exc_info=True)
+            raise
 
     def _resolve_rag_session(self, *, agent_id: str, conversation_name: str):
         return self._ragflow_chat_manager.resolve_session(agent_id=agent_id, conversation_name=conversation_name)
@@ -327,39 +333,36 @@ class ConversationOrchestrator:
         yield make_done(safety={"blocked": True, "where": "input"})
         return True
 
+    def _stream_missing_ragflow_session(self, *, request_id: str, client_id: str):
+        error = {
+            "code": "ragflow_session_required",
+            "message": "RAGFlow 会话不可用，已停止当前请求。",
+        }
+        self._logger.warning(f"[{request_id}] ragflow_session_required client_id={client_id}")
+        yield make_chunk(error["message"], error=error)
+        yield make_done(error=error)
+        return AskStreamOutcome(
+            answer="",
+            cancelled=False,
+            done_sent=True,
+            save_allowed=False,
+            cache_put_allowed=False,
+        )
+
     def _stream_with_session(
         self,
         *,
         request_id: str,
         client_id: str,
-        question: str,
         agent_id: str,
         question_for_rag: str,
         rag_session,
         cancel_event,
         t_submit: float,
         settings: RagflowStreamSettings,
-        apply_qa_constraints: bool,
-        qa_max_answer_chars: int,
-        safety_filter: SensitiveWordsFilter,
-        safety_block_msg: str,
     ):
         if not agent_id and not rag_session:
-            return (
-                yield from _stream_ragflow_unavailable_fallback(
-                    request_id=request_id,
-                    client_id=client_id,
-                    question=question,
-                    cancel_event=cancel_event,
-                    logger=self._logger,
-                    apply_qa_constraints=apply_qa_constraints,
-                    qa_max_answer_chars=qa_max_answer_chars,
-                    safety_filter=safety_filter,
-                    safety_block_msg=safety_block_msg,
-                    text_cleaner=settings.text_cleaner,
-                    tts_buffer=settings.tts_buffer,
-                )
-            )
+            return (yield from self._stream_missing_ragflow_session(request_id=request_id, client_id=client_id))
 
         return (
             yield from self._ragflow_chunk_manager.stream_response(
@@ -629,14 +632,14 @@ class ConversationOrchestrator:
             return
 
         rag_session = self._resolve_rag_session(agent_id=agent_id, conversation_name=conversation_name)
-        using_fallback = (not agent_id) and (not rag_session)
+        session_missing = (not agent_id) and (not rag_session)
 
         if not agent_id and str(conversation_name or "").strip():
             yield self._trace_meta(
                 request_id=request_id,
                 request_mode=request_mode,
-                answer_source="ragflow_unavailable_fallback" if using_fallback else "ragflow_stream",
-                trace_reason="rag_session_unavailable" if using_fallback else "main_ask_begin",
+                answer_source="ragflow_error" if session_missing else "ragflow_stream",
+                trace_reason="ragflow_session_required" if session_missing else "main_ask_begin",
                 ragflow_chat_stage="main_ask",
                 ragflow_chat_active=str(conversation_name or "").strip(),
             )
@@ -661,17 +664,12 @@ class ConversationOrchestrator:
         stream_outcome = yield from self._stream_with_session(
             request_id=request_id,
             client_id=client_id,
-            question=question_raw,
             agent_id=agent_id,
             question_for_rag=question_for_rag,
             rag_session=rag_session,
             cancel_event=cancel_event,
             t_submit=t_submit,
             settings=settings,
-            apply_qa_constraints=apply_qa_constraints,
-            qa_max_answer_chars=qa_max_answer_chars,
-            safety_filter=safety_filter,
-            safety_block_msg=safety_block_msg,
         )
         self._finalize_for_request(
             inp=inp,

@@ -51,6 +51,93 @@ describe('SaucWsRecorderManager', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  test('fails fast when explicit SAUC numeric config is invalid', () => {
+    expect(
+      () =>
+        new SaucWsRecorderManager({
+          saucOptions: {
+            segmentDurationMs: 'not-a-number',
+          },
+        })
+    ).toThrow('invalid_sauc_numeric_config:segmentDurationMs');
+  });
+
+  test('fails fast when explicit SAUC numeric config is out of range', () => {
+    expect(
+      () =>
+        new SaucWsRecorderManager({
+          saucOptions: {
+            segmentDurationMs: 5000,
+          },
+        })
+    ).toThrow('invalid_sauc_numeric_config:segmentDurationMs');
+  });
+
+  test('fails fast when explicit SAUC boolean config is invalid', () => {
+    expect(
+      () =>
+        new SaucWsRecorderManager({
+          saucOptions: {
+            enableItn: 'sometimes',
+          },
+        })
+    ).toThrow('invalid_sauc_boolean_config:enableItn');
+  });
+
+  test('does not fall back to window origin for an invalid explicit base URL', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        sauc_proxy: {
+          registered: true,
+          flask_debug: false,
+          aiohttp_available: true,
+          simple_websocket_available: true,
+          receive_timeout_supported: true,
+        },
+      }),
+    });
+    const onError = jest.fn();
+    const mgr = new SaucWsRecorderManager({
+      baseUrl: '://bad-base-url',
+      onError,
+      saucOptions: {
+        wsUrl: 'wss://asr.example/ws',
+        resourceId: 'res-1',
+        appKey: 'app-1',
+        accessKey: 'access-1',
+      },
+    });
+
+    const started = await mgr.start();
+
+    expect(started).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(
+      'SAUC proxy preflight failed',
+      expect.objectContaining({
+        error: 'invalid_sauc_base_url',
+        base_url: '://bad-base-url',
+      })
+    );
+  });
+
+  test('reports invalid websocket message JSON as an error event', async () => {
+    const onError = jest.fn();
+    const mgr = new SaucWsRecorderManager({ onError });
+
+    await mgr._handleServerMessage('{not-json');
+
+    expect(onError).toHaveBeenCalledWith(
+      'sauc_proxy_message_parse_failed',
+      expect.objectContaining({
+        error: expect.any(String),
+        data_type: '[object String]',
+      })
+    );
+    expect(onError.mock.calls[0][1].error).toBeTruthy();
+  });
+
   test('reports preflight hint when proxy health fetch fails', async () => {
     fetch.mockRejectedValueOnce(new Error('Failed to fetch'));
     const onError = jest.fn();

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from flask import current_app
 from flask import Blueprint, request
 
 from backend.api.http_responses import bad_request_json, error_json, ok_json
@@ -23,7 +24,11 @@ def create_blueprint(deps):
 
     @bp.route("/api/app_settings", methods=["GET"])
     def get_app_settings():
-        rec = _get_unified_settings_record(deps)
+        try:
+            rec = _get_unified_settings_record(deps)
+        except (ValueError, TypeError) as exc:
+            current_app.logger.exception("app_settings_read_failed")
+            return error_json(error="app_settings_read_failed", detail=str(exc), status=500)
         if not rec:
             return ok_json(scope_id=GLOBAL_SCOPE_ID, settings={}, created_at_ms=None, updated_at_ms=None)
         return ok_json(

@@ -27,6 +27,20 @@ class TourPlanner:
         return str(v or "").strip()
 
     @staticmethod
+    def _parse_int(raw: object, *, error: str) -> int:
+        try:
+            return int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(error) from exc
+
+    @staticmethod
+    def _parse_float(raw: object, *, error: str) -> float:
+        try:
+            return float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(error) from exc
+
+    @staticmethod
     def _parse_stop_durations_override(
         override: list | dict | None, stops: list[str]
     ) -> list[int | None]:
@@ -38,10 +52,7 @@ class TourPlanner:
             for i, _s in enumerate(stops):
                 if i >= len(override):
                     break
-                try:
-                    n = int(override[i])
-                except Exception:
-                    n = 0
+                n = TourPlanner._parse_int(override[i], error="invalid_stop_durations_override")
                 if n > 0:
                     result[i] = n
             return result
@@ -53,10 +64,9 @@ class TourPlanner:
                     raw = override.get(s)
                 elif str(i) in override:
                     raw = override.get(str(i))
-                try:
-                    n = int(raw)
-                except Exception:
-                    n = 0
+                if raw is None:
+                    continue
+                n = TourPlanner._parse_int(raw, error="invalid_stop_durations_override")
                 if n > 0:
                     result[i] = n
             return result
@@ -102,10 +112,7 @@ class TourPlanner:
     ) -> TourPlan:
         zone = self._normalize_str(zone) or "默认路线"
         profile = self._normalize_str(profile) or "大众"
-        try:
-            duration_s = int(duration_s)
-        except Exception:
-            duration_s = 10
+        duration_s = self._parse_int(duration_s, error="invalid_duration_s")
         # Support longer tours (e.g. 20min = 1200s) while keeping a safe upper bound.
         duration_s = max(1, min(duration_s, 3600))
 
@@ -120,27 +127,11 @@ class TourPlanner:
         stops = routes.get(zone)
         source = "tour_planner.routes"
         if not isinstance(stops, list) or not stops:
-            # Backward compat: allow tour.stops
-            legacy = (cfg or {}).get("tour") if isinstance(cfg, dict) else {}
-            legacy_stops = legacy.get("stops") if isinstance(legacy, dict) else None
-            if isinstance(legacy_stops, list) and legacy_stops:
-                stops = legacy_stops
-                source = "tour.stops"
-            else:
-                stops = [
-                    "公司总体介绍",
-                    "核心产品概览",
-                    "骨科产品",
-                    "泌尿产品",
-                    "其他产品与应用场景",
-                    "总结与提问引导",
-                ]
-                source = "default"
+            raise ValueError("tour_route_stops_required")
 
         stops_norm = [self._normalize_str(s) for s in stops if self._normalize_str(s)]
         if not stops_norm:
-            stops_norm = ["公司总体介绍"]
-            source = "default"
+            raise ValueError("tour_route_stops_required")
 
         # Optional duration-based trimming (disabled by default for exhibition tours).
         trim_by_duration = bool(tour_cfg.get("trim_by_duration", False))
@@ -174,21 +165,18 @@ class TourPlanner:
         stop_durations = []
         if durations_list is not None:
             for i, _s in enumerate(stops_norm):
-                try:
-                    v = durations_list[i] if i < len(durations_list) else None
-                    n = int(v)
-                except Exception:
+                if i >= len(durations_list):
                     n = 0
+                else:
+                    n = self._parse_int(durations_list[i], error="invalid_stop_durations_s")
                 stop_durations.append(max(0, n))
         elif isinstance(durations_by_name, dict):
             for s in stops_norm:
-                try:
-                    n = int(durations_by_name.get(s) or 0)
-                except Exception:
-                    n = 0
+                raw = durations_by_name.get(s)
+                n = 0 if raw is None else self._parse_int(raw, error="invalid_stop_durations_s")
                 stop_durations.append(max(0, n))
 
-        # Fallback: allocate total duration evenly.
+        # Default allocation when per-stop durations are not configured.
         if not stop_durations or len(stop_durations) != len(stops_norm) or sum(stop_durations) <= 0:
             per = max(1, int(round(float(duration_s) / max(1, len(stops_norm)))))
             stop_durations = [per for _ in stops_norm]
@@ -201,10 +189,8 @@ class TourPlanner:
 
         # Derive per-stop target chars for Chinese speech planning (heuristic).
         # Default: ~4.5 chars/s; configurable via tour_planner.chars_per_second.
-        try:
-            cps = float(tour_cfg.get("chars_per_second") or 4.5)
-        except Exception:
-            cps = 4.5
+        cps_raw = tour_cfg.get("chars_per_second")
+        cps = 4.5 if cps_raw is None else self._parse_float(cps_raw, error="invalid_chars_per_second")
         cps = max(2.5, min(cps, 8.0))
         stop_target_chars = [max(20, int(round(float(d) * cps))) for d in stop_durations]
 
@@ -230,15 +216,12 @@ class TourPlanner:
     ) -> TourPlan:
         zone = self._normalize_str(zone) or "默认路线"
         profile = self._normalize_str(profile) or "大众"
-        try:
-            duration_s = int(duration_s)
-        except Exception:
-            duration_s = 10
+        duration_s = self._parse_int(duration_s, error="invalid_duration_s")
         duration_s = max(1, min(duration_s, 3600))
 
         stops_norm = [self._normalize_str(s) for s in (stops or []) if self._normalize_str(s)]
         if not stops_norm:
-            return self.make_plan({}, zone=zone, profile=profile, duration_s=duration_s)
+            raise ValueError("tour_stops_required")
 
         per = max(1, int(round(float(duration_s) / max(1, len(stops_norm)))))
         stop_durations = [per for _ in stops_norm]

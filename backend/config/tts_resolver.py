@@ -69,9 +69,9 @@ def _parse_tts_speed(*, data: dict | None, headers) -> float | None:
     try:
         v = float(raw)
     except Exception:
-        return None
+        raise ValueError("invalid_tts_speed")
     if not (0.1 <= v <= 5.0):
-        return None
+        raise ValueError("invalid_tts_speed")
     return v
 
 
@@ -116,8 +116,8 @@ def _apply_edge_speed(*, base: dict, speed: float) -> dict:
                 base_pct = float(s[:-1])
             else:
                 base_pct = float(s)
-    except Exception:
-        base_pct = 0.0
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid_tts_edge_rate") from exc
 
     delta_pct = (float(speed) - 1.0) * 100.0
     pct = max(-80.0, min(base_pct + delta_pct, 100.0))
@@ -135,8 +135,8 @@ def _apply_sapi_speed(*, base: dict, speed: float) -> dict:
 
     try:
         base_rate = int(sapi.get("rate") or 0)
-    except Exception:
-        base_rate = 0
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid_tts_sapi_rate") from exc
     delta = int(round((float(speed) - 1.0) * 10.0))
     sapi["rate"] = max(-10, min(base_rate + delta, 10))
     return out
@@ -156,13 +156,6 @@ def resolve_tts_request(app_config: dict, *, data: dict | None, headers) -> tupl
     voice, model = _parse_tts_voice_model(provider=provider, data=data, headers=headers)
     speed = _parse_tts_speed(data=data, headers=headers)
 
-    # On clean deploys, runtime config may not have an explicit modelscope voice yet.
-    # Pick a safe default to avoid provider hard-fail and fallback loops.
-    if provider_norm in ("modelscope", "bailian", "dashscope") and not voice:
-        existing_voice = _s(get_nested(base, ["tts", "bailian", "voice"], ""), "")
-        if not existing_voice:
-            voice = "longxiaochun"
-
     # Clamp for safety.
     if speed is not None:
         speed = max(0.5, min(float(speed), 2.0))
@@ -181,8 +174,8 @@ def resolve_tts_request(app_config: dict, *, data: dict | None, headers) -> tupl
             bailian = _ensure_dict(get_nested(base, ["tts", "bailian"], {}) or {})
             try:
                 base_sr = float(bailian.get("speech_rate") or 1.0)
-            except Exception:
-                base_sr = 1.0
+            except (TypeError, ValueError) as exc:
+                raise ValueError("invalid_tts_bailian_speech_rate") from exc
             speech_rate = max(0.5, min(base_sr * float(speed), 2.0))
         resolved = _apply_bailian_overrides(base=resolved, voice=voice, model=model, speech_rate=speech_rate)
         return provider, resolved

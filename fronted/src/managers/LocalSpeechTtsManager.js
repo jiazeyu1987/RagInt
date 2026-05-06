@@ -7,12 +7,8 @@ function isSpeechAvailable() {
   return typeof window !== 'undefined' && !!window.speechSynthesis && typeof window.SpeechSynthesisUtterance === 'function';
 }
 
-function safeCancelSpeech() {
-  try {
-    if (window && window.speechSynthesis) window.speechSynthesis.cancel();
-  } catch (_) {
-    // ignore
-  }
+function cancelSpeech() {
+  if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
 }
 
 export class LocalSpeechTtsManager {
@@ -83,7 +79,7 @@ export class LocalSpeechTtsManager {
     this._ragDone = true;
     this._queue = [];
     this._playerPromise = null;
-    safeCancelSpeech();
+    cancelSpeech();
     if (reason) this._log('[TTS_LOCAL] stopped', reason);
     this._emit('play_cancelled', { reason: String(reason || 'stop') }, 'client');
   }
@@ -149,27 +145,28 @@ export class LocalSpeechTtsManager {
       const player = this._playerPromise;
       const hasQueues = this._queue.length > 0;
       if (!player && !hasQueues) return;
-      await Promise.allSettled([player].filter(Boolean));
+      if (player) await player;
     }
   }
 
   _pickVoice() {
+    let voices;
     try {
-      const voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
-      if (!voices || !voices.length) return null;
-      if (this._voiceName) {
-        const byName = voices.find((v) => v && v.name === this._voiceName);
-        if (byName) return byName;
-      }
-      if (this._voiceLang) {
-        const langLower = this._voiceLang.toLowerCase();
-        const byLang = voices.find((v) => v && typeof v.lang === 'string' && v.lang.toLowerCase().startsWith(langLower));
-        if (byLang) return byLang;
-      }
-      return voices[0] || null;
-    } catch (_) {
-      return null;
+      voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+    } catch (err) {
+      throw new Error('[TTS_LOCAL] get_voices_failed', { cause: err });
     }
+    if (!voices || !voices.length) return null;
+    if (this._voiceName) {
+      const byName = voices.find((v) => v && v.name === this._voiceName);
+      if (byName) return byName;
+    }
+    if (this._voiceLang) {
+      const langLower = this._voiceLang.toLowerCase();
+      const byLang = voices.find((v) => v && typeof v.lang === 'string' && v.lang.toLowerCase().startsWith(langLower));
+      if (byLang) return byLang;
+    }
+    return voices[0] || null;
   }
 
   async _speakOnce(item, token) {
@@ -241,6 +238,7 @@ export class LocalSpeechTtsManager {
   _startPlayer() {
     if (this._playerPromise) return;
     const token = this._token;
+    let playerError = null;
 
     this._playerPromise = (async () => {
       while (this._token === token) {
@@ -250,24 +248,19 @@ export class LocalSpeechTtsManager {
           await sleep(30);
           continue;
         }
-        try {
-          await this._speakOnce(item, token);
-        } catch (err) {
-          this._warn('[TTS_LOCAL] speak_error', err);
-          // If SpeechSynthesis gets stuck, cancel and continue.
-          safeCancelSpeech();
-        }
+        await this._speakOnce(item, token);
       }
     })()
       .catch((err) => {
+        playerError = err;
         this._error('[TTS_LOCAL] player_error', err);
+        throw err;
       })
       .finally(() => {
         if (this._token === token) this._playerPromise = null;
-        if (this._token === token && this._ragDone && this._queue.length === 0) {
+        if (this._token === token && !playerError && this._ragDone && this._queue.length === 0) {
           this._emit('play_end', { t_client_ms: this._nowMs() }, 'client');
         }
       });
   }
 }
-

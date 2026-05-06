@@ -27,25 +27,22 @@ def _guess_sample_rate(*, resolved_cfg: dict, provider: str) -> int:
     cfg = resolved_cfg if isinstance(resolved_cfg, dict) else {}
     p = str(provider or "").strip().lower()
     if p in {"modelscope", "bailian", "dashscope", "flash"}:
-        try:
-            sample_rate = (((cfg.get("tts") or {}).get("bailian") or {}).get("sample_rate"))
-            if sample_rate is not None and str(sample_rate).strip() != "":
+        sample_rate = (((cfg.get("tts") or {}).get("bailian") or {}).get("sample_rate"))
+        if sample_rate is not None and str(sample_rate).strip() != "":
+            try:
                 return max(8000, int(sample_rate))
-        except Exception:
-            pass
+            except (TypeError, ValueError) as exc:
+                raise ValueError("tts.bailian.sample_rate_invalid") from exc
     if p == "edge":
-        try:
-            fmt = str((((cfg.get("tts") or {}).get("edge") or {}).get("output_format") or "")).strip().lower()
-            if "24khz" in fmt:
-                return 24000
-            if "22khz" in fmt:
-                return 22050
-            if "16khz" in fmt:
-                return 16000
-            if "8khz" in fmt:
-                return 8000
-        except Exception:
-            pass
+        fmt = str((((cfg.get("tts") or {}).get("edge") or {}).get("output_format") or "")).strip().lower()
+        if "24khz" in fmt:
+            return 24000
+        if "22khz" in fmt:
+            return 22050
+        if "16khz" in fmt:
+            return 16000
+        if "8khz" in fmt:
+            return 8000
     return 16000
 
 

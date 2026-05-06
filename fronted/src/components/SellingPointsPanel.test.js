@@ -77,4 +77,26 @@ describe('SellingPointsPanel', () => {
 
     view.unmount();
   });
+
+  test('shows api failure instead of treating it as an empty list', async () => {
+    listSellingPoints.mockResolvedValue({ ok: false, error: 'stop_name_required' });
+
+    const view = render(<SellingPointsPanel stopName="Stop A" />);
+    await flush();
+
+    expect(view.container.textContent).toContain('stop_name_required');
+
+    view.unmount();
+  });
+
+  test('shows fetch failure instead of treating it as an empty list', async () => {
+    listSellingPoints.mockRejectedValue(new Error('HTTP 500 /api/selling_points'));
+
+    const view = render(<SellingPointsPanel stopName="Stop A" />);
+    await flush();
+
+    expect(view.container.textContent).toContain('HTTP 500 /api/selling_points');
+
+    view.unmount();
+  });
 });

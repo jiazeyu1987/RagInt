@@ -69,6 +69,111 @@ describe('TourPipelineManager', () => {
     expect(queued.every((x) => x.meta.stopIndex === 1)).toBe(true);
   });
 
+  test('replayPrefetchToQueue surfaces enqueue failures', () => {
+    const mgr = createManager();
+    const enqueueError = new Error('text queue unavailable');
+    mgr._prefetchStore.set(1, {
+      answerText: 'fallback',
+      segments: ['第一句'],
+      createdAt: Date.now(),
+    });
+
+    expect(() =>
+      mgr.replayPrefetchToQueue({
+        stopIndex: 1,
+        enqueueSegment: () => {
+          throw enqueueError;
+        },
+        ensureTtsRunning: jest.fn(),
+      })
+    ).toThrow(enqueueError);
+  });
+
+  test('replayPrefetchToQueue surfaces ensure failures', () => {
+    const mgr = createManager();
+    const ensureError = new Error('tts unavailable');
+    mgr._prefetchStore.set(1, {
+      answerText: 'fallback',
+      segments: ['第一句'],
+      createdAt: Date.now(),
+    });
+
+    expect(() =>
+      mgr.replayPrefetchToQueue({
+        stopIndex: 1,
+        enqueueSegment: jest.fn(),
+        ensureTtsRunning: () => {
+          throw ensureError;
+        },
+      })
+    ).toThrow(ensureError);
+  });
+
+  test('replayPrefetchAudioToQueue surfaces audio enqueue failures', () => {
+    const mgr = createManager();
+    const enqueueError = new Error('audio queue unavailable');
+    mgr._prefetchStore.set(1, {
+      answerText: '录音讲解',
+      audioSegments: [{ audio_url: '/audio/1.wav', text: '第一句' }],
+      createdAt: Date.now(),
+    });
+
+    expect(() =>
+      mgr.replayPrefetchAudioToQueue({
+        stopIndex: 1,
+        enqueueAudioSegment: () => {
+          throw enqueueError;
+        },
+        ensureTtsRunning: jest.fn(),
+      })
+    ).toThrow(enqueueError);
+  });
+
+  test('replayPrefetchToQueue returns false without cached replayable text', () => {
+    const mgr = createManager();
+    mgr._prefetchStore.set(1, {
+      answerText: '   ',
+      segments: [],
+      createdAt: Date.now(),
+    });
+
+    expect(mgr.replayPrefetchToQueue({ stopIndex: 0 })).toBe(false);
+    expect(mgr.replayPrefetchToQueue({ stopIndex: 1 })).toBe(false);
+  });
+
+  test('replayPrefetchToQueue does not replay answerText when segment stream was missing', () => {
+    const mgr = createManager();
+    const enqueueSegment = jest.fn();
+    const ensureTtsRunning = jest.fn();
+    mgr._prefetchStore.set(1, {
+      answerText: '完整答案文本不能伪装成已分段讲解',
+      segments: [],
+      createdAt: Date.now(),
+    });
+
+    expect(
+      mgr.replayPrefetchToQueue({
+        stopIndex: 1,
+        enqueueSegment,
+        ensureTtsRunning,
+      })
+    ).toBe(false);
+    expect(enqueueSegment).not.toHaveBeenCalled();
+    expect(ensureTtsRunning).not.toHaveBeenCalled();
+  });
+
+  test('replayPrefetchAudioToQueue returns false without cached audio segments', () => {
+    const mgr = createManager();
+    mgr._prefetchStore.set(1, {
+      answerText: '录音讲解',
+      audioSegments: [],
+      createdAt: Date.now(),
+    });
+
+    expect(mgr.replayPrefetchAudioToQueue({ stopIndex: 0 })).toBe(false);
+    expect(mgr.replayPrefetchAudioToQueue({ stopIndex: 1 })).toBe(false);
+  });
+
   test('startContinuousTour keeps active after root ask returns', async () => {
     const mgr = createManager({
       getInterruptEpoch: () => 7,
@@ -85,5 +190,70 @@ describe('TourPipelineManager', () => {
 
     expect(askQuestion).toHaveBeenCalled();
     expect(mgr.isActive()).toBe(true);
+  });
+
+  test('prefetchStopTextToQueue does not mark ready when enqueue callback fails', async () => {
+    const enqueueError = new Error('enqueue unavailable');
+    const warn = jest.fn();
+    const ragflowChunkManager = {
+      fetchAskStream: jest.fn().mockResolvedValue({ ok: true, body: {} }),
+      readSseStream: jest.fn(async (_resp, handlers) => {
+        await handlers.onEvent({ segment: '下一站讲解', done: false });
+        await handlers.onEvent({ done: true });
+      }),
+    };
+    const mgr = createManager({
+      onWarn: warn,
+      ragflowChunkManager,
+      getInterruptEpoch: () => 3,
+      isInterruptEpochCurrent: (epoch) => Number(epoch) === 3,
+    });
+    mgr._active = true;
+
+    await mgr.prefetchStopTextToQueue({
+      stopIndex: 1,
+      tail: '',
+      epoch: 3,
+      enqueueSegment: () => {
+        throw enqueueError;
+      },
+      ensureTtsRunning: jest.fn(),
+    });
+
+    expect(mgr.getPrefetch(1)).toBeNull();
+    expect(warn).toHaveBeenCalledWith('[PREFETCH] failed', expect.any(Error));
+  });
+
+  test('prefetchStopFromRecordingToQueue does not mark ready when ensure callback fails', async () => {
+    const ensureError = new Error('tts queue unavailable');
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        answer_text: '录音讲解',
+        tail: '录音讲解',
+        segments: [{ audio_url: '/audio/1.wav', text: '录音讲解' }],
+      }),
+    });
+    const warn = jest.fn();
+    const mgr = createManager({
+      onWarn: warn,
+      getPlaybackRecordingId: () => 'rec-1',
+      getInterruptEpoch: () => 4,
+      isInterruptEpochCurrent: (epoch) => Number(epoch) === 4,
+    });
+    mgr._active = true;
+
+    await mgr.prefetchStopFromRecordingToQueue({
+      recordingId: 'rec-1',
+      stopIndex: 1,
+      epoch: 4,
+      enqueueAudioSegment: jest.fn(),
+      ensureTtsRunning: () => {
+        throw ensureError;
+      },
+    });
+
+    expect(mgr.getPrefetch(1)).toBeNull();
+    expect(warn).toHaveBeenCalledWith('[PREFETCH_REC] failed', expect.any(Error));
   });
 });

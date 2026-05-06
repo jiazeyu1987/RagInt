@@ -77,14 +77,11 @@ class TourControlStore:
                 conn.close()
 
     def _ensure_column(self, *, conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
-        try:
-            cols = conn.execute(f"PRAGMA table_info({table});").fetchall() or []
-            names = {str(r[1]) for r in cols if len(r) >= 2}
-            if column in names:
-                return
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl};")
-        except Exception:
+        cols = conn.execute(f"PRAGMA table_info({table});").fetchall() or []
+        names = {str(r[1]) for r in cols if len(r) >= 2}
+        if column in names:
             return
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl};")
 
     def _ensure_state_row(self, *, conn: sqlite3.Connection, client_id: str, now_ms: int) -> None:
         self._ensure_column(conn=conn, table="tour_control_state", column="status", ddl="status TEXT NOT NULL DEFAULT 'waiting'")
@@ -96,6 +93,30 @@ class TourControlStore:
             """,
             (client_id, int(now_ms)),
         )
+
+    @staticmethod
+    def _parse_payload_json(raw: object, *, command_id: int, client_id: str) -> dict:
+        try:
+            payload = json.loads(str(raw))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid tour_control_commands.payload_json for id={command_id} client_id={client_id!r}") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"invalid tour_control_commands.payload_json for id={command_id} client_id={client_id!r}: expected object")
+        return payload
+
+    @staticmethod
+    def _parse_int(raw: object, *, error: str) -> int:
+        try:
+            return int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(error) from exc
+
+    @staticmethod
+    def _parse_float(raw: object, *, error: str) -> float:
+        try:
+            return float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(error) from exc
 
     def get_state(self, *, client_id: str) -> TourControlState | None:
         cid = str(client_id or "").strip()
@@ -112,10 +133,10 @@ class TourControlStore:
                     return None
                 return TourControlState(
                     client_id=str(row["client_id"] or cid),
-                    status=str(row["status"] or "waiting"),
-                    paused=bool(int(row["paused"] or 0)),
-                    speed=float(row["speed"] or 1.0),
-                    updated_at_ms=int(row["updated_at_ms"] or 0),
+                    status=str(row["status"]),
+                    paused=bool(self._parse_int(row["paused"], error="invalid tour_control_state.paused")),
+                    speed=self._parse_float(row["speed"], error="invalid tour_control_state.speed"),
+                    updated_at_ms=self._parse_int(row["updated_at_ms"], error="invalid tour_control_state.updated_at_ms"),
                 )
             finally:
                 conn.close()
@@ -158,43 +179,43 @@ class TourControlStore:
             return 0
         if now_ms is None:
             now_ms = int(time.time() * 1000)
-        p = payload if isinstance(payload, dict) else {}
+        if payload is not None and not isinstance(payload, dict):
+            raise ValueError("invalid_payload")
+        p = payload or {}
+        now_ms = self._parse_int(now_ms, error="invalid_now_ms")
         payload_json = json.dumps(p, ensure_ascii=False, separators=(",", ":"))
 
         with self._lock:
             conn = self._connect()
             try:
-                self._ensure_state_row(conn=conn, client_id=cid, now_ms=int(now_ms))
+                self._ensure_state_row(conn=conn, client_id=cid, now_ms=now_ms)
 
                 if act == "pause":
                     conn.execute(
                         "UPDATE tour_control_state SET status = 'paused', paused = 1, updated_at_ms = ? WHERE client_id = ?",
-                        (int(now_ms), cid),
+                        (now_ms, cid),
                     )
                 elif act == "resume":
                     conn.execute(
                         "UPDATE tour_control_state SET status = 'playing', paused = 0, updated_at_ms = ? WHERE client_id = ?",
-                        (int(now_ms), cid),
+                        (now_ms, cid),
                     )
                 elif act == "speed":
-                    try:
-                        s = float(p.get("speed"))
-                    except Exception:
-                        s = 1.0
+                    s = self._parse_float(p.get("speed"), error="invalid_speed")
                     s = max(0.5, min(s, 3.0))
                     conn.execute(
                         "UPDATE tour_control_state SET speed = ?, updated_at_ms = ? WHERE client_id = ?",
-                        (float(s), int(now_ms), cid),
+                        (float(s), now_ms, cid),
                     )
                 elif act in ("restart", "skip", "next", "prev", "jump", "go"):
                     conn.execute(
                         "UPDATE tour_control_state SET status = 'playing', paused = 0, updated_at_ms = ? WHERE client_id = ?",
-                        (int(now_ms), cid),
+                        (now_ms, cid),
                     )
                 elif act in ("reset", "stop"):
                     conn.execute(
                         "UPDATE tour_control_state SET status = 'waiting', paused = 0, updated_at_ms = ? WHERE client_id = ?",
-                        (int(now_ms), cid),
+                        (now_ms, cid),
                     )
 
                 cur = conn.execute(
@@ -202,7 +223,7 @@ class TourControlStore:
                     INSERT INTO tour_control_commands (client_id, action, payload_json, created_at_ms, consumed_at_ms)
                     VALUES (?, ?, ?, ?, NULL)
                     """,
-                    (cid, act, payload_json, int(now_ms)),
+                    (cid, act, payload_json, now_ms),
                 )
                 conn.commit()
                 return int(cur.lastrowid or 0)
@@ -213,8 +234,8 @@ class TourControlStore:
         cid = str(client_id or "").strip()
         if not cid:
             return []
-        since_id = max(0, int(since_id or 0))
-        limit = max(1, min(int(limit or 50), 200))
+        since_id = max(0, self._parse_int(since_id, error="invalid_since_id"))
+        limit = max(1, min(self._parse_int(limit, error="invalid_limit"), 200))
         with self._lock:
             conn = self._connect()
             try:
@@ -230,20 +251,25 @@ class TourControlStore:
                 ).fetchall()
                 out: list[TourControlCommand] = []
                 for r in rows:
-                    try:
-                        payload = json.loads(str(r["payload_json"] or "{}"))
-                    except Exception:
-                        payload = {}
-                    if not isinstance(payload, dict):
-                        payload = {}
+                    command_id = self._parse_int(r["id"], error="invalid tour_control_commands.id")
+                    row_client_id = str(r["client_id"] or cid)
+                    payload = self._parse_payload_json(r["payload_json"], command_id=command_id, client_id=row_client_id)
+                    consumed_at_ms = (
+                        self._parse_int(r["consumed_at_ms"], error="invalid tour_control_commands.consumed_at_ms")
+                        if r["consumed_at_ms"] is not None
+                        else None
+                    )
                     out.append(
                         TourControlCommand(
-                            id=int(r["id"] or 0),
-                            client_id=str(r["client_id"] or cid),
+                            id=command_id,
+                            client_id=row_client_id,
                             action=str(r["action"] or ""),
                             payload=payload,
-                            created_at_ms=int(r["created_at_ms"] or 0),
-                            consumed_at_ms=int(r["consumed_at_ms"]) if r["consumed_at_ms"] is not None else None,
+                            created_at_ms=self._parse_int(
+                                r["created_at_ms"],
+                                error="invalid tour_control_commands.created_at_ms",
+                            ),
+                            consumed_at_ms=consumed_at_ms,
                         )
                     )
                 return out
@@ -254,14 +280,12 @@ class TourControlStore:
         cid = str(client_id or "").strip()
         if not cid:
             return False
-        try:
-            command_id = int(command_id)
-        except Exception:
-            command_id = 0
+        command_id = self._parse_int(command_id, error="invalid_command_id")
         if command_id <= 0:
-            return False
+            raise ValueError("invalid_command_id")
         if now_ms is None:
             now_ms = int(time.time() * 1000)
+        now_ms = self._parse_int(now_ms, error="invalid_now_ms")
 
         with self._lock:
             conn = self._connect()
@@ -272,7 +296,7 @@ class TourControlStore:
                     SET consumed_at_ms = ?
                     WHERE id = ? AND client_id = ? AND consumed_at_ms IS NULL
                     """,
-                    (int(now_ms), int(command_id), cid),
+                    (now_ms, command_id, cid),
                 )
                 conn.commit()
                 return int(cur.rowcount or 0) > 0

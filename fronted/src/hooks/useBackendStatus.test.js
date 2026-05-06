@@ -51,6 +51,20 @@ describe('useBackendStatus', () => {
     hook.unmount();
   });
 
+  test('sets explicit error when status response schema is invalid', async () => {
+    fetchJson.mockResolvedValueOnce(null);
+    const hook = renderHook(
+      ({ requestId, options }) => useBackendStatus(requestId, options),
+      { requestId: 'rid-bad-status', options: { enabled: true } }
+    );
+
+    await hook.flush();
+
+    expect(hook.result().status).toBe(null);
+    expect(hook.result().error).toBe('status_response_invalid');
+    hook.unmount();
+  });
+
   test('enforces polling interval lower bound to 300ms', () => {
     const intervalSpy = jest.spyOn(global, 'setInterval');
     fetchJson.mockResolvedValue({ ok: true });

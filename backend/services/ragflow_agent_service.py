@@ -6,6 +6,7 @@ import contextlib
 import threading
 import time
 from pathlib import Path
+from json import JSONDecodeError
 from typing import Iterable, Iterator
 
 import requests
@@ -31,13 +32,18 @@ class RagflowAgentService:
                 cfg = self._config_loader(force=force)
             except TypeError:
                 cfg = self._config_loader()
-            return cfg if isinstance(cfg, dict) else {}
+            if not isinstance(cfg, dict):
+                raise RuntimeError("ragflow_config_unexpected_shape")
+            return cfg
 
         try:
             st = self._config_path.stat()
             mtime_ns = int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9)))
-        except Exception:
+        except FileNotFoundError:
             mtime_ns = None
+        except OSError as e:
+            self._logger.warning("ragflow_agent_config_file_stat_failed path=%s err=%s", str(self._config_path), e)
+            raise
 
         with self._cfg_lock:
             if not force and self._last_loaded_cfg is not None and mtime_ns is not None and mtime_ns == self._last_loaded_mtime_ns:
@@ -50,7 +56,12 @@ class RagflowAgentService:
 
             with open(self._config_path, "r", encoding="utf-8") as f:
                 raw = json.load(f)
-                self._last_loaded_cfg = apply_env_overrides(raw) if isinstance(raw, dict) else {}
+                if not isinstance(raw, dict):
+                    raise RuntimeError("ragflow_config_unexpected_shape")
+                cfg = apply_env_overrides(raw)
+                if not isinstance(cfg, dict):
+                    raise RuntimeError("ragflow_config_unexpected_shape")
+                self._last_loaded_cfg = cfg
                 self._last_loaded_mtime_ns = mtime_ns
                 return self._last_loaded_cfg
 
@@ -58,11 +69,13 @@ class RagflowAgentService:
         return self.load_config(force=True)
 
     def _auth_headers(self) -> tuple[str, dict]:
-        cfg = self.load_config() or {}
+        cfg = self.load_config()
         api_key = (cfg.get("api_key") or "").strip()
-        base_url = (cfg.get("base_url") or "http://127.0.0.1").strip().rstrip("/")
+        base_url = str(cfg.get("base_url") or "").strip().rstrip("/")
         if not api_key or api_key in ["YOUR_RAGFLOW_API_KEY_HERE", "your_api_key_here"]:
             raise RuntimeError("ragflow_api_key_invalid")
+        if not base_url:
+            raise RuntimeError("ragflow_base_url_missing")
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -184,6 +197,7 @@ class RagflowAgentService:
                     f"conn={r.headers.get('connection')} server={r.headers.get('server')} x_accel={r.headers.get('x-accel-buffering')}"
                 )
                 any_line = False
+                any_output = False
                 lines_count = 0
                 bytes_count = 0
                 try:
@@ -208,21 +222,31 @@ class RagflowAgentService:
                         # - error line may start with JSON: {"code":...,"message":...}
                         # - normal SSE frames: data: {...}
                         if line.startswith("{"):
-                            obj = json.loads(line)
+                            try:
+                                obj = json.loads(line)
+                            except JSONDecodeError as e:
+                                raise RuntimeError("ragflow_agent_completion_invalid_json") from e
                             raise RuntimeError(obj.get("message") or line)
                         if not line.startswith("data:"):
                             continue
 
-                        obj = json.loads(line[5:])
-                        data = obj.get("data") if isinstance(obj, dict) else None
+                        try:
+                            obj = json.loads(line[5:])
+                        except JSONDecodeError as e:
+                            raise RuntimeError("ragflow_agent_completion_invalid_json") from e
+                        if not isinstance(obj, dict):
+                            raise RuntimeError("ragflow_agent_completion_unexpected_response")
+                        data = obj.get("data")
                         if data is True:
                             continue
                         if isinstance(data, dict):
+                            if "answer" not in data or not isinstance(data.get("answer"), str):
+                                raise RuntimeError("ragflow_agent_completion_unexpected_response")
                             answer = data.get("answer") or ""
                         else:
-                            answer = ""
+                            raise RuntimeError("ragflow_agent_completion_unexpected_response")
 
-                        if not isinstance(answer, str) or not answer:
+                        if not answer:
                             continue
                         if answer.startswith(last_answer):
                             delta = answer[len(last_answer) :]
@@ -230,6 +254,7 @@ class RagflowAgentService:
                             delta = answer
                         last_answer = answer
                         if delta:
+                            any_output = True
                             yield delta
                 except ChunkedEncodingError:
                     self._logger.warning(
@@ -237,6 +262,13 @@ class RagflowAgentService:
                         f"dt={time.perf_counter()-t0:.3f}s lines={lines_count} bytes={bytes_count}"
                     )
                     any_line = False
+
+                if any_line and not any_output:
+                    self._logger.warning(
+                        f"[{request_id}] ragflow_agent_completion_no_output agent_id={agent_id} session_id={session_id} "
+                        f"url={url} dt={time.perf_counter()-t0:.3f}s lines={lines_count} bytes={bytes_count}"
+                    )
+                    raise RuntimeError("ragflow_agent_completion_no_data")
 
                 if not any_line:
                     self._logger.warning(

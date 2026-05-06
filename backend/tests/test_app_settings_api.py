@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import os
+import sqlite3
 
 from backend.app import create_app
 
@@ -67,3 +68,26 @@ def test_app_settings_requires_dict(tmp_path):
     r = c.put("/api/app_settings", headers={"X-Client-ID": "cid_settings_test"}, json={"settings": []})
     assert r.status_code == 400
     assert r.get_json()["error"] == "settings_dict_required"
+
+
+def test_app_settings_get_reports_corrupt_stored_settings(tmp_path):
+    db_path = tmp_path / "app_settings.db"
+    os.environ["RAGINT_APP_SETTINGS_DB_PATH"] = str(db_path)
+    app = create_app()
+    c = app.test_client()
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            "INSERT INTO app_settings (scope_id, settings_json, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?)",
+            ("single_user", "{", 1, 1),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    r = c.get("/api/app_settings", headers={"X-Client-ID": "cid_settings_corrupt"})
+    assert r.status_code == 500
+    body = r.get_json()
+    assert body["ok"] is False
+    assert body["error"] == "app_settings_read_failed"

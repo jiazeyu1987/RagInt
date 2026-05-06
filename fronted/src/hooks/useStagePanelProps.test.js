@@ -41,5 +41,27 @@ describe('useStagePanelProps', () => {
     expect(setQueueStatus).toHaveBeenCalled();
     hook.unmount();
   });
+
+  test('propagates stage command failures without updating success status', async () => {
+    sendTourControl.mockRejectedValueOnce(new Error('stage_command_failed'));
+    const setQueueStatus = jest.fn();
+    const hook = renderHook((p) => useStagePanelProps(p), {
+      clientIdRef: { current: 'cid' },
+      stageSpeedMode: 'normal',
+      setStageSpeedMode: jest.fn(),
+      setGuideDuration: jest.fn(),
+      setQueueStatus,
+      interruptCurrentRun: jest.fn(),
+      continueTour: jest.fn().mockResolvedValue(undefined),
+      nextTourStop: jest.fn().mockResolvedValue(undefined),
+      resetTour: jest.fn(),
+      startTour: jest.fn().mockResolvedValue(undefined),
+    });
+
+    await expect(hook.result().onPause()).rejects.toThrow('stage_command_failed');
+    expect(setQueueStatus).not.toHaveBeenCalled();
+
+    hook.unmount();
+  });
 });
 

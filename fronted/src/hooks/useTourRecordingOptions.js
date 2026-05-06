@@ -4,6 +4,7 @@ import { fetchJson } from '../api/backendClient';
 export function useTourRecordingOptions({ enabled, limit = 50, currentPlaybackSpeed = 1.0 } = {}) {
   const [options, setOptions] = useState([]);
   const [ready, setReady] = useState(false);
+  const [error, setError] = useState('');
 
   const formatRecordingLabel = useCallback((createdAtMs) => {
     try {
@@ -28,7 +29,13 @@ export function useTourRecordingOptions({ enabled, limit = 50, currentPlaybackSp
   const refresh = useCallback(async () => {
     try {
       const data = await fetchJson(`/api/recordings?limit=${Number(limit) || 50}`);
-      const items = Array.isArray(data && data.items) ? data.items : [];
+      if (data && data.ok === false) {
+        throw new Error(String(data.error || 'recordings_load_failed'));
+      }
+      if (!Array.isArray(data && data.items)) {
+        throw new Error('recordings_invalid_response');
+      }
+      const items = data.items;
       setOptions(
         items.map((r) => {
           const rid = String((r && r.recording_id) || '');
@@ -58,6 +65,7 @@ export function useTourRecordingOptions({ enabled, limit = 50, currentPlaybackSp
           };
         })
       );
+      setError('');
     } finally {
       setReady(true);
     }
@@ -66,14 +74,15 @@ export function useTourRecordingOptions({ enabled, limit = 50, currentPlaybackSp
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    refresh().catch(() => {
+    refresh().catch((e) => {
       if (cancelled) return;
       setOptions([]);
+      setError(String((e && e.message) || e || 'recordings_load_failed'));
     });
     return () => {
       cancelled = true;
     };
   }, [enabled, refresh]);
 
-  return { options, refresh, ready };
+  return { options, refresh, ready, error };
 }

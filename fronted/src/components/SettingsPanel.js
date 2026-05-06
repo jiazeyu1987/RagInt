@@ -46,7 +46,8 @@ const LEGACY_FALLBACK_STOPS = new Set([
 ]);
 
 function normalizeStopNameList(value) {
-  if (!Array.isArray(value)) return [];
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw new Error('settings_stop_list_invalid');
   return value.map((item) => String(item || '').trim()).filter(Boolean);
 }
 
@@ -80,7 +81,8 @@ function SettingsGroup({ title, children }) {
 }
 
 function normalizeStopPromptMap(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  if (value == null) return {};
+  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('settings_stop_prompt_overrides_invalid');
   const out = {};
   Object.keys(value).forEach((key) => {
     const stopName = String(key || '').trim();
@@ -90,6 +92,12 @@ function normalizeStopPromptMap(value) {
     out[stopName] = text;
   });
   return out;
+}
+
+function requireOptionalArray(value, errorCode) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw new Error(errorCode);
+  return value;
 }
 
 function TabBar({ activeTab, onTabChange }) {
@@ -1003,8 +1011,8 @@ function StopPromptTab({ controlBarProps }) {
     mergedStopsRaw.push(s);
   };
 
-  (Array.isArray(c.tourStopsOverride) ? c.tourStopsOverride : []).forEach(pushStop);
-  (Array.isArray(c.tourStops) ? c.tourStops : []).forEach(pushStop);
+  requireOptionalArray(c.tourStopsOverride, 'settings_tour_stops_override_invalid').forEach(pushStop);
+  requireOptionalArray(c.tourStops, 'settings_tour_stops_invalid').forEach(pushStop);
   Object.keys(draftPromptMap || {}).forEach(pushStop);
   const mergedStops = stripLegacyFallbackStops(mergedStopsRaw);
 

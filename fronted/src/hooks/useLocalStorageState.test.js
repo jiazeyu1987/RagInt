@@ -52,23 +52,64 @@ describe('useLocalStorageState', () => {
     hook.unmount();
   });
 
-  test('falls back to default when storage read throws', () => {
+  test('throws when storage read fails instead of returning default value', () => {
     const getItemSpy = jest.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
       throw new Error('read_failed');
     });
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const defaultFactory = jest.fn(() => 'safe');
 
-    const hook = renderHook(
-      (props) => useLocalStorageState(props.key, props.defaultValue, props.options),
-      {
+    expect(() =>
+      renderHook((props) => useLocalStorageState(props.key, props.defaultValue, props.options), {
         key: 'k1',
         defaultValue: defaultFactory,
-      }
-    );
+      })
+    ).toThrow('read_failed');
 
     expect(getItemSpy).toHaveBeenCalledWith('k1');
-    expect(defaultFactory).toHaveBeenCalledTimes(1);
-    expect(hook.result()[0]).toBe('safe');
+    expect(defaultFactory).not.toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
+  });
+
+  test('throws when stored value cannot be deserialized instead of returning default value', () => {
+    localStorage.setItem('prefs', '{bad json');
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const defaultFactory = jest.fn(() => ({ name: 'safe' }));
+
+    expect(() =>
+      renderHook((props) => useLocalStorageState(props.key, props.defaultValue, props.options), {
+        key: 'prefs',
+        defaultValue: defaultFactory,
+        options: {
+          deserialize: (raw) => JSON.parse(raw),
+          serialize: (v) => JSON.stringify(v),
+        },
+      })
+    ).toThrow();
+
+    expect(defaultFactory).not.toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
+  });
+
+  test('throws when storage write fails instead of silently keeping in-memory success', () => {
+    localStorage.setItem('prefs', 'initial');
+    const hook = renderHook((props) => useLocalStorageState(props.key, props.defaultValue, props.options), {
+      key: 'prefs',
+      defaultValue: 'safe',
+    });
+    const setItemError = new Error('write_failed');
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw setItemError;
+    });
+
+    expect(() => {
+      act(() => {
+        hook.result()[1]('next');
+      });
+    }).toThrow(setItemError);
+
+    consoleErrorSpy.mockRestore();
     hook.unmount();
   });
 });

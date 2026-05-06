@@ -133,12 +133,12 @@ def test_find_match_records_debug_reason_on_miss(tmp_path):
     )
     dbg = matcher.get_last_debug()
     assert hit is None
-    assert str(dbg.get("reason") or "").startswith("classifier_no_match")
+    assert str(dbg.get("reason") or "") == "no_candidates_any_bucket"
     assert bool(dbg.get("no_candidates_in_any_bucket")) is True
     assert str(dbg.get("candidate_source") or "") == "no_candidates_any_bucket"
 
 
-def test_entity_conflict_blocks_near_match_without_classifier(tmp_path):
+def test_entity_conflict_near_match_requires_classifier_dependency(tmp_path):
     root_dir = tmp_path / "qa_audio_root4"
     db_path = tmp_path / "qa_audio4.db"
     store = QaAudioCacheStore(root_dir=root_dir, db_path=db_path)
@@ -160,24 +160,22 @@ def test_entity_conflict_blocks_near_match_without_classifier(tmp_path):
     )
     assert pid is not None
 
-    hit = matcher.find_match(
-        question=q_input,
-        tts_profile=TtsProfile(provider="flash", voice="", speed=1.0),
-        top_k=10,
-        threshold=0.9,
-        classifier_chat_name="__missing__",
-        base_url="",
-    )
-    dbg = matcher.get_last_debug()
-    assert hit is None
-    assert bool(dbg.get("entity_conflict")) is True
-    q_terms = set(dbg.get("entity_query_terms") or [])
-    c_terms = set(dbg.get("entity_candidate_terms") or [])
-    assert "\u5bfc\u4e1d" in q_terms
-    assert "\u5bfc\u7ba1" in c_terms
+    try:
+        matcher.find_match(
+            question=q_input,
+            tts_profile=TtsProfile(provider="flash", voice="", speed=1.0),
+            top_k=10,
+            threshold=0.9,
+            classifier_chat_name="__missing__",
+            base_url="",
+        )
+    except RuntimeError as exc:
+        assert "qa_audio_classifier_session_missing" in str(exc)
+    else:
+        raise AssertionError("classifier dependency failure was treated as a cache miss")
 
 
-def test_find_match_falls_back_to_all_buckets_and_runs_classifier(tmp_path):
+def test_find_match_uses_cross_bucket_recall_and_runs_classifier(tmp_path):
     root_dir = tmp_path / "qa_audio_root5"
     db_path = tmp_path / "qa_audio5.db"
     store = QaAudioCacheStore(root_dir=root_dir, db_path=db_path)
@@ -193,7 +191,7 @@ def test_find_match_falls_back_to_all_buckets_and_runs_classifier(tmp_path):
         tts_provider="flash",
         tts_voice="",
         tts_speed=1.25,
-        source_request_id="ask_fallback",
+        source_request_id="ask_cross_bucket",
         embedding=matcher._embed_question("alpha feature details"),
     )
     assert pair_id is not None
@@ -211,9 +209,48 @@ def test_find_match_falls_back_to_all_buckets_and_runs_classifier(tmp_path):
     assert hit is None
     assert ragflow.stats.get("get_session") == 1
     assert ragflow.stats.get("ask") == 1
-    assert str(dbg.get("candidate_source") or "") == "all_tts_buckets_fallback"
-    assert bool(dbg.get("candidate_fallback_used")) is True
+    assert str(dbg.get("candidate_source") or "") == "cross_tts_bucket_recall"
+    assert bool(dbg.get("cross_bucket_recall_used")) is True
     assert int(dbg.get("candidate_count_in_tts_bucket") or 0) == 0
     assert int(dbg.get("candidate_count_any_bucket") or 0) >= 1
+    assert bool(dbg.get("classifier_called")) is True
+    assert str(dbg.get("reason") or "").startswith("classifier_no_match")
+
+
+def test_classifier_no_match_is_not_overridden_by_similarity(tmp_path):
+    root_dir = tmp_path / "qa_audio_root6"
+    db_path = tmp_path / "qa_audio6.db"
+    store = QaAudioCacheStore(root_dir=root_dir, db_path=db_path)
+    ragflow = _CountedClassifierRagflow()
+    matcher = QaAudioMatcher(store=store, ragflow_service=ragflow, tts_service=_NoopTts())
+    matcher._decision_manager.heuristic_lexical_threshold = 2.0
+    matcher._decision_manager.heuristic_recall_threshold = 2.0
+
+    pcm = b"\x00\x00" * 8000
+    wav = wrap_pcm16le_as_wav(pcm, sample_rate=16000, channels=1, bits_per_sample=16)
+    pair_id = store.upsert_pair_with_audio(
+        question_text="company introduction",
+        answer_text="cached answer",
+        audio_bytes=wav,
+        tts_provider="flash",
+        tts_voice="",
+        tts_speed=1.0,
+        source_request_id="ask_classifier_no_match",
+        embedding=matcher._embed_question("company introduction"),
+    )
+    assert pair_id is not None
+
+    hit = matcher.find_match(
+        question="company introductions",
+        tts_profile=TtsProfile(provider="flash", voice="", speed=1.0),
+        top_k=10,
+        threshold=0.85,
+        classifier_chat_name="问题比对",
+        base_url="",
+    )
+
+    dbg = matcher.get_last_debug()
+    assert hit is None
+    assert ragflow.stats.get("ask") == 1
     assert bool(dbg.get("classifier_called")) is True
     assert str(dbg.get("reason") or "").startswith("classifier_no_match")

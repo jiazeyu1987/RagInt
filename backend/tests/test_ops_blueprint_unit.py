@@ -44,6 +44,7 @@ class _OpsStore:
         self.tokens: dict[str, str] = {}
         self.audit_events: list[_Audit] = []
         self.cfg_ver: int = 0
+        self.fail_audit = False
 
     def list_devices(self, limit=100):
         return list(self.devices.values())[:limit]
@@ -77,6 +78,8 @@ class _OpsStore:
         return self.tokens.get(device_id) == token
 
     def audit(self, **kwargs):
+        if self.fail_audit:
+            raise RuntimeError("audit_failed")
         self.audit_events.append(
             _Audit(
                 id=len(self.audit_events) + 1,
@@ -159,6 +162,13 @@ def _app():
     return app
 
 
+def _app_with_deps():
+    deps = _Deps()
+    app = Flask(__name__)
+    app.register_blueprint(create_blueprint(deps))
+    return app, deps
+
+
 def test_ops_blueprint_console_and_device_flow():
     os.environ.pop("RAGINT_OPS_TOKEN", None)
     os.environ.pop("RAGINT_OPS_ADMIN_TOKEN", None)
@@ -230,3 +240,65 @@ def test_ops_blueprint_qa_audio_pairs_cleanup_invalid_audio_route():
     assert int(body["scanned"]) >= 0
     assert int(body["invalid"]) >= 0
     assert int(body["deleted"]) >= 0
+
+
+def test_ops_rejects_malformed_json_body():
+    os.environ.pop("RAGINT_OPS_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_ADMIN_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_VIEW_TOKEN", None)
+    os.environ["RAGINT_OPS_OPEN_ACCESS"] = "1"
+
+    c = _app().test_client()
+    r = c.post("/api/ops/heartbeat", data="{bad", content_type="application/json")
+    assert r.status_code == 400
+    assert r.get_json()["error"] == "invalid_json"
+
+
+def test_ops_rejects_non_object_json_body():
+    os.environ.pop("RAGINT_OPS_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_ADMIN_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_VIEW_TOKEN", None)
+    os.environ["RAGINT_OPS_OPEN_ACCESS"] = "1"
+
+    c = _app().test_client()
+    r = c.post("/api/ops/heartbeat", data="[]", content_type="application/json")
+    assert r.status_code == 400
+    assert r.get_json()["error"] == "json_body_must_be_object"
+
+
+def test_ops_rejects_explicit_non_object_meta():
+    os.environ.pop("RAGINT_OPS_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_ADMIN_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_VIEW_TOKEN", None)
+    os.environ["RAGINT_OPS_OPEN_ACCESS"] = "1"
+
+    c = _app().test_client()
+    r = c.post("/api/ops/heartbeat", json={"device_id": "d1", "meta": []})
+    assert r.status_code == 400
+    assert r.get_json()["error"] == "invalid_input"
+
+
+def test_ops_rejects_invalid_qa_audio_pairs_speed_query():
+    os.environ.pop("RAGINT_OPS_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_ADMIN_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_VIEW_TOKEN", None)
+    os.environ["RAGINT_OPS_OPEN_ACCESS"] = "1"
+
+    c = _app().test_client()
+    r = c.get("/api/ops/qa_audio_pairs?speed=fast")
+    assert r.status_code == 400
+    assert r.get_json()["error"] == "invalid_query_parameter"
+    assert r.get_json()["field"] == "speed"
+
+
+def test_ops_heartbeat_fails_when_audit_fails():
+    os.environ.pop("RAGINT_OPS_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_ADMIN_TOKEN", None)
+    os.environ.pop("RAGINT_OPS_VIEW_TOKEN", None)
+    os.environ["RAGINT_OPS_OPEN_ACCESS"] = "1"
+
+    app, deps = _app_with_deps()
+    deps.ops_store.fail_audit = True
+    r = app.test_client().post("/api/ops/heartbeat", json={"device_id": "d1"})
+    assert r.status_code == 500
+    assert r.get_json()["error"] == "audit_failed"

@@ -222,4 +222,55 @@ describe('RecordingWorkflowManager', () => {
       '2乘以2等于4，就像你有两个小球，再复制一份，总共就有4个小球了'
     );
   });
+  test('start exposes recorder startup failures instead of returning false', async () => {
+    VoiceKitWsRecorderManager.mockImplementation(() => ({
+      start: jest.fn().mockRejectedValue(new Error('mic_permission_denied')),
+      stop: jest.fn(),
+      cancel: jest.fn(),
+      isRecording: false,
+    }));
+
+    const workflow = new RecordingWorkflowManager();
+    workflow.setDeps({
+      baseUrl: 'http://localhost:9380',
+      clientId: 'client-1',
+      setIsLoading: jest.fn(),
+      onRecognizingChange: jest.fn(),
+      onAsrStageChange: jest.fn(),
+    });
+
+    await expect(workflow.start()).rejects.toThrow('mic_permission_denied');
+  });
+
+  test('start exposes status write failures instead of pretending capture started', async () => {
+    const setIsLoading = jest.fn(() => {
+      throw new Error('loading_state_write_failed');
+    });
+    VoiceKitWsRecorderManager.mockImplementation(() => ({
+      start: jest.fn().mockResolvedValue(true),
+      stop: jest.fn(),
+      cancel: jest.fn(),
+      isRecording: false,
+    }));
+
+    const workflow = new RecordingWorkflowManager();
+    workflow.setDeps({
+      baseUrl: 'http://localhost:9380',
+      clientId: 'client-1',
+      setIsLoading,
+      onRecognizingChange: jest.fn(),
+      onAsrStageChange: jest.fn(),
+    });
+
+    await expect(workflow.start()).rejects.toThrow('loading_state_write_failed');
+  });
+
+  test('stop exposes recorder stop failures instead of reporting a completed stop', () => {
+    const workflow = createWorkflow(0);
+    workflow._recorder.stop.mockImplementation(() => {
+      throw new Error('recorder_stop_failed');
+    });
+
+    expect(() => workflow.stop()).toThrow('recorder_stop_failed');
+  });
 });

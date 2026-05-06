@@ -45,8 +45,9 @@ def apply_env_overrides(cfg: dict) -> dict:
         val: Any = raw
         try:
             val = cast(raw)
-        except Exception:
-            val = raw
+        except (TypeError, ValueError) as exc:
+            path_text = ".".join(path)
+            raise ValueError(f"Invalid environment override {env_key} for {path_text}: {raw!r}") from exc
         _set_nested(out, path, val)
         overrides.append({"env": env_key, "path": ".".join(path)})
 

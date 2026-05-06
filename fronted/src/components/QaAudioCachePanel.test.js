@@ -104,4 +104,25 @@ describe('QaAudioCachePanel', () => {
     confirmSpy.mockRestore();
     view.unmount();
   });
+
+  test('shows backend failure instead of treating it as an empty list', async () => {
+    fetchJson.mockResolvedValue({ ok: false, error: 'qa_audio_cache_store_missing' });
+
+    const view = render(<QaAudioCachePanel />);
+    await flush();
+
+    expect(view.container.textContent).toContain('qa_audio_cache_store_missing');
+    expect(view.container.textContent).not.toContain('q1');
+    view.unmount();
+  });
+
+  test('shows invalid response error instead of treating it as an empty list', async () => {
+    fetchJson.mockResolvedValue({ items: {} });
+
+    const view = render(<QaAudioCachePanel />);
+    await flush();
+
+    expect(view.container.textContent).toContain('qa_audio_cache_invalid_response');
+    view.unmount();
+  });
 });

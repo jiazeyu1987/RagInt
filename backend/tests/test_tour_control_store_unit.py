@@ -32,8 +32,12 @@ def test_add_command_invalid_inputs_and_consume_invalid_id(work_dir: Path):
     assert store.add_command(client_id="", action="pause") == 0
     assert store.add_command(client_id="cid_1", action="") == 0
     assert store.consume(client_id="", command_id=1) is False
-    assert store.consume(client_id="cid_1", command_id=0) is False
-    assert store.consume(client_id="cid_1", command_id=-1) is False
+    with pytest.raises(ValueError, match="invalid_command_id"):
+        store.consume(client_id="cid_1", command_id=0)
+    with pytest.raises(ValueError, match="invalid_command_id"):
+        store.consume(client_id="cid_1", command_id=-1)
+    with pytest.raises(ValueError, match="invalid_command_id"):
+        store.consume(client_id="cid_1", command_id="bad")
 
 
 def test_speed_command_clamps_and_state_updates(work_dir: Path):
@@ -52,14 +56,11 @@ def test_speed_command_clamps_and_state_updates(work_dir: Path):
     assert st2 is not None
     assert abs(float(st2.speed) - 0.5) < 1e-9
 
-    id3 = store.add_command(client_id=cid, action="speed", payload={"speed": "bad"})
-    assert id3 > 0
-    st3 = store.get_state(client_id=cid)
-    assert st3 is not None
-    assert abs(float(st3.speed) - 1.0) < 1e-9
+    with pytest.raises(ValueError, match="invalid_speed"):
+        store.add_command(client_id=cid, action="speed", payload={"speed": "bad"})
 
 
-def test_list_commands_since_limit_and_payload_fallback(work_dir: Path):
+def test_list_commands_since_limit_and_payload_validation(work_dir: Path):
     store = _store(work_dir)
     cid = "cid_list"
 
@@ -88,10 +89,50 @@ def test_list_commands_since_limit_and_payload_fallback(work_dir: Path):
     finally:
         conn.close()
 
-    out3 = store.list_commands(client_id=cid, since_id=0, limit=200)
-    malformed = [c for c in out3 if c.action == "jump" and c.created_at_ms == 99999]
-    assert len(malformed) == 1
-    assert malformed[0].payload == {}
+    with pytest.raises(ValueError, match="invalid tour_control_commands.payload_json"):
+        store.list_commands(client_id=cid, since_id=0, limit=200)
+
+
+def test_list_commands_fails_fast_on_unexpected_payload_shape(work_dir: Path):
+    store = _store(work_dir)
+    cid = "cid_payload_shape"
+
+    conn = store._connect()  # noqa: SLF001 - unit test seeds unexpected persisted JSON shape.
+    try:
+        conn.execute(
+            """
+            INSERT INTO tour_control_commands (client_id, action, payload_json, created_at_ms, consumed_at_ms)
+            VALUES (?, ?, ?, ?, NULL)
+            """,
+            (cid, "jump", "[]", 99999),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    with pytest.raises(ValueError, match="invalid tour_control_commands.payload_json"):
+        store.list_commands(client_id=cid, since_id=0, limit=200)
+
+
+def test_list_commands_fails_fast_on_invalid_created_timestamp(work_dir: Path):
+    store = _store(work_dir)
+    cid = "cid_bad_created_at"
+
+    conn = store._connect()  # noqa: SLF001 - unit test seeds corrupt persisted timestamp.
+    try:
+        conn.execute(
+            """
+            INSERT INTO tour_control_commands (client_id, action, payload_json, created_at_ms, consumed_at_ms)
+            VALUES (?, ?, ?, ?, NULL)
+            """,
+            (cid, "jump", "{}", "bad-ts"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    with pytest.raises(ValueError, match="invalid tour_control_commands.created_at_ms"):
+        store.list_commands(client_id=cid, since_id=0, limit=50)
 
 
 def test_consume_idempotent_and_client_isolated(work_dir: Path):
@@ -133,6 +174,35 @@ def test_list_commands_limit_clamped_and_since_id_normalized(work_dir: Path):
 
     out3 = store.list_commands(client_id=cid, since_id=ids[-6], limit=100)
     assert [x.id for x in out3] == ids[-5:]
+
+
+def test_list_commands_rejects_invalid_since_id_and_limit(work_dir: Path):
+    store = _store(work_dir)
+
+    with pytest.raises(ValueError, match="invalid_since_id"):
+        store.list_commands(client_id="cid_args", since_id="bad", limit=50)
+
+    with pytest.raises(ValueError, match="invalid_limit"):
+        store.list_commands(client_id="cid_args", since_id=0, limit="bad")
+
+
+def test_get_state_fails_fast_on_corrupt_state_values(work_dir: Path):
+    store = _store(work_dir)
+    cid = "cid_bad_state"
+    assert store.add_command(client_id=cid, action="pause") > 0
+
+    conn = store._connect()  # noqa: SLF001 - unit test seeds corrupt persisted state.
+    try:
+        conn.execute(
+            "UPDATE tour_control_state SET paused=?, speed=?, updated_at_ms=? WHERE client_id=?",
+            ("bad-paused", "bad-speed", "bad-ts", cid),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    with pytest.raises(ValueError, match="invalid tour_control_state.paused"):
+        store.get_state(client_id=cid)
 
 
 def test_effective_status_unknown_falls_back_to_waiting(work_dir: Path):

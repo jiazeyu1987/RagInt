@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import json
+import zipfile
+from io import BytesIO
 from types import SimpleNamespace
 
+import pytest
+
 from backend.api.system_utils import (
+    build_diagnostics_zip,
     build_recent_asr_timeline_report,
     derive_status_metrics,
     find_ask_context,
+    load_openapi_or_default,
     parse_event_query,
     redact_secrets,
 )
@@ -20,13 +27,60 @@ def test_redact_secrets_nested_fields():
     assert got["list"][0]["password"] == "***REDACTED***"
 
 
-def test_parse_event_query_defaults_and_invalid_values():
-    req = SimpleNamespace(args={"limit": "x", "since_ms": "bad"}, headers={})
+def test_parse_event_query_defaults_when_values_are_absent():
+    req = SimpleNamespace(args={}, headers={})
     q = parse_event_query(req)
     assert q.request_id == ""
     assert q.limit == 200
     assert q.since_ms is None
     assert q.fmt == "json"
+
+
+def test_parse_event_query_rejects_invalid_explicit_values():
+    with pytest.raises(ValueError, match="invalid_limit"):
+        parse_event_query(SimpleNamespace(args={"limit": "x"}, headers={}))
+    with pytest.raises(ValueError, match="invalid_since_ms"):
+        parse_event_query(SimpleNamespace(args={"since_ms": "bad"}, headers={}))
+
+
+def test_load_openapi_fails_fast_when_file_is_missing(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        load_openapi_or_default(base_dir=tmp_path)
+
+
+def test_load_openapi_fails_fast_when_json_is_invalid(tmp_path):
+    (tmp_path / "openapi.json").write_text("{not-json", encoding="utf-8")
+
+    with pytest.raises(json.JSONDecodeError):
+        load_openapi_or_default(base_dir=tmp_path)
+
+
+class _FailingDiagnosticsEvents:
+    def list_recent(self, *, limit: int):  # noqa: ARG002
+        raise RuntimeError("events_store_down")
+
+
+def test_diagnostics_zip_records_best_effort_entry_failures(tmp_path):
+    def cfg_loader(*, deps):  # noqa: ARG001
+        raise RuntimeError("config_unavailable")
+
+    deps = SimpleNamespace(base_dir=str(tmp_path), event_store=_FailingDiagnosticsEvents())
+
+    payload = build_diagnostics_zip(deps=deps, cfg_loader=cfg_loader)
+
+    with zipfile.ZipFile(BytesIO(payload)) as z:
+        names = set(z.namelist())
+        assert "version.json" in names
+        assert "config.json" not in names
+        assert "events_recent.json" not in names
+        errors = json.loads(z.read("diagnostics_errors.json").decode("utf-8"))
+
+    assert errors == {
+        "items": [
+            {"entry": "config.json", "error": "config_unavailable", "type": "RuntimeError"},
+            {"entry": "events_recent.json", "error": "events_store_down", "type": "RuntimeError"},
+        ]
+    }
 
 
 def test_derive_status_metrics_filters_none_and_computes_ms():

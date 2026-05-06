@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from backend.api.tts_recording import StreamingTtsRecorder
 
 
@@ -25,6 +27,24 @@ class _Store:
 
     def add_tts_audio(self, **kwargs):
         self.calls.append(dict(kwargs))
+
+
+class _FailingAudioDirStore(_Store):
+    def audio_dir(self, recording_id: str):
+        raise OSError("audio_dir_failed")
+
+
+class _FailingAddStore(_Store):
+    def add_tts_audio(self, **kwargs):
+        raise OSError("add_tts_audio_failed")
+
+
+class _WriteFailFile:
+    def write(self, chunk: bytes):
+        raise OSError("write_failed")
+
+    def close(self):
+        return None
 
 
 def test_streaming_tts_recorder_finalize_writes_and_records(tmp_path):
@@ -77,3 +97,51 @@ def test_streaming_tts_recorder_cleanup_deletes_partial(tmp_path):
     rec.cleanup()
     assert not partial.exists()
     assert store.calls == []
+
+
+def test_streaming_tts_recorder_open_failure_raises_when_recording_required(tmp_path):
+    rec = StreamingTtsRecorder(
+        recording_store=_FailingAudioDirStore(tmp_path),
+        logger=_Logger(),
+        recording_id="r3",
+        stop_index=0,
+        request_id="req3",
+        segment_index=0,
+        text="x",
+    )
+
+    with pytest.raises(RuntimeError, match="tts_recording_open_failed"):
+        rec.open()
+
+
+def test_streaming_tts_recorder_write_failure_raises_when_recording_required(tmp_path):
+    rec = StreamingTtsRecorder(
+        recording_store=_Store(tmp_path),
+        logger=_Logger(),
+        recording_id="r4",
+        stop_index=0,
+        request_id="req4",
+        segment_index=0,
+        text="x",
+    )
+    rec._audio_file = _WriteFailFile()
+
+    with pytest.raises(RuntimeError, match="tts_recording_write_failed"):
+        rec.write(b"abc")
+
+
+def test_streaming_tts_recorder_finalize_failure_raises_when_recording_required(tmp_path):
+    rec = StreamingTtsRecorder(
+        recording_store=_FailingAddStore(tmp_path),
+        logger=_Logger(),
+        recording_id="r5",
+        stop_index=0,
+        request_id="req5",
+        segment_index=0,
+        text="x",
+    )
+
+    rec.open()
+    rec.write(b"abc")
+    with pytest.raises(RuntimeError, match="tts_recording_finalize_failed"):
+        rec.finalize()

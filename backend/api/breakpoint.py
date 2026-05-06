@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 
 from backend.api.request_context import get_client_id
+from backend.services.breakpoint_store import BreakpointStoreError
 
 
 def create_blueprint(deps):
@@ -12,7 +13,11 @@ def create_blueprint(deps):
     def get_breakpoint():
         client_id = get_client_id(request, default="-")
         kind = str((request.args.get("kind") or "tour")).strip() or "tour"
-        rec = deps.breakpoint_store.get(kind=kind, client_id=client_id)
+        try:
+            rec = deps.breakpoint_store.get(kind=kind, client_id=client_id)
+        except BreakpointStoreError:
+            current_app.logger.exception("Failed to read breakpoint state")
+            return jsonify({"ok": False, "error": "breakpoint_read_failed"}), 500
         if not rec:
             return jsonify({"ok": True, "kind": kind, "client_id": client_id, "state": None})
         return jsonify(
@@ -35,7 +40,11 @@ def create_blueprint(deps):
         if not isinstance(state, dict):
             return jsonify({"ok": False, "error": "state_dict_required"}), 400
 
-        rec = deps.breakpoint_store.upsert(kind=kind, client_id=client_id, state=state)
+        try:
+            rec = deps.breakpoint_store.upsert(kind=kind, client_id=client_id, state=state)
+        except BreakpointStoreError:
+            current_app.logger.exception("Failed to save breakpoint state")
+            return jsonify({"ok": False, "error": "breakpoint_save_failed"}), 500
         if not rec:
             return jsonify({"ok": False, "error": "save_failed"}), 500
         return jsonify({"ok": True, "kind": rec.kind, "client_id": rec.client_id, "state": rec.state, "updated_at_ms": rec.updated_at_ms})
@@ -44,8 +53,11 @@ def create_blueprint(deps):
     def clear_breakpoint():
         client_id = get_client_id(request, default="-")
         kind = str((request.args.get("kind") or "tour")).strip() or "tour"
-        deleted = bool(deps.breakpoint_store.clear(kind=kind, client_id=client_id))
+        try:
+            deleted = bool(deps.breakpoint_store.clear(kind=kind, client_id=client_id))
+        except BreakpointStoreError:
+            current_app.logger.exception("Failed to delete breakpoint state")
+            return jsonify({"ok": False, "error": "breakpoint_delete_failed"}), 500
         return jsonify({"ok": True, "kind": kind, "client_id": client_id, "deleted": deleted})
 
     return bp
-

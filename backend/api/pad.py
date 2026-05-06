@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from werkzeug.exceptions import BadRequest, UnsupportedMediaType
+
 from flask import Blueprint, Response, jsonify, request, send_file
 
 from backend.api.ragflow_config_cache import get_ragflow_config
@@ -18,6 +20,19 @@ def _bool_from_value(value, default: bool = True) -> bool:
     if text in {"0", "false", "no", "off"}:
         return False
     return bool(default)
+
+
+def _json_body():
+    raw = request.get_data(cache=True)
+    if not raw:
+        return {}, None
+    try:
+        data = request.get_json(silent=False)
+    except (BadRequest, UnsupportedMediaType):
+        return None, (jsonify({"ok": False, "error": "bad_json"}), 400)
+    if not isinstance(data, dict):
+        return None, (jsonify({"ok": False, "error": "json_object_required"}), 400)
+    return data, None
 
 
 def _require_binding(deps):
@@ -375,14 +390,24 @@ def _require_station_in_binding(*, deps, binding: dict, station_key: str):
     hall_id = str(binding.get("hall_id") or "").strip()
     try:
         requested = str(station_key or "").strip()
-        slot_map = {
+        slot_station_map = {
             "display_slot_1": str(binding.get("slot_1_station_id") or ""),
             "display_slot_2": str(binding.get("slot_2_station_id") or ""),
-            "station_a": str(binding.get("slot_1_station_id") or "station_a"),
-            "station_b": str(binding.get("slot_2_station_id") or "station_b"),
         }
-        station_id = slot_map.get(requested, requested)
+        bound_station_ids = {
+            str(binding.get("slot_1_station_id") or "").strip(),
+            str(binding.get("slot_2_station_id") or "").strip(),
+        }
+        bound_station_ids.discard("")
+        if requested in slot_station_map:
+            station_id = slot_station_map[requested]
+        elif requested in bound_station_ids:
+            station_id = requested
+        else:
+            return None, (jsonify({"ok": False, "error": "station_not_found"}), 404)
         station = deps.pad_product_store.get_station_config(hall_id=hall_id, station_key=station_id)
+        if not station:
+            return None, (jsonify({"ok": False, "error": "station_config_not_found"}), 404)
         station["station_id"] = station_id
         station["slot_key"] = requested if requested in {"display_slot_1", "display_slot_2"} else ""
     except ValueError:
@@ -399,6 +424,15 @@ def _attach_station_narration_state(*, deps, station: dict, hall_id: str, statio
     item["narration_nodes"] = narration_state["narration_nodes"]
     item["narration_nodes_error"] = narration_state["narration_nodes_error"]
     return item
+
+
+def _display_station_configs(deps, *, client_id: str):
+    try:
+        return deps.pad_product_store.list_display_station_configs(client_id=client_id), None
+    except ValueError as exc:
+        if str(exc) == "station_config_not_found":
+            return None, (jsonify({"ok": False, "error": "station_config_not_found"}), 404)
+        raise
 
 
 def create_blueprint(deps):
@@ -439,7 +473,10 @@ def create_blueprint(deps):
         hall = _hall_summary_payload(deps=deps, binding=binding)
         hall_id = str(binding.get("hall_id") or "").strip()
         items = []
-        for station in deps.pad_product_store.list_display_station_configs(client_id=ctx["client_id"]):
+        stations, station_err = _display_station_configs(deps, client_id=ctx["client_id"])
+        if station_err is not None:
+            return station_err
+        for station in stations:
             station_id = str(station.get("station_id") or station.get("station_key") or "")
             hotspots = deps.pad_product_store.list_station_hotspots(hall_id=hall_id, station_key=station_id)
             _attach_station_narration_state(deps=deps, station=station, hall_id=hall_id, station_id=station_id)
@@ -462,7 +499,9 @@ def create_blueprint(deps):
         if err is not None:
             return err
         binding = ctx["binding"]
-        data = request.get_json(silent=True) or {}
+        data, json_err = _json_body()
+        if json_err is not None:
+            return json_err
         slot_station_ids = data.get("slot_station_ids") if isinstance(data.get("slot_station_ids"), list) else []
         slot_1_station_id = (
             slot_station_ids[0]
@@ -558,7 +597,9 @@ def create_blueprint(deps):
         binding = ctx["binding"]
         hall_id = str(binding.get("hall_id") or "")
         hall = _hall_summary_payload(deps=deps, binding=binding)
-        stations = deps.pad_product_store.list_display_station_configs(client_id=ctx["client_id"])
+        stations, station_err = _display_station_configs(deps, client_id=ctx["client_id"])
+        if station_err is not None:
+            return station_err
         items = [
             _station_response_payload(
                 station=station,
@@ -613,7 +654,9 @@ def create_blueprint(deps):
         scene, scene_err = _require_scene_in_binding(deps=deps, binding=ctx["binding"], scene_id=scene_id)
         if scene_err is not None:
             return scene_err
-        data = request.get_json(silent=True) or {}
+        data, json_err = _json_body()
+        if json_err is not None:
+            return json_err
         name = str(data.get("name") or "").strip()
         if not name:
             return jsonify({"ok": False, "error": "scene_name_required"}), 400
@@ -664,7 +707,7 @@ def create_blueprint(deps):
             )
         except FileNotFoundError:
             return jsonify({"ok": False, "error": "image_missing"}), 404
-        except Exception:
+        except ValueError:
             return jsonify({"ok": False, "error": "bad_image_path"}), 400
 
     @bp.route("/api/pad/halls/current/scenes/<scene_id>/background", methods=["POST"])
@@ -705,7 +748,9 @@ def create_blueprint(deps):
         _scene, scene_err = _require_scene_in_binding(deps=deps, binding=ctx["binding"], scene_id=scene_id)
         if scene_err is not None:
             return scene_err
-        data = request.get_json(silent=True) or {}
+        data, json_err = _json_body()
+        if json_err is not None:
+            return json_err
         try:
             hotspot = deps.pad_product_store.create_scene_hotspot(
                 scene_id=scene_id,
@@ -729,7 +774,9 @@ def create_blueprint(deps):
         _scene, scene_err = _require_scene_in_binding(deps=deps, binding=ctx["binding"], scene_id=scene_id)
         if scene_err is not None:
             return scene_err
-        data = request.get_json(silent=True) or {}
+        data, json_err = _json_body()
+        if json_err is not None:
+            return json_err
         try:
             hotspot = deps.pad_product_store.update_scene_hotspot(
                 scene_id=scene_id,
@@ -768,7 +815,9 @@ def create_blueprint(deps):
         station, station_err = _require_station_in_binding(deps=deps, binding=binding, station_key=station_key)
         if station_err is not None:
             return station_err
-        data = request.get_json(silent=True) or {}
+        data, json_err = _json_body()
+        if json_err is not None:
+            return json_err
         try:
             updated = deps.pad_product_store.upsert_station_config(
                 hall_id=str(binding.get("hall_id") or ""),
@@ -814,7 +863,7 @@ def create_blueprint(deps):
             )
         except FileNotFoundError:
             return jsonify({"ok": False, "error": "image_missing"}), 404
-        except Exception:
+        except ValueError:
             return jsonify({"ok": False, "error": "bad_image_path"}), 400
 
     @bp.route("/api/pad/halls/current/stations/<station_key>/background", methods=["POST"])
@@ -880,7 +929,7 @@ def create_blueprint(deps):
             )
         except FileNotFoundError:
             return jsonify({"ok": False, "error": "image_missing"}), 404
-        except Exception:
+        except ValueError:
             return jsonify({"ok": False, "error": "bad_image_path"}), 400
 
     @bp.route("/api/pad/halls/current/stations/<station_key>/wireframe", methods=["POST"])
@@ -935,7 +984,9 @@ def create_blueprint(deps):
         station, station_err = _require_station_in_binding(deps=deps, binding=binding, station_key=station_key)
         if station_err is not None:
             return station_err
-        data = request.get_json(silent=True) or {}
+        data, json_err = _json_body()
+        if json_err is not None:
+            return json_err
         try:
             hotspot = deps.pad_product_store.create_station_hotspot(
                 hall_id=str(binding.get("hall_id") or ""),
@@ -987,7 +1038,9 @@ def create_blueprint(deps):
         station, station_err = _require_station_in_binding(deps=deps, binding=binding, station_key=station_key)
         if station_err is not None:
             return station_err
-        data = request.get_json(silent=True) or {}
+        data, json_err = _json_body()
+        if json_err is not None:
+            return json_err
         try:
             hotspot = deps.pad_product_store.update_station_hotspot(
                 hall_id=str(binding.get("hall_id") or ""),
@@ -1032,7 +1085,9 @@ def create_blueprint(deps):
         station, station_err = _require_station_in_binding(deps=deps, binding=binding, station_key=station_key)
         if station_err is not None:
             return station_err
-        data = request.get_json(silent=True) or {}
+        data, json_err = _json_body()
+        if json_err is not None:
+            return json_err
         hotspots = data.get("hotspots")
         if not isinstance(hotspots, list):
             return jsonify({"ok": False, "error": "hotspots_must_be_list"}), 400
@@ -1064,7 +1119,9 @@ def create_blueprint(deps):
         station, station_err = _require_station_in_binding(deps=deps, binding=binding, station_key=station_key)
         if station_err is not None:
             return station_err
-        data = request.get_json(silent=True) or {}
+        data, json_err = _json_body()
+        if json_err is not None:
+            return json_err
         if "timeline_events" in data or "events" in data:
             return jsonify({"ok": False, "error": "timeline_events_not_supported"}), 400
         narration_nodes = data.get("narration_nodes")
@@ -1099,7 +1156,7 @@ def create_blueprint(deps):
             return _send_audio_file(deps=deps, asset=asset)
         except FileNotFoundError:
             return jsonify({"ok": False, "error": "audio_missing"}), 404
-        except Exception:
+        except ValueError:
             return jsonify({"ok": False, "error": "bad_audio_path"}), 400
 
     @bp.route("/api/pad/products/<product_id>", methods=["PUT"])
@@ -1107,7 +1164,9 @@ def create_blueprint(deps):
         product = deps.pad_product_store.get_product(product_id)
         if not product:
             return jsonify({"ok": False, "error": "product_not_found"}), 404
-        data = request.get_json(silent=True) or {}
+        data, json_err = _json_body()
+        if json_err is not None:
+            return json_err
         if "product_name" not in data and "intro_text" not in data:
             return jsonify({"ok": False, "error": "product_update_fields_required"}), 400
         try:
@@ -1188,7 +1247,9 @@ def create_blueprint(deps):
         if not product:
             return jsonify({"ok": False, "error": "product_not_found"}), 404
 
-        data = request.get_json(silent=True) or {}
+        data, json_err = _json_body()
+        if json_err is not None:
+            return json_err
         if "text" in data:
             intro_text = str(data.get("text") or "").strip()
             if not intro_text:
@@ -1240,7 +1301,7 @@ def create_blueprint(deps):
             return _send_image_file(deps=deps, asset=asset)
         except FileNotFoundError:
             return jsonify({"ok": False, "error": "image_missing"}), 404
-        except Exception:
+        except ValueError:
             return jsonify({"ok": False, "error": "bad_image_path"}), 400
 
     @bp.route("/api/pad/offline/manifest", methods=["GET"])
@@ -1254,7 +1315,9 @@ def create_blueprint(deps):
         rows = deps.pad_product_store.list_hall_products(hall_id)
         referenced_rows = deps.pad_product_store.list_referenced_station_products(hall_id)
         scenes = deps.pad_product_store.list_hall_scenes_with_hotspots(hall_id)
-        stations = deps.pad_product_store.list_display_station_configs(client_id=ctx["client_id"])
+        stations, station_err = _display_station_configs(deps, client_id=ctx["client_id"])
+        if station_err is not None:
+            return station_err
         return jsonify(
             {
                 "ok": True,
@@ -1304,7 +1367,7 @@ def create_blueprint(deps):
             return _send_audio_file(deps=deps, asset=asset)
         except FileNotFoundError:
             return jsonify({"ok": False, "error": "audio_missing"}), 404
-        except Exception:
+        except ValueError:
             return jsonify({"ok": False, "error": "bad_audio_path"}), 400
 
     @bp.route("/api/pad/offline/images/<image_asset_id>", methods=["GET"])
@@ -1325,7 +1388,7 @@ def create_blueprint(deps):
             return _send_image_file(deps=deps, asset=asset)
         except FileNotFoundError:
             return jsonify({"ok": False, "error": "image_missing"}), 404
-        except Exception:
+        except ValueError:
             return jsonify({"ok": False, "error": "bad_image_path"}), 400
 
     @bp.route("/api/pad/offline/scenes/<scene_id>/background", methods=["GET"])
@@ -1346,7 +1409,7 @@ def create_blueprint(deps):
             )
         except FileNotFoundError:
             return jsonify({"ok": False, "error": "image_missing"}), 404
-        except Exception:
+        except ValueError:
             return jsonify({"ok": False, "error": "bad_image_path"}), 400
 
     @bp.route("/api/pad/offline/stations/<station_key>/background", methods=["GET"])
@@ -1369,7 +1432,7 @@ def create_blueprint(deps):
             )
         except FileNotFoundError:
             return jsonify({"ok": False, "error": "image_missing"}), 404
-        except Exception:
+        except ValueError:
             return jsonify({"ok": False, "error": "bad_image_path"}), 400
 
     @bp.route("/api/pad/offline/stations/<station_key>/wireframe", methods=["GET"])
@@ -1392,7 +1455,7 @@ def create_blueprint(deps):
             )
         except FileNotFoundError:
             return jsonify({"ok": False, "error": "image_missing"}), 404
-        except Exception:
+        except ValueError:
             return jsonify({"ok": False, "error": "bad_image_path"}), 400
 
     return bp

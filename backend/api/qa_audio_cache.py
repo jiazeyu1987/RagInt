@@ -4,12 +4,8 @@ from flask import Blueprint, jsonify, send_file
 
 
 def _detect_audio_mimetype(path: str) -> str:
-    head = b""
-    try:
-        with open(path, "rb") as f:
-            head = bytes(f.read(16) or b"")
-    except Exception:
-        head = b""
+    with open(path, "rb") as f:
+        head = bytes(f.read(16) or b"")
     if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WAVE":
         return "audio/wav"
     if head.startswith(b"OggS"):
@@ -28,10 +24,7 @@ def create_blueprint(deps):
 
     @bp.route("/api/qa_audio_cache/audio/<int:pair_id>", methods=["GET"])
     def get_qa_audio(pair_id: int):
-        try:
-            p = deps.qa_audio_cache_store.get_audio_file_path(pair_id=int(pair_id))
-        except Exception:
-            p = None
+        p = deps.qa_audio_cache_store.get_audio_file_path(pair_id=int(pair_id))
         if p is None:
             return jsonify({"error": "not_found"}), 404
         resp = send_file(str(p), mimetype=_detect_audio_mimetype(str(p)), conditional=True)

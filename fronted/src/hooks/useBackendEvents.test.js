@@ -56,6 +56,20 @@ describe('useBackendEvents', () => {
     hook.unmount();
   });
 
+  test('sets explicit error when events response schema is invalid', async () => {
+    fetchJson.mockResolvedValueOnce({ items: null });
+    const hook = renderHook(
+      ({ requestId, options }) => useBackendEvents(requestId, options),
+      { requestId: 'rid-bad-schema', options: { enabled: true } }
+    );
+
+    await hook.flush();
+
+    expect(hook.result().items).toBe(null);
+    expect(hook.result().error).toBe('events_items_invalid');
+    hook.unmount();
+  });
+
   test('enforces polling interval lower bound to 400ms', () => {
     const intervalSpy = jest.spyOn(global, 'setInterval');
     fetchJson.mockResolvedValue({ items: [] });

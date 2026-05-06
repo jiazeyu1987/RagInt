@@ -9,4 +9,4 @@
 | TD-005 | 旧文档存在编码问题 | `fronted/docs/interaction-flow.md` 当前可读性差 | 文档不可复用、误导读者 | Medium | 用新文档替代并清理旧文档编码 |
 | TD-006 | 配置来源分散 | env、JSON、SQLite、本地设置共同参与运行 | 难以判断单一事实来源 | High | 建立配置优先级和责任边界文档 |
 | TD-007 | 版本标识默认值弱 | `backend/version.py` 缺省返回 `0.0.0` | 交付物追踪弱 | Medium | 在 CI/发布中强制注入版本号 |
-| TD-008 | fallback 相关历史路径仍可见 | `backend/orchestrators/ragflow_streaming_fallback.py`、相关测试文件 | 与当前“默认无 fallback”政策存在张力 | Medium | 明确哪些 fallback 仍需保留，哪些应下线 |
+| TD-008 | fallback 相关历史路径仍可见 | 已清理 `backend/orchestrators/ragflow_streaming_fallback.py`、TTS registry 自动降级、VoiceKit 可选启动、ASR filter 原文回退、RAGFlow 非流式回退 | 本轮已消除主要“伪装成功”路径；剩余 fallback 字样多为显式配置、文件名兜底或相似度算法命名 | Done | 后续只在触及相关模块时继续评估局部命名与历史注释 |

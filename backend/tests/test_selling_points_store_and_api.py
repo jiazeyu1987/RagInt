@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
 from backend.app import create_app
 from backend.services.selling_points_store import SellingPointsStore
 
@@ -40,6 +42,40 @@ def test_selling_points_levels_and_workflow(tmp_path):
     assert {p.text for p in pts_pub} == {"pub", "int_draft"}
 
 
+@pytest.mark.parametrize("tags_json", ["not-json", '{"tag":"bad-shape"}'])
+def test_selling_points_store_fails_fast_on_invalid_tags_json(tmp_path, tags_json):
+    store = SellingPointsStore(tmp_path / "sp.db")
+    assert store.upsert(stop_name="A", text="bad-tags", weight=1.0, tags=[])
+
+    conn = store._connect()  # noqa: SLF001 - unit test seeds corrupt persisted JSON.
+    try:
+        conn.execute(
+            "UPDATE selling_points SET tags_json = ? WHERE stop_name = ? AND text = ?",
+            (tags_json, "A", "bad-tags"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    with pytest.raises(ValueError, match="invalid selling_points.tags_json"):
+        store.list(stop_name="A", limit=10)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"weight": "heavy"}, "selling_points_weight_invalid"),
+        ({"level": "secret"}, "selling_points_level_invalid"),
+        ({"status": "live"}, "selling_points_status_invalid"),
+    ],
+)
+def test_selling_points_store_rejects_invalid_explicit_fields(tmp_path, kwargs, message):
+    store = SellingPointsStore(tmp_path / "sp.db")
+
+    with pytest.raises(ValueError, match=message):
+        store.upsert(stop_name="A", text="bad-field", **kwargs)
+
+
 def test_selling_points_api_roundtrip(tmp_path):
     os.environ["RAGINT_VERSION"] = "0.0.0-test"
     os.environ["RAGINT_SELLING_POINTS_DB_PATH"] = str(tmp_path / "selling_points.db")
@@ -60,6 +96,75 @@ def test_selling_points_api_roundtrip(tmp_path):
     p3 = r3.get_json()
     assert p3["n"] == 1
     assert len(p3["items"]) == 1
+
+
+def test_selling_points_api_does_not_return_ok_for_corrupt_tags_json(tmp_path):
+    os.environ["RAGINT_SELLING_POINTS_DB_PATH"] = str(tmp_path / "selling_points.db")
+    app = create_app()
+    c = app.test_client()
+
+    r1 = c.post("/api/selling_points", json={"stop_name": "Stop1", "text": "bad tags", "weight": 5})
+    assert r1.status_code == 200
+
+    store = app.config["deps"].selling_points_store
+    conn = store._connect()  # noqa: SLF001 - integration test seeds corrupt persisted JSON.
+    try:
+        conn.execute(
+            "UPDATE selling_points SET tags_json = ? WHERE stop_name = ? AND text = ?",
+            ("not-json", "Stop1", "bad tags"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    r2 = c.get("/api/selling_points?stop_name=Stop1")
+    assert r2.status_code == 500
+    assert r2.get_json()["error"] == "selling_points_read_failed"
+
+
+@pytest.mark.parametrize(
+    ("payload", "error"),
+    [
+        ({"stop_name": "Stop1", "text": "bad weight", "weight": "heavy"}, "selling_points_weight_invalid"),
+        ({"stop_name": "Stop1", "text": "bad tags", "tags": "tag"}, "tags_list_required"),
+        ({"stop_name": "Stop1", "text": "bad level", "level": "secret"}, "selling_points_level_invalid"),
+        ({"stop_name": "Stop1", "text": "bad status", "status": "live"}, "selling_points_status_invalid"),
+    ],
+)
+def test_selling_points_api_rejects_invalid_explicit_upsert_fields(tmp_path, payload, error):
+    os.environ["RAGINT_SELLING_POINTS_DB_PATH"] = str(tmp_path / "selling_points.db")
+    app = create_app()
+    c = app.test_client()
+
+    r = c.post("/api/selling_points", json=payload)
+
+    assert r.status_code == 400
+    assert r.get_json()["error"] == error
+
+
+@pytest.mark.parametrize(
+    ("path", "field", "error"),
+    [
+        ("/api/selling_points?stop_name=Stop1&limit=many", "limit", "invalid_query_parameter"),
+        ("/api/selling_points?stop_name=Stop1&status=live", "status", "invalid_query_parameter"),
+        ("/api/selling_points?stop_name=Stop1&max_level=secret", "max_level", "invalid_query_parameter"),
+        ("/api/selling_points/topn?stop_name=Stop1&n=many", "n", "invalid_query_parameter"),
+        ("/api/selling_points/topn?stop_name=Stop1&max_level=secret", "max_level", "invalid_query_parameter"),
+        ("/api/selling_points/topn?stop_name=Stop1&duration_s=soon", None, "duration_s_invalid"),
+    ],
+)
+def test_selling_points_api_rejects_invalid_explicit_query_fields(tmp_path, path, field, error):
+    os.environ["RAGINT_SELLING_POINTS_DB_PATH"] = str(tmp_path / "selling_points.db")
+    app = create_app()
+    c = app.test_client()
+
+    r = c.get(path)
+
+    assert r.status_code == 400
+    body = r.get_json()
+    assert body["error"] == error
+    if field is not None:
+        assert body["field"] == field
 
 
 def test_selling_points_api_workflow_transitions(tmp_path):

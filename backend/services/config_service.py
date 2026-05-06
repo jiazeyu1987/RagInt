@@ -44,6 +44,14 @@ def _set_nested(d: dict, path: list[str], value) -> None:
     cur[path[-1]] = value
 
 
+def _parse_int_field(value) -> int:
+    if isinstance(value, bool):
+        raise ValueError("not_int")
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError("not_int")
+    return int(value)
+
+
 class ConfigService:
     """
     Simple JSON config management for delivery/ops.
@@ -72,7 +80,9 @@ class ConfigService:
         if self._config_path.exists():
             with open(self._config_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return data if isinstance(data, dict) else {}
+                if not isinstance(data, dict):
+                    raise ValueError("config_not_object")
+                return data
         return {}
 
     @staticmethod
@@ -81,9 +91,12 @@ class ConfigService:
         Do not export or persist secrets into repo files.
         Keep the shape, blank the values.
         """
-        out = json.loads(json.dumps(cfg or {}, ensure_ascii=False))
+        if not isinstance(cfg, dict):
+            raise ValueError("config_not_object")
+
+        out = json.loads(json.dumps(cfg, ensure_ascii=False))
         if not isinstance(out, dict):
-            return {}
+            raise ValueError("config_not_object")
 
         for path in (
             ["api_key"],
@@ -129,20 +142,20 @@ class ConfigService:
         if nav is not None and not isinstance(nav, dict):
             errors.append("nav_not_object")
         nav_provider = str(_get_nested(normalized, ["nav", "provider"], "disabled") or "disabled").strip().lower()
-        if nav_provider not in ("disabled", "mock", "http"):
+        if nav_provider not in ("disabled", "http"):
             errors.append("nav.provider_invalid")
         if nav_provider == "http":
             base_url = str(_get_nested(normalized, ["nav", "http", "base_url"], "") or "").strip()
             if not base_url:
-                warnings.append("nav.http.base_url_empty")
+                errors.append("nav.http.base_url_empty")
 
-        # timeouts/retries (best-effort)
+        # timeouts/retries
         for key in ("timeout", "max_retries"):
             if key in normalized:
                 try:
-                    int(normalized.get(key))
+                    _parse_int_field(normalized.get(key))
                 except Exception:
-                    warnings.append(f"{key}_not_int")
+                    errors.append(f"{key}_not_int")
 
         ok = not errors
         return ConfigValidation(ok=ok, errors=errors, warnings=warnings, normalized=normalized)
@@ -163,10 +176,7 @@ class ConfigService:
         self._ensure_backup_dir()
         items = []
         for p in sorted(self._backup_dir.glob("ragflow_config.*.json"), key=lambda x: x.name, reverse=True):
-            try:
-                st = p.stat()
-            except Exception:
-                continue
+            st = p.stat()
             items.append({"name": p.name, "size_bytes": int(st.st_size), "mtime_ms": int(st.st_mtime * 1000)})
             if len(items) >= int(limit):
                 break

@@ -5,11 +5,15 @@ from flask import Blueprint, jsonify, request
 from backend.api.request_context import get_client_id
 
 
+def _is_allowed(value, allowed: set[str]) -> bool:
+    return str(value or "").strip().lower() in allowed
+
+
 def _compute_default_topn(*, duration_s: int | None, profile: str | None) -> int:
     try:
         d = int(duration_s) if duration_s is not None else None
     except Exception:
-        d = None
+        raise ValueError("duration_s_invalid") from None
     p = str(profile or "").strip()
     if d is None:
         base = 3
@@ -37,8 +41,15 @@ def create_blueprint(deps):
         try:
             limit = int(request.args.get("limit") or 50)
         except Exception:
-            limit = 50
-        pts = deps.selling_points_store.list(stop_name=stop_name, limit=limit, status=status, max_level=max_level)
+            return jsonify({"ok": False, "error": "invalid_query_parameter", "field": "limit"}), 400
+        if status is not None and not _is_allowed(status, {"draft", "review", "published"}):
+            return jsonify({"ok": False, "error": "invalid_query_parameter", "field": "status"}), 400
+        if max_level is not None and not _is_allowed(max_level, {"public", "internal", "sensitive"}):
+            return jsonify({"ok": False, "error": "invalid_query_parameter", "field": "max_level"}), 400
+        try:
+            pts = deps.selling_points_store.list(stop_name=stop_name, limit=limit, status=status, max_level=max_level)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": "selling_points_read_failed", "detail": str(exc)}), 500
         return jsonify(
             {
                 "ok": True,
@@ -62,14 +73,19 @@ def create_blueprint(deps):
         data = request.get_json() or {}
         stop_name = str((data.get("stop_name") or data.get("stop") or "")).strip()
         text = str((data.get("text") or "")).strip()
-        weight = data.get("weight") or 0
+        weight = data["weight"] if "weight" in data else 0
         tags = data.get("tags")
         level = data.get("level")
         status = data.get("status")
         if not isinstance(tags, list):
+            if tags is not None:
+                return jsonify({"ok": False, "error": "tags_list_required"}), 400
             tags = []
 
-        ok = deps.selling_points_store.upsert(stop_name=stop_name, text=text, weight=weight, tags=tags, level=level, status=status)
+        try:
+            ok = deps.selling_points_store.upsert(stop_name=stop_name, text=text, weight=weight, tags=tags, level=level, status=status)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
         if not ok:
             return jsonify({"ok": False, "error": "invalid_input"}), 400
 
@@ -120,12 +136,20 @@ def create_blueprint(deps):
         try:
             n = int(request.args.get("n")) if request.args.get("n") is not None else None
         except Exception:
-            n = None
+            return jsonify({"ok": False, "error": "invalid_query_parameter", "field": "n"}), 400
+        if max_level is not None and not _is_allowed(max_level, {"public", "internal", "sensitive"}):
+            return jsonify({"ok": False, "error": "invalid_query_parameter", "field": "max_level"}), 400
         if n is None:
-            n = _compute_default_topn(duration_s=duration_s, profile=profile)
+            try:
+                n = _compute_default_topn(duration_s=duration_s, profile=profile)
+            except ValueError as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 400
 
-        pts = deps.selling_points_store.list(stop_name=stop_name, limit=max(50, n), status="published", max_level=max_level)
-        picked = deps.selling_points_store.pick_topn(points=pts, n=int(n))
+        try:
+            pts = deps.selling_points_store.list(stop_name=stop_name, limit=max(50, n), status="published", max_level=max_level)
+            picked = deps.selling_points_store.pick_topn(points=pts, n=int(n))
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": "selling_points_read_failed", "detail": str(exc)}), 500
         return jsonify(
             {
                 "ok": True,

@@ -53,74 +53,34 @@ export function useStateRefsSync({
   groupModeRef,
   questionQueue,
   queueRef,
+  globalPromptPrefix,
+  globalPromptPrefixRef,
+  asrConversationContextStrategy,
+  asrConversationContextStrategyRef,
+  asrConversationContextRecentTurns,
+  asrConversationContextRecentTurnsRef,
+  asrConversationContextMaxTokens,
+  asrConversationContextMaxTokensRef,
 } = {}) {
   useEffect(() => {
     continuousTourRef.current = !!continuousTour;
-  }, [continuousTour, continuousTourRef]);
-
-  useEffect(() => {
     tourRecordingEnabledRef.current = !!tourRecordingEnabled;
-  }, [tourRecordingEnabled, tourRecordingEnabledRef]);
-
-  useEffect(() => {
     playTourRecordingEnabledRef.current = !!playTourRecordingEnabled;
-  }, [playTourRecordingEnabled, playTourRecordingEnabledRef]);
-
-  useEffect(() => {
     selectedTourRecordingIdRef.current = String(selectedTourRecordingId || '').trim();
-  }, [selectedTourRecordingId, selectedTourRecordingIdRef]);
-
-  useEffect(() => {
     guideEnabledRef.current = !!guideEnabled;
-  }, [guideEnabled, guideEnabledRef]);
-
-  useEffect(() => {
     tourStateRef.current = tourState;
-  }, [tourState, tourStateRef]);
-
-  useEffect(() => {
     tourStopsRef.current = Array.isArray(tourStops) ? tourStops : [];
-  }, [tourStops, tourStopsRef]);
-
-  useEffect(() => {
     tourZoneRef.current = String(tourZone || '').trim();
-  }, [tourZone, tourZoneRef]);
-
-  useEffect(() => {
     tourStopDurationsRef.current = Array.isArray(tourStopDurations) ? tourStopDurations : [];
-  }, [tourStopDurations, tourStopDurationsRef]);
-
-  useEffect(() => {
     tourStopTargetCharsRef.current = Array.isArray(tourStopTargetChars) ? tourStopTargetChars : [];
-  }, [tourStopTargetChars, tourStopTargetCharsRef]);
-
-  useEffect(() => {
     audienceProfileRef.current = String(audienceProfile || '').trim();
-  }, [audienceProfile, audienceProfileRef]);
-
-  useEffect(() => {
     tourMetaRef.current = tourMeta;
-  }, [tourMeta, tourMetaRef]);
-
-  useEffect(() => {
     guideDurationRef.current = guideDuration;
     guideStyleRef.current = guideStyle;
-  }, [guideDuration, guideStyle, guideDurationRef, guideStyleRef]);
-
-  useEffect(() => {
     qaAnswerTargetCharsRef.current = String(qaAnswerTargetChars || '1');
-  }, [qaAnswerTargetChars, qaAnswerTargetCharsRef]);
-
-  useEffect(() => {
     qaAudioCacheLookupEnabledRef.current = !!qaAudioCacheLookupEnabled;
-  }, [qaAudioCacheLookupEnabled, qaAudioCacheLookupEnabledRef]);
-
-  useEffect(() => {
     const n = Number(qaAudioCacheConfidenceThreshold);
     qaAudioCacheConfidenceThresholdRef.current = Number.isFinite(n) ? String(Math.max(0, Math.min(1, n))) : '0.85';
-  }, [qaAudioCacheConfidenceThreshold, qaAudioCacheConfidenceThresholdRef]);
-
-  useEffect(() => {
     tourTemplateIdRef.current = String(tourTemplateId || '');
     tourStopsOverrideRef.current = Array.isArray(tourStopsOverride) ? tourStopsOverride : [];
     tourStopDurationsOverrideRef.current =
@@ -133,34 +93,82 @@ export function useStateRefsSync({
       !Array.isArray(tourStopPromptOverrides)
         ? tourStopPromptOverrides
         : {};
-  }, [
-    tourTemplateId,
-    tourStopsOverride,
-    tourStopDurationsOverride,
-    tourStopPromptOverrides,
-    tourTemplateIdRef,
-    tourStopsOverrideRef,
-    tourStopDurationsOverrideRef,
-    tourStopPromptOverridesRef,
-  ]);
-
-  useEffect(() => {
     useAgentModeRef.current = !!useAgentMode;
-  }, [useAgentMode, useAgentModeRef]);
-
-  useEffect(() => {
     selectedChatRef.current = selectedChat;
-  }, [selectedChat, selectedChatRef]);
-
-  useEffect(() => {
     selectedAgentIdRef.current = selectedAgentId;
-  }, [selectedAgentId, selectedAgentIdRef]);
-
-  useEffect(() => {
     groupModeRef.current = !!groupMode;
-  }, [groupMode, groupModeRef]);
-
-  useEffect(() => {
     queueRef.current = Array.isArray(questionQueue) ? questionQueue : [];
-  }, [questionQueue, queueRef]);
+    globalPromptPrefixRef.current = String(globalPromptPrefix || '');
+    asrConversationContextStrategyRef.current = String(asrConversationContextStrategy || 'smart_recent_current')
+      .trim()
+      .toLowerCase();
+    if (!asrConversationContextStrategyRef.current) {
+      asrConversationContextStrategyRef.current = 'smart_recent_current';
+    }
+    const recentTurns = Number(asrConversationContextRecentTurns);
+    asrConversationContextRecentTurnsRef.current = Number.isFinite(recentTurns) ? recentTurns : 10;
+    const maxTokens = Number(asrConversationContextMaxTokens);
+    asrConversationContextMaxTokensRef.current = Number.isFinite(maxTokens) ? maxTokens : 16000;
+  }, [
+    asrConversationContextMaxTokens,
+    asrConversationContextMaxTokensRef,
+    asrConversationContextRecentTurns,
+    asrConversationContextRecentTurnsRef,
+    asrConversationContextStrategy,
+    asrConversationContextStrategyRef,
+    audienceProfile,
+    audienceProfileRef,
+    continuousTour,
+    continuousTourRef,
+    globalPromptPrefix,
+    globalPromptPrefixRef,
+    groupMode,
+    groupModeRef,
+    guideDuration,
+    guideDurationRef,
+    guideEnabled,
+    guideEnabledRef,
+    guideStyle,
+    guideStyleRef,
+    playTourRecordingEnabled,
+    playTourRecordingEnabledRef,
+    qaAnswerTargetChars,
+    qaAnswerTargetCharsRef,
+    qaAudioCacheConfidenceThreshold,
+    qaAudioCacheConfidenceThresholdRef,
+    qaAudioCacheLookupEnabled,
+    qaAudioCacheLookupEnabledRef,
+    questionQueue,
+    queueRef,
+    selectedAgentId,
+    selectedAgentIdRef,
+    selectedChat,
+    selectedChatRef,
+    selectedTourRecordingId,
+    selectedTourRecordingIdRef,
+    tourMeta,
+    tourMetaRef,
+    tourRecordingEnabled,
+    tourRecordingEnabledRef,
+    tourState,
+    tourStateRef,
+    tourStopDurations,
+    tourStopDurationsOverride,
+    tourStopDurationsOverrideRef,
+    tourStopDurationsRef,
+    tourStopPromptOverrides,
+    tourStopPromptOverridesRef,
+    tourStopTargetChars,
+    tourStopTargetCharsRef,
+    tourStops,
+    tourStopsOverride,
+    tourStopsOverrideRef,
+    tourStopsRef,
+    tourTemplateId,
+    tourTemplateIdRef,
+    tourZone,
+    tourZoneRef,
+    useAgentMode,
+    useAgentModeRef,
+  ]);
 }

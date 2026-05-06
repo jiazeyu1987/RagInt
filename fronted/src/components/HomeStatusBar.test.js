@@ -139,9 +139,9 @@ describe('HomeStatusBar', () => {
     expect(view.container.textContent).toContain('21 ms');
     expect(view.container.textContent).toContain('服务端提交');
     expect(view.container.textContent).toContain('25 ms');
-    expect(view.container.textContent).toContain('RAG请求');
+    expect(view.container.textContent).toContain('RAG 请求');
     expect(view.container.textContent).toContain('95 ms');
-    expect(view.container.textContent).toContain('首Chunk');
+    expect(view.container.textContent).toContain('首块');
     expect(view.container.textContent).toContain('125 ms');
     expect(view.container.textContent).toContain('首文本');
     expect(view.container.textContent).toContain('175 ms');
@@ -149,7 +149,7 @@ describe('HomeStatusBar', () => {
     expect(view.container.textContent).toContain('325 ms');
     expect(view.container.textContent).toContain('首音频');
     expect(view.container.textContent).toContain('475 ms');
-    expect(view.container.textContent).toContain('RAG完成');
+    expect(view.container.textContent).toContain('RAG 完成');
     expect(view.container.textContent).toContain('620 ms');
     expect(view.container.textContent).toContain('结束');
     expect(view.container.textContent).toContain('1025 ms');

@@ -12,7 +12,13 @@ export function useTourTemplates({ enabled } = {}) {
       try {
         const res = await fetchJson('/api/tour/templates');
         if (cancelled) return;
-        const items = Array.isArray(res && res.templates) ? res.templates : [];
+        if (res && res.ok === false) {
+          throw new Error(String(res.error || 'tour_templates_load_failed'));
+        }
+        if (!Array.isArray(res && res.templates)) {
+          throw new Error('tour_templates_invalid_response');
+        }
+        const items = res.templates;
         setTemplates(items);
         setError('');
       } catch (e) {
@@ -28,4 +34,3 @@ export function useTourTemplates({ enabled } = {}) {
 
   return { templates, error };
 }
-

@@ -119,4 +119,90 @@ describe('LocalSpeechTtsManager', () => {
       })
     );
   });
+
+  test('reports getVoices failure instead of treating it as no voices', async () => {
+    const getVoicesError = new Error('voice list unavailable');
+    window.speechSynthesis = {
+      cancel: jest.fn(),
+      speaking: false,
+      pending: false,
+      getVoices: jest.fn(() => {
+        throw getVoicesError;
+      }),
+      speak: jest.fn(),
+    };
+    window.SpeechSynthesisUtterance = function Utterance(text) {
+      this.text = text;
+      this.onstart = null;
+      this.onend = null;
+      this.onerror = null;
+    };
+
+    const onError = jest.fn();
+    const mgr = new LocalSpeechTtsManager({ onError });
+    mgr.resetForRun({ requestId: 'ask_voices_error' });
+    mgr.enqueueText('segment with voice failure', { stopIndex: 0 });
+    mgr.markRagDone();
+    mgr.ensureRunning();
+
+    await expect(mgr.waitForIdle()).rejects.toThrow('[TTS_LOCAL] get_voices_failed');
+    expect(window.speechSynthesis.speak).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith('[TTS_LOCAL] player_error', expect.any(Error));
+  });
+
+  test('reports speak failure instead of continuing as successful playback', async () => {
+    const speakError = new Error('speak failed');
+    window.speechSynthesis = {
+      cancel: jest.fn(),
+      speaking: false,
+      pending: false,
+      getVoices: jest.fn().mockReturnValue([]),
+      speak: jest.fn(() => {
+        throw speakError;
+      }),
+    };
+    window.SpeechSynthesisUtterance = function Utterance(text) {
+      this.text = text;
+      this.onstart = null;
+      this.onend = null;
+      this.onerror = null;
+    };
+
+    const emitClientEvent = jest.fn();
+    const onError = jest.fn();
+    const mgr = new LocalSpeechTtsManager({ emitClientEvent, onError });
+    mgr.resetForRun({ requestId: 'ask_speak_error' });
+    window.speechSynthesis.cancel.mockClear();
+    mgr.enqueueText('segment with speak failure', { stopIndex: 0 });
+    mgr.markRagDone();
+    mgr.ensureRunning();
+
+    await expect(mgr.waitForIdle()).rejects.toThrow('speak failed');
+    expect(onError).toHaveBeenCalledWith('[TTS_LOCAL] player_error', speakError);
+    expect(emitClientEvent).not.toHaveBeenCalledWith(expect.objectContaining({ name: 'play_end' }));
+    expect(window.speechSynthesis.cancel).not.toHaveBeenCalled();
+  });
+
+  test('stop reports cancel failure instead of swallowing it', () => {
+    const cancelError = new Error('cancel failed');
+    window.speechSynthesis = {
+      cancel: jest.fn(() => {
+        throw cancelError;
+      }),
+      speaking: true,
+      pending: false,
+      getVoices: jest.fn().mockReturnValue([]),
+      speak: jest.fn(),
+    };
+    window.SpeechSynthesisUtterance = function Utterance(text) {
+      this.text = text;
+    };
+
+    const emitClientEvent = jest.fn();
+    const mgr = new LocalSpeechTtsManager({ emitClientEvent });
+    mgr._requestId = 'ask_cancel_error';
+
+    expect(() => mgr.stop('interrupt')).toThrow('cancel failed');
+    expect(emitClientEvent).not.toHaveBeenCalledWith(expect.objectContaining({ name: 'play_cancelled' }));
+  });
 });

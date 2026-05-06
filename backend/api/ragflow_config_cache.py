@@ -6,8 +6,12 @@ from backend.config import RagflowAppConfig
 
 
 def _load_ragflow_config_dict(*, deps, force: bool = False) -> dict:
-    cfg = deps.ragflow_service.load_config(force=bool(force)) or {}
-    return cfg if isinstance(cfg, dict) else {}
+    cfg = deps.ragflow_service.load_config(force=bool(force))
+    if cfg is None:
+        raise TypeError("ragflow config missing")
+    if not isinstance(cfg, dict):
+        raise TypeError("ragflow config must be a dict")
+    return cfg
 
 
 def _request_cache_get(*, key: str, loader):

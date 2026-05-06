@@ -48,6 +48,11 @@ class _EventStore:
         return {"error": "boom", "request_id": "r1"} if str(request_id) == "r1" else None
 
 
+class _FailingEventStore(_EventStore):
+    def emit(self, **kwargs):  # noqa: ANN003
+        raise RuntimeError("event_store_down")
+
+
 class _AskTimings:
     def __init__(self):
         self.values = {"r1": {"t_submit": 1.0, "t_first_tts_segment": 1.2}}
@@ -120,14 +125,14 @@ def _build_app(work_dir: Path, *, session=object()) -> tuple[Flask, _Deps]:
     return app, deps
 
 
-def test_openapi_fallback_when_missing(work_dir: Path):
+def test_openapi_fails_fast_when_missing(work_dir: Path):
     app, _deps = _build_app(work_dir)
     c = app.test_client()
     resp = c.get("/api/openapi.json")
-    assert resp.status_code == 200
+    assert resp.status_code == 500
     body = resp.get_json()
-    assert body["openapi"] == "3.0.3"
-    assert body["info"]["title"] == "RagInt Backend API"
+    assert body["ok"] is False
+    assert body["error"] == "openapi_spec_required"
 
 
 def test_openapi_reads_local_file(work_dir: Path):
@@ -169,6 +174,19 @@ def test_events_json_and_ndjson_formats(work_dir: Path):
     assert first["name"] == "ask_received"
 
 
+def test_events_rejects_invalid_explicit_query_values(work_dir: Path):
+    app, _deps = _build_app(work_dir)
+    c = app.test_client()
+
+    bad_limit = c.get("/api/events?limit=bad")
+    assert bad_limit.status_code == 400
+    assert bad_limit.get_json()["error"] == "invalid_limit"
+
+    bad_since = c.get("/api/events?since_ms=bad")
+    assert bad_since.status_code == 400
+    assert bad_since.get_json()["error"] == "invalid_since_ms"
+
+
 def test_client_events_validate_and_ingest(work_dir: Path):
     app, deps = _build_app(work_dir)
     c = app.test_client()
@@ -189,6 +207,23 @@ def test_client_events_validate_and_ingest(work_dir: Path):
     assert deps.event_store.emitted[-1]["request_id"] == "r_new"
     assert deps.event_store.emitted[-1]["source"] == "ui"
     assert deps.ask_timings.set_calls[-1][0] == "r_new"
+
+
+def test_client_events_returns_error_when_ingest_write_fails(work_dir: Path):
+    app, deps = _build_app(work_dir)
+    deps.event_store = _FailingEventStore()
+    c = app.test_client()
+
+    resp = c.post(
+        "/api/client_events",
+        headers={"X-Request-ID": "r_new", "X-Client-ID": "c9"},
+        json={"name": "play_end", "fields": {"source": "ui"}},
+    )
+
+    assert resp.status_code == 500
+    body = resp.get_json()
+    assert body["ok"] is False
+    assert body["error"] == "client_event_ingest_failed"
 
 
 def test_status_and_health_routes(work_dir: Path):

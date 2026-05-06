@@ -46,13 +46,13 @@ describe('VoiceInputManager', () => {
     expect(module.onRecordPointerCancel).toHaveBeenCalledTimes(1);
   });
 
-  test('dispose suppresses module disposal exceptions', () => {
+  test('dispose exposes module disposal exceptions', () => {
     const mgr = new VoiceInputManager();
     const module = mockLastModule;
     module.dispose.mockImplementation(() => {
       throw new Error('boom');
     });
 
-    expect(() => mgr.dispose()).not.toThrow();
+    expect(() => mgr.dispose()).toThrow('boom');
   });
 });

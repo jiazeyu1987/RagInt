@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 
-from backend.services.breakpoint_store import BreakpointStore
+import pytest
+
+from backend.services.breakpoint_store import BreakpointStore, BreakpointStoreError
 
 
 def test_breakpoint_store_upsert_get_clear(tmp_path):
@@ -22,3 +25,20 @@ def test_breakpoint_store_upsert_get_clear(tmp_path):
     assert store.clear(kind="tour", client_id="cid1") is True
     assert store.get(kind="tour", client_id="cid1") is None
 
+
+def test_breakpoint_store_raises_on_corrupt_state_json(tmp_path):
+    db_path = tmp_path / "bp.db"
+    store = BreakpointStore(db_path, logger=logging.getLogger("test"))
+
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute(
+            """
+            INSERT INTO breakpoints (kind, client_id, state_json, created_at_ms, updated_at_ms)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            ("tour", "cid_bad", "{not-json", 1, 1),
+        )
+        conn.commit()
+
+    with pytest.raises(BreakpointStoreError, match="invalid_state_json"):
+        store.get(kind="tour", client_id="cid_bad")

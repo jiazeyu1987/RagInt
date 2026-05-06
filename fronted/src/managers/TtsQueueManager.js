@@ -9,6 +9,16 @@ import { playWavBytesViaDecodeAudioData, playWavStreamViaWebAudio, playWavViaDec
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const ALLOWED_FETCH_CONCURRENCY = new Set([2, 4, 6, 8, 10]);
 
+function resolveConfiguredBaseUrl(baseUrl, fallbackOrigin) {
+  const configured = String(baseUrl || '').trim();
+  if (!configured) return fallbackOrigin;
+  try {
+    return new URL(configured, fallbackOrigin).toString();
+  } catch (err) {
+    throw new Error(`Invalid TTS baseUrl: ${configured}`, { cause: err });
+  }
+}
+
 function normalizeFetchConcurrency(value) {
   const n = Number(value);
   if (ALLOWED_FETCH_CONCURRENCY.has(n)) return n;
@@ -36,40 +46,6 @@ function safeStopCurrentAudio(currentAudioRef) {
   } finally {
     if (currentAudioRef) currentAudioRef.current = null;
   }
-}
-
-async function playAudioElementUrl(url, currentAudioRef, opts) {
-  const playbackRate = Number.isFinite(Number(opts && opts.playbackRate)) ? Math.max(0.5, Math.min(2.0, Number(opts.playbackRate))) : 1.0;
-  if (!url) return;
-  await new Promise((resolve, reject) => {
-    const audio = new Audio(url);
-    audio.playbackRate = playbackRate;
-    currentAudioRef.current = {
-      stop: () => {
-        try {
-          audio.pause();
-        } catch (_) {
-          // ignore
-        }
-        try {
-          audio.src = '';
-        } catch (_) {
-          // ignore
-        }
-      },
-      setPlaybackRate: (next) => {
-        try {
-          audio.playbackRate = Number.isFinite(Number(next)) ? Math.max(0.5, Math.min(2.0, Number(next))) : 1.0;
-        } catch (_) {
-          // ignore
-        }
-      },
-      pause: () => audio.pause(),
-    };
-    audio.onended = () => resolve();
-    audio.onerror = () => reject(new Error('Audio playback failed'));
-    audio.play().catch(reject);
-  });
 }
 
 export class TtsQueueManager {
@@ -114,40 +90,28 @@ export class TtsQueueManager {
     this._currentItem = null;
     this._activeFetches = 0;
     this._fetchControllers = new Set();
+    this._lastError = null;
   }
 
   _resolvePlaybackUrl(rawUrl) {
     const raw = String(rawUrl || '').trim();
     if (!raw) return '';
     const fallbackOrigin = typeof window !== 'undefined' && window.location && window.location.origin ? window.location.origin : 'http://localhost';
-    let baseForResolve = String(this._baseUrl || '').trim();
-    if (!baseForResolve) baseForResolve = fallbackOrigin;
-
-    let base = null;
-    try {
-      base = new URL(baseForResolve, fallbackOrigin);
-    } catch (_) {
-      base = null;
-    }
+    const base = new URL(resolveConfiguredBaseUrl(this._baseUrl, fallbackOrigin));
 
     const isAbsolute = /^https?:\/\//i.test(raw);
     if (!isAbsolute) {
-      try {
-        if (base) return new URL(raw.startsWith('/') ? raw : `/${raw}`, base).toString();
-      } catch (_) {
-        // ignore
-      }
-      return raw;
+      return new URL(raw.startsWith('/') ? raw : `/${raw}`, base).toString();
     }
 
     try {
       const parsed = new URL(raw);
-      if (base && parsed.hostname === base.hostname && parsed.origin !== base.origin) {
+      if (parsed.hostname === base.hostname && parsed.origin !== base.origin) {
         return new URL(`${parsed.pathname}${parsed.search}${parsed.hash}`, base).toString();
       }
       return parsed.toString();
-    } catch (_) {
-      return raw;
+    } catch (err) {
+      throw new Error(`Invalid TTS playback URL: ${raw}`, { cause: err });
     }
   }
 
@@ -193,7 +157,6 @@ export class TtsQueueManager {
     if (item.wavBytes) return true;
     if (item.recorded) return true;
     if (this._useSavedTts) return true;
-    if (item.prefetchState === 'failed') return true;
     return false;
   }
 
@@ -201,7 +164,7 @@ export class TtsQueueManager {
     if (this._token !== token) return;
     while (this._activeFetches < this._fetchConcurrency) {
       const item = (this._audioQueue || []).find(
-        (x) => this._canPrefetch(x) && x.prefetchState !== 'fetching' && x.prefetchState !== 'ready'
+        (x) => this._canPrefetch(x) && x.prefetchState !== 'fetching' && x.prefetchState !== 'ready' && x.prefetchState !== 'failed'
       );
       if (!item) break;
       this._startPrefetch(item, token);
@@ -235,12 +198,15 @@ export class TtsQueueManager {
       })
       .catch((err) => {
         if (this._token !== token) return;
+        const failure = err instanceof Error ? err : new Error(String(err || 'tts_prefetch_failed'));
         if (ctl.signal.aborted) {
           item.prefetchState = 'failed';
+          item.prefetchError = failure;
           return;
         }
         item.prefetchState = 'failed';
-        this._warn('[TTSQ] prefetch_failed_fallback_to_stream', err);
+        item.prefetchError = failure;
+        this._warn('[TTSQ] prefetch_failed', failure);
       })
       .finally(() => {
         clearTimeout(timeout);
@@ -268,6 +234,7 @@ export class TtsQueueManager {
     this._audioQueue = [];
     this._seenText = new Set();
     this._activeFetches = 0;
+    this._lastError = null;
     this._abortAllFetches();
   }
 
@@ -281,6 +248,7 @@ export class TtsQueueManager {
     this._playerPromise = null;
     this._currentItem = null;
     this._activeFetches = 0;
+    this._lastError = null;
     this._abortAllFetches();
     safeStopCurrentAudio(this._currentAudioRef);
     if (reason) this._log('[TTSQ] stopped', reason);
@@ -427,8 +395,10 @@ export class TtsQueueManager {
       const gen = this._generatorPromise;
       const player = this._playerPromise;
       const hasQueues = this._textQueue.length > 0 || this._audioQueue.length > 0 || this._activeFetches > 0;
+      if (this._lastError) throw this._lastError;
       if (!gen && !player && !hasQueues) return;
       await Promise.allSettled([gen, player].filter(Boolean));
+      if (this._lastError) throw this._lastError;
     }
   }
 
@@ -436,13 +406,7 @@ export class TtsQueueManager {
     const seg = String(text || '').trim();
     if (!seg) return null;
     const fallbackOrigin = typeof window !== 'undefined' && window.location && window.location.origin ? window.location.origin : 'http://localhost';
-    let baseForResolve = String(this._baseUrl || '').trim();
-    if (!baseForResolve) baseForResolve = fallbackOrigin;
-    try {
-      baseForResolve = new URL(baseForResolve, fallbackOrigin).toString();
-    } catch (_) {
-      baseForResolve = fallbackOrigin;
-    }
+    const baseForResolve = resolveConfiguredBaseUrl(this._baseUrl, fallbackOrigin);
     const url = new URL(
       this._useSavedTts ? '/api/text_to_speech_saved' : '/api/text_to_speech_stream',
       `${String(baseForResolve || '').replace(/\/+$/, '')}/`
@@ -584,6 +548,7 @@ export class TtsQueueManager {
       }
     })()
       .catch((err) => {
+        this._lastError = err instanceof Error ? err : new Error(String(err || 'tts_generator_failed'));
         this._error('[TTSQ] generator_error', err);
       })
       .finally(() => {
@@ -605,6 +570,11 @@ export class TtsQueueManager {
         }
 
         if (!this._isItemReadyForPlayback(audioItem)) {
+          if (audioItem.prefetchState === 'failed') {
+            this._audioQueue.shift();
+            const failure = audioItem.prefetchError instanceof Error ? audioItem.prefetchError : new Error('tts_prefetch_failed');
+            throw failure;
+          }
           this._drainPrefetchQueue(token);
           await sleep(20);
           continue;
@@ -653,28 +623,8 @@ export class TtsQueueManager {
                 playbackRate: this._ttsSpeed,
               });
             } catch (err) {
-              this._warn('[TTSQ] prefetched_wav_playback_failed_fallback_to_stream', err);
-              if (audioItem.url) {
-                await playWavStreamViaWebAudio(
-                  audioItem.url,
-                  this._audioContextRef,
-                  this._currentAudioRef,
-                  () => playAudioElementUrl(audioItem.url, this._currentAudioRef, { playbackRate: this._ttsSpeed }),
-                  () => {
-                    if (!this._onDebug) return;
-                    try {
-                      this._onDebug({
-                        type: 'tts_first_audio',
-                        t: this._nowMs(),
-                        seq: typeof audioItem.seq === 'number' ? audioItem.seq : null,
-                      });
-                    } catch (_) {
-                      // ignore
-                    }
-                  },
-                  { playbackRate: this._ttsSpeed }
-                );
-              }
+              this._warn('[TTSQ] prefetched_wav_playback_failed', err);
+              throw err;
             }
           } else if (audioItem && audioItem.recorded) {
             try {
@@ -682,8 +632,8 @@ export class TtsQueueManager {
                 playbackRate: this._ttsSpeed,
               });
             } catch (err) {
-              this._warn('[TTSQ] recorded_wav_playback_failed_fallback_to_audio', err);
-              await playAudioElementUrl(audioItem.url, this._currentAudioRef, { playbackRate: this._ttsSpeed });
+              this._warn('[TTSQ] recorded_wav_playback_failed', err);
+              throw err;
             }
           } else if (this._useSavedTts) {
             try {
@@ -691,15 +641,14 @@ export class TtsQueueManager {
                 playbackRate: this._ttsSpeed,
               });
             } catch (err) {
-              this._warn('[TTSQ] saved_wav_playback_failed_fallback_to_audio', err);
-              await playAudioElementUrl(audioItem.url, this._currentAudioRef, { playbackRate: this._ttsSpeed });
+              this._warn('[TTSQ] saved_wav_playback_failed', err);
+              throw err;
             }
           } else {
             await playWavStreamViaWebAudio(
               audioItem.url,
               this._audioContextRef,
               this._currentAudioRef,
-              () => playAudioElementUrl(audioItem.url, this._currentAudioRef, { playbackRate: this._ttsSpeed }),
               () => {
                 if (!this._onDebug) return;
                 try {
@@ -712,7 +661,7 @@ export class TtsQueueManager {
                   // ignore
                 }
               },
-              { allowRefetchFallback: false, playbackRate: this._ttsSpeed }
+              { playbackRate: this._ttsSpeed }
             );
           }
         } finally {
@@ -735,6 +684,7 @@ export class TtsQueueManager {
       }
     })()
       .catch((err) => {
+        this._lastError = err instanceof Error ? err : new Error(String(err || 'tts_player_failed'));
         this._error('[TTSQ] player_error', err);
       })
       .finally(() => {

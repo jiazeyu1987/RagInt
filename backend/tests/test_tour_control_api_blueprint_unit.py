@@ -34,9 +34,12 @@ class _Store:
         self.consume_calls: list[tuple] = []
         self.add_return = 11
         self.consume_return = True
+        self.raise_on_get = False
 
     def get_state(self, *, client_id: str):
         self.get_calls.append(("get_state", str(client_id)))
+        if self.raise_on_get:
+            raise RuntimeError("state unavailable")
         return self.state
 
     def get_effective_status(self, *, client_id: str):
@@ -91,7 +94,7 @@ def test_tour_control_get_parses_query_and_state_payload():
     ]
     client = _app(deps).test_client()
 
-    resp = client.get("/api/tour/control?since_id=x&limit=bad", headers={"X-Client-ID": "cid_1"})
+    resp = client.get("/api/tour/control?since_id=0&limit=50", headers={"X-Client-ID": "cid_1"})
     assert resp.status_code == 200
     body = resp.get_json()
     assert body["ok"] is True
@@ -103,6 +106,28 @@ def test_tour_control_get_parses_query_and_state_payload():
     assert body["commands"][0]["id"] == 7
     assert body["commands"][1]["consumed_at_ms"] == 1200
     assert ("list_commands", "cid_1", 0, 50) in deps.tour_control_store.get_calls
+
+
+def test_tour_control_get_rejects_invalid_query_params():
+    deps = _Deps()
+    client = _app(deps).test_client()
+
+    bad_since = client.get("/api/tour/control?since_id=x")
+    assert bad_since.status_code == 400
+    assert bad_since.get_json() == {"ok": False, "error": "invalid_since_id"}
+
+    bad_limit = client.get("/api/tour/control?limit=bad")
+    assert bad_limit.status_code == 400
+    assert bad_limit.get_json() == {"ok": False, "error": "invalid_limit"}
+
+
+def test_tour_control_get_store_failure_is_not_hidden():
+    deps = _Deps()
+    deps.tour_control_store.raise_on_get = True
+    client = _app(deps).test_client()
+
+    resp = client.get("/api/tour/control")
+    assert resp.status_code == 500
 
 
 def test_tour_control_post_requires_action_and_handles_save_failed():
@@ -128,16 +153,27 @@ def test_tour_control_post_success_normalizes_action_payload_and_emits_event():
     resp = client.post(
         "/api/tour/control",
         headers={"X-Client-ID": "cid_h"},
-        json={"action": " ReSuMe ", "payload": "not-dict"},
+        json={"action": " ReSuMe ", "payload": {"from": "panel"}},
     )
     assert resp.status_code == 200
     body = resp.get_json()
     assert body["ok"] is True
     assert body["client_id"] == "cid_h"
     assert body["command_id"] == 19
-    assert deps.tour_control_store.add_calls[-1] == ("cid_h", "resume", {})
+    assert deps.tour_control_store.add_calls[-1] == ("cid_h", "resume", {"from": "panel"})
     assert deps.event_store.items[-1]["name"] == "tour_control"
     assert deps.event_store.items[-1]["action"] == "resume"
+
+
+def test_tour_control_post_rejects_non_object_payload():
+    deps = _Deps()
+    client = _app(deps).test_client()
+
+    resp = client.post("/api/tour/control", json={"action": "resume", "payload": "not-dict"})
+    assert resp.status_code == 400
+    assert resp.get_json() == {"ok": False, "error": "invalid_payload"}
+    assert deps.tour_control_store.add_calls == []
+    assert deps.event_store.items == []
 
 
 def test_tour_control_consume_validates_command_id_and_returns_consumed_flag():

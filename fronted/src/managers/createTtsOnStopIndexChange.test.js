@@ -109,4 +109,63 @@ describe('createTtsOnStopIndexChange', () => {
     expect(enqueueAudioSegment).not.toHaveBeenCalled();
     expect(ensureTtsRunning).not.toHaveBeenCalled();
   });
+
+  test('throws when stop-index playback prefetch fails', () => {
+    const prefetchError = new Error('prefetch failed');
+    const pipeline = {
+      setCurrentStopIndex: jest.fn(),
+      maybePrefetchFromPlayback: jest.fn(() => {
+        throw prefetchError;
+      }),
+    };
+    const onStopIndexChange = createTtsOnStopIndexChange({
+      guideEnabledRef: { current: true },
+      tourStateRef: { current: { stopIndex: 0 } },
+      tourPipelineRef: { current: pipeline },
+      getPlaybackRecordingId: () => '',
+    });
+
+    expect(() => onStopIndexChange(1)).toThrow(prefetchError);
+  });
+
+  test('throws when tour state update fails after stop-index change', () => {
+    const stateError = new Error('state update failed');
+    const setTourState = jest.fn(() => {
+      throw stateError;
+    });
+    const pipeline = {
+      setCurrentStopIndex: jest.fn(),
+      maybePrefetchFromPlayback: jest.fn(),
+      getPrefetch: jest.fn().mockReturnValue(null),
+    };
+    const onStopIndexChange = createTtsOnStopIndexChange({
+      guideEnabledRef: { current: true },
+      tourStateRef: { current: { stopIndex: 0 } },
+      tourPipelineRef: { current: pipeline },
+      setTourState,
+      getPlaybackRecordingId: () => '',
+    });
+
+    expect(() => onStopIndexChange(1)).toThrow(stateError);
+  });
+
+  test('throws when cached answer update fails after stop-index change', () => {
+    const answerError = new Error('answer update failed');
+    const pipeline = {
+      setCurrentStopIndex: jest.fn(),
+      maybePrefetchFromPlayback: jest.fn(),
+      getPrefetch: jest.fn().mockReturnValue({ answerText: 'cached answer' }),
+    };
+    const onStopIndexChange = createTtsOnStopIndexChange({
+      guideEnabledRef: { current: true },
+      tourStateRef: { current: { stopIndex: 0 } },
+      tourPipelineRef: { current: pipeline },
+      setAnswer: jest.fn(() => {
+        throw answerError;
+      }),
+      getPlaybackRecordingId: () => '',
+    });
+
+    expect(() => onStopIndexChange(1)).toThrow(answerError);
+  });
 });

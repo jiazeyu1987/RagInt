@@ -41,18 +41,17 @@ def work_dir():
         shutil.rmtree(base, ignore_errors=True)
 
 
-def test_offline_manifest_missing_returns_default_error(work_dir: Path):
+def test_offline_manifest_missing_fails_fast(work_dir: Path):
     client = _build_app(work_dir).test_client()
     resp = client.get("/api/offline/manifest")
-    assert resp.status_code == 200
+    assert resp.status_code == 503
     body = resp.get_json()
     assert body["ok"] is False
     assert body["error"] == "offline_manifest_missing"
-    assert body["items"] == []
+    assert "items" not in body
 
 
-def test_offline_manifest_invalid_shape_and_audio_url_normalization(work_dir: Path):
-    # Invalid shape (list) should be normalized to invalid error payload.
+def test_offline_manifest_invalid_shape_fails_fast(work_dir: Path):
     root = work_dir / "data" / "offline"
     root.mkdir(parents=True, exist_ok=True)
     (root / "manifest.json").write_text("[]", encoding="utf-8")
@@ -60,20 +59,48 @@ def test_offline_manifest_invalid_shape_and_audio_url_normalization(work_dir: Pa
     client = _build_app(work_dir).test_client()
     invalid_resp = client.get("/api/offline/manifest")
     invalid_body = invalid_resp.get_json()
-    assert invalid_resp.status_code == 200
+    assert invalid_resp.status_code == 500
     assert invalid_body["ok"] is False
     assert invalid_body["error"] == "offline_manifest_invalid"
-    assert invalid_body["items"] == []
+    assert "items" not in invalid_body
 
+
+def test_offline_manifest_missing_items_list_fails_fast(work_dir: Path):
+    _write_manifest(work_dir, {"ok": True})
+
+    client = _build_app(work_dir).test_client()
+    resp = client.get("/api/offline/manifest")
+    body = resp.get_json()
+
+    assert resp.status_code == 500
+    assert body["ok"] is False
+    assert body["error"] == "offline_manifest_invalid"
+    assert "items" not in body
+
+
+def test_offline_manifest_parse_error_fails_fast(work_dir: Path):
+    root = work_dir / "data" / "offline"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "manifest.json").write_text("{", encoding="utf-8")
+
+    client = _build_app(work_dir).test_client()
+    resp = client.get("/api/offline/manifest")
+    body = resp.get_json()
+    assert resp.status_code == 500
+    assert body["ok"] is False
+    assert body["error"] == "offline_manifest_load_failed"
+    assert "items" not in body
+
+
+def test_offline_manifest_audio_url_normalization(work_dir: Path):
+    client = _build_app(work_dir).test_client()
     _write_manifest(
         work_dir,
         {
             "ok": True,
             "items": [
                 {"id": "item 1", "filename": "a.wav"},
-                {"filename": "b.wav"},
                 {"id": "custom", "audio_url": "https://example.com/c.wav", "filename": "c.wav"},
-                "skip-non-dict",
             ],
         },
     )
@@ -82,13 +109,48 @@ def test_offline_manifest_invalid_shape_and_audio_url_normalization(work_dir: Pa
     assert resp.status_code == 200
     body = resp.get_json()
     assert body["ok"] is True
-    assert len(body["items"]) == 3
+    assert len(body["items"]) == 2
     assert body["items"][0]["id"] == "item 1"
     assert body["items"][0]["audio_url"] == "http://localhost/api/offline/audio/item%201"
-    assert body["items"][1]["id"] == "1"
-    assert body["items"][1]["audio_url"] == "http://localhost/api/offline/audio/1"
-    assert body["items"][2]["id"] == "custom"
-    assert body["items"][2]["audio_url"] == "https://example.com/c.wav"
+    assert body["items"][1]["id"] == "custom"
+    assert body["items"][1]["audio_url"] == "https://example.com/c.wav"
+
+
+def test_offline_manifest_rejects_invalid_item_instead_of_skipping(work_dir: Path):
+    client = _build_app(work_dir).test_client()
+    _write_manifest(work_dir, {"ok": True, "items": ["skip-non-dict"]})
+
+    resp = client.get("/api/offline/manifest")
+    body = resp.get_json()
+
+    assert resp.status_code == 500
+    assert body["ok"] is False
+    assert body["error"] == "offline_manifest_invalid"
+    assert "items" not in body
+
+
+def test_offline_manifest_rejects_missing_item_id_instead_of_defaulting(work_dir: Path):
+    client = _build_app(work_dir).test_client()
+    _write_manifest(work_dir, {"ok": True, "items": [{"filename": "b.wav"}]})
+
+    resp = client.get("/api/offline/manifest")
+    body = resp.get_json()
+
+    assert resp.status_code == 500
+    assert body["ok"] is False
+    assert body["error"] == "offline_manifest_invalid"
+    assert "items" not in body
+
+
+def test_offline_audio_manifest_precondition_failure_is_not_not_found(work_dir: Path):
+    client = _build_app(work_dir).test_client()
+
+    resp = client.get("/api/offline/audio/anything")
+    body = resp.get_json()
+
+    assert resp.status_code == 503
+    assert body["ok"] is False
+    assert body["error"] == "offline_manifest_missing"
 
 
 def test_offline_audio_bad_path_and_missing_file(work_dir: Path):

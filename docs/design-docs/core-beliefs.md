@@ -30,4 +30,4 @@
 ## 6. 失败语义透明
 
 - provider 不支持时直接报错（如 `unsupported_press_to_talk_provider:*`）。
-- 缺少语音依赖时通过显式日志和开关（`RAGINT_REQUIRE_VOICEKIT`）控制行为。
+- 缺少默认语音依赖（VoiceKit）时启动直接失败，不跳过 `/voicekit/ws/asr`。

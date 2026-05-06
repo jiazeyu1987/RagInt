@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from backend.services.pad_product_image_service import (
+    SUPPORTED_IMAGE_MIMETYPES,
     _detect_image_dimensions,
     _detect_image_mimetype,
     _guess_extension,
@@ -32,8 +33,8 @@ class PadHallStationService:
         payload = bytes(image_bytes or b"")
         if not payload:
             raise ValueError("image_file_empty")
-        detected_mimetype = _detect_image_mimetype(filename=filename, image_bytes=payload) or str(mimetype or "").strip().lower()
-        if detected_mimetype not in {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"}:
+        detected_mimetype = _detect_image_mimetype(filename=filename, image_bytes=payload)
+        if detected_mimetype not in SUPPORTED_IMAGE_MIMETYPES:
             raise ValueError("image_format_unsupported")
         width, height = _detect_image_dimensions(filename=filename, image_bytes=payload)
         ext = _guess_extension(filename=filename, mimetype=detected_mimetype)
@@ -48,19 +49,21 @@ class PadHallStationService:
         image_bytes: bytes,
         mimetype: str = "",
     ) -> dict:
+        current = self._store.get_station_config(hall_id=hall_id, station_key=station_key)
+        if not current:
+            raise ValueError("station_config_not_found")
         payload, detected_mimetype, width, height, ext = self._prepare_upload(
             filename=filename,
             image_bytes=image_bytes,
             mimetype=mimetype,
         )
-        stored_name = f"station_bg_{_safe_file_part(station_key, fallback='station')}_{int(time.time() * 1000)}{ext}"
+        stored_name = f"station_bg_{_safe_file_part(station_key, field_name='station_key')}_{time.time_ns()}{ext}"
         rel_path, _ = self._write_station_asset_bytes(
             hall_id=hall_id,
             station_key=station_key,
             filename=stored_name,
             image_bytes=payload,
         )
-        current = self._store.get_station_config(hall_id=hall_id, station_key=station_key)
         old_background = str(current.get("background_rel_path") or "").strip()
         updated = self._store.update_station_visual_assets(
             hall_id=hall_id,
@@ -84,6 +87,8 @@ class PadHallStationService:
         mimetype: str = "",
     ) -> dict:
         current = self._store.get_station_config(hall_id=hall_id, station_key=station_key)
+        if not current:
+            raise ValueError("station_config_not_found")
         expected_width = int(current.get("base_width") or 0)
         expected_height = int(current.get("base_height") or 0)
         if expected_width <= 0 or expected_height <= 0:
@@ -95,7 +100,7 @@ class PadHallStationService:
         )
         if width != expected_width or height != expected_height:
             raise ValueError("wireframe_size_mismatch")
-        stored_name = f"station_wireframe_{_safe_file_part(station_key, fallback='station')}_{int(time.time() * 1000)}{ext}"
+        stored_name = f"station_wireframe_{_safe_file_part(station_key, field_name='station_key')}_{time.time_ns()}{ext}"
         rel_path, _ = self._write_station_asset_bytes(
             hall_id=hall_id,
             station_key=station_key,

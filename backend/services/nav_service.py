@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from backend.infra.cancellation import CancellationRegistry
 from backend.infra.event_store import EventStore
-from adapters.nav_provider import build_nav_provider
+from backend.adapters.nav_provider import build_nav_provider
 from backend.config.ragflow_app_config import NavConfig
 
 
@@ -44,7 +44,6 @@ class NavService:
     - cancel integrates with RequestRegistry cancel events.
 
     Provider:
-    - mock: in-process simulated arrival (for dev/demo).
     - http: delegate to an external chassis/nav gateway (config-driven).
     """
 
@@ -116,8 +115,12 @@ class NavService:
         nav_cfg = NavConfig.from_any((config or {}).get("nav") if isinstance(config, dict) else None)
         provider = str((nav_cfg.provider or "disabled")).strip().lower()
         # validate provider early for clearer error codes
-        if provider not in ("mock", "http"):
+        if provider == "mock":
+            raise ValueError("nav_provider_mock_not_allowed")
+        if provider != "http":
             raise ValueError("nav_disabled")
+        if not str(nav_cfg.http.base_url or "").strip():
+            raise ValueError("nav_http_base_url_missing")
 
         if timeout_s is None:
             timeout_s = float(nav_cfg.timeout_s or 30.0)

@@ -2,23 +2,32 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import math
 import queue
+import re
 import threading
 
 from .config_utils import get_nested
 from backend.config.ragflow_app_config import TtsEdgeConfig
 
 
-def _coerce_edge_percent(val, *, default="0%") -> str:
+_PERCENT_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d+)?|\.\d+)%$")
+
+
+def _coerce_edge_percent(val, *, default="0%", path="tts.edge.percent") -> str:
     if val is None:
         return default
+    if isinstance(val, bool):
+        raise ValueError(f"{path} must be a signed percent")
     if isinstance(val, (int, float)):
         n = float(val)
+        if not math.isfinite(n):
+            raise ValueError(f"{path} must be a finite percent")
         sign = "+" if n >= 0 else ""
         return f"{sign}{n:.0f}%"
     s = str(val).strip()
-    if not s:
-        return default
+    if not s or not _PERCENT_RE.fullmatch(s):
+        raise ValueError(f"{path} must be a signed percent")
     # edge-tts expects signed percent strings like "+0%" or "-10%".
     if s.endswith("%") and s[:1] not in ("+", "-"):
         return f"+{s}"
@@ -39,12 +48,12 @@ def stream_edge_tts(
 
     voice = cfg.voice
     output_format = cfg.output_format
-    rate = _coerce_edge_percent(cfg.rate, default="0%")
-    volume = _coerce_edge_percent(cfg.volume, default="0%")
+    rate = _coerce_edge_percent(cfg.rate, default="0%", path="tts.edge.rate")
+    volume = _coerce_edge_percent(cfg.volume, default="0%", path="tts.edge.volume")
 
-    timeout_s = float(cfg.timeout_s or 30.0)
-    first_audio_timeout_s = float(cfg.first_audio_timeout_s or 12.0)
-    queue_max_chunks = int(cfg.queue_max_chunks or 256)
+    timeout_s = float(cfg.timeout_s)
+    first_audio_timeout_s = float(cfg.first_audio_timeout_s)
+    queue_max_chunks = int(cfg.queue_max_chunks)
 
     cancel_event = cancel_event or threading.Event()
     if cancel_event.is_set():

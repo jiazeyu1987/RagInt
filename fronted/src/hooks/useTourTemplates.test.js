@@ -33,5 +33,27 @@ describe('useTourTemplates', () => {
     expect(hook.result().error).toBe('fetch_failed');
     hook.unmount();
   });
+
+  test('reports backend failure instead of empty templates', async () => {
+    fetchJson.mockResolvedValue({ ok: false, error: 'ragflow_config_invalid' });
+    const hook = renderHook((p) => useTourTemplates(p), { enabled: true });
+    await hook.flush();
+    await hook.flush();
+
+    expect(hook.result().templates).toEqual([]);
+    expect(hook.result().error).toBe('ragflow_config_invalid');
+    hook.unmount();
+  });
+
+  test('reports invalid response shape instead of empty templates', async () => {
+    fetchJson.mockResolvedValue({ templates: {} });
+    const hook = renderHook((p) => useTourTemplates(p), { enabled: true });
+    await hook.flush();
+    await hook.flush();
+
+    expect(hook.result().templates).toEqual([]);
+    expect(hook.result().error).toBe('tour_templates_invalid_response');
+    hook.unmount();
+  });
 });
 

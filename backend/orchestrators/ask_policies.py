@@ -33,7 +33,7 @@ def apply_selling_points_topn_hint(
     """
     In guide mode, inject top-N selling points as extra context.
     - Use duration/profile to pick a reasonable N.
-    - Best-effort: suppress all errors and keep the original question unchanged.
+    - Fail fast when required selling-point context cannot be loaded or ranked.
     """
 
     if not isinstance(guide, dict) or not bool(guide.get("enabled", False)):
@@ -59,10 +59,8 @@ def apply_selling_points_topn_hint(
     except Exception:
         n = 3
 
-    picked = []
-    with contextlib.suppress(Exception):
-        pts = selling_points_store.list(stop_name=stop_name, limit=max(50, n))
-        picked = selling_points_store.pick_topn(points=pts, n=n)
+    pts = selling_points_store.list(stop_name=stop_name, limit=max(50, n))
+    picked = selling_points_store.pick_topn(points=pts, n=n)
 
     if not picked:
         return question_for_rag

@@ -214,6 +214,127 @@ function normalizeTourStopDurationTemplates(value) {
   return out;
 }
 
+function buildInvalidPersistedSettingError(field, reason, value) {
+  const err = new Error(`Invalid persisted application setting "${field}": ${reason}`);
+  err.field = field;
+  err.value = value;
+  return err;
+}
+
+function hasOwnSetting(raw, field) {
+  return Object.prototype.hasOwnProperty.call(raw, field);
+}
+
+function assertPersistedBoolean(raw, field) {
+  if (!hasOwnSetting(raw, field)) return;
+  const value = raw[field];
+  if (typeof value === 'boolean') return;
+  if (typeof value === 'number' && Number.isFinite(value) && (value === 0 || value === 1)) return;
+  const text = String(value == null ? '' : value).trim().toLowerCase();
+  if (text === '1' || text === 'true' || text === 'yes' || text === 'on') return;
+  if (text === '0' || text === 'false' || text === 'no' || text === 'off') return;
+  throw buildInvalidPersistedSettingError(field, 'expected a boolean value', value);
+}
+
+function assertPersistedInteger(raw, field, { min = null, max = null } = {}) {
+  if (!hasOwnSetting(raw, field)) return;
+  const value = raw[field];
+  if (value == null) {
+    throw buildInvalidPersistedSettingError(field, 'expected an integer value', value);
+  }
+  const text = typeof value === 'string' ? value.trim() : value;
+  if (text === '') {
+    throw buildInvalidPersistedSettingError(field, 'expected an integer value', value);
+  }
+  const n = Number(text);
+  if (!Number.isFinite(n)) {
+    throw buildInvalidPersistedSettingError(field, 'expected an integer value', value);
+  }
+  const out = Math.round(n);
+  if (Number.isFinite(min) && out < Number(min)) {
+    throw buildInvalidPersistedSettingError(field, `must be at least ${Number(min)}`, value);
+  }
+  if (Number.isFinite(max) && out > Number(max)) {
+    throw buildInvalidPersistedSettingError(field, `must be at most ${Number(max)}`, value);
+  }
+}
+
+function assertPersistedNumber(raw, field, { min = null, max = null } = {}) {
+  if (!hasOwnSetting(raw, field)) return;
+  const value = raw[field];
+  if (value == null) {
+    throw buildInvalidPersistedSettingError(field, 'expected a number value', value);
+  }
+  const text = typeof value === 'string' ? value.trim() : value;
+  if (text === '') {
+    throw buildInvalidPersistedSettingError(field, 'expected a number value', value);
+  }
+  const n = Number(text);
+  if (!Number.isFinite(n)) {
+    throw buildInvalidPersistedSettingError(field, 'expected a number value', value);
+  }
+  if (Number.isFinite(min) && n < Number(min)) {
+    throw buildInvalidPersistedSettingError(field, `must be at least ${Number(min)}`, value);
+  }
+  if (Number.isFinite(max) && n > Number(max)) {
+    throw buildInvalidPersistedSettingError(field, `must be at most ${Number(max)}`, value);
+  }
+}
+
+function assertPersistedSaucEndpoint(raw, field) {
+  if (!hasOwnSetting(raw, field)) return;
+  const value = raw[field];
+  const text = String(value == null ? '' : value).trim();
+  if (!text) {
+    throw buildInvalidPersistedSettingError(field, 'expected a non-empty endpoint value', value);
+  }
+}
+
+function assertValidPersistedSettings(raw) {
+  [
+    'saucEnableNonstream',
+    'guideEnabled',
+    'continuousTour',
+    'tourRecordingEnabled',
+    'playTourRecordingEnabled',
+    'qaAudioCacheLookupEnabled',
+    'showHistoryPanel',
+    'showDebugPanel',
+    'groupMode',
+    'wakeWordEnabled',
+    'wakeWordStrict',
+    'asrAutoResumeAfterAnswerEnabled',
+    'asrTextFilterEnabled',
+    'saucEnableItn',
+    'saucEnablePunc',
+    'saucEnableDdc',
+    'saucShowUtterances',
+  ].forEach((field) => assertPersistedBoolean(raw, field));
+
+  assertPersistedNumber(raw, 'ttsSpeed', { min: 0.5, max: 3 });
+  assertPersistedInteger(raw, 'tourSelectedStopIndex', { min: 0 });
+  assertPersistedInteger(raw, 'wakeWordCooldownMs', { min: 0, max: 120000 });
+  assertPersistedInteger(raw, 'asrAutoResumeAfterAnswerDelayMs', { min: 300, max: 20000 });
+  assertPersistedInteger(raw, 'asrConversationAutoSubmitSilenceMs', { min: 500, max: 3000 });
+  assertPersistedInteger(raw, 'asrConversationContextRecentTurns', { min: 1, max: 20 });
+  assertPersistedInteger(raw, 'asrConversationContextMaxTokens', { min: 2000, max: 64000 });
+  assertPersistedInteger(raw, 'asrMinRecordMs', { min: 200, max: 10000 });
+  assertPersistedInteger(raw, 'asrStopGraceMs', { min: 0, max: 5000 });
+  assertPersistedInteger(raw, 'asrFinalWaitMs', { min: 200, max: 10000 });
+  assertPersistedInteger(raw, 'saucSegmentDurationMs', { min: 50, max: 1000 });
+  assertPersistedSaucEndpoint(raw, 'saucWsUrl');
+  assertPersistedSaucEndpoint(raw, 'saucResourceId');
+}
+
+function buildSettingsError(phase, cause) {
+  const action = phase === 'save' ? 'save' : 'load';
+  const message = `Failed to ${action} application settings: ${String((cause && cause.message) || cause || 'unknown error')}`;
+  const err = new Error(message);
+  err.phase = phase;
+  err.cause = cause;
+  return err;
+}
+
 function normalizeSettingsTabKey(value) {
   const key = String(value || '').trim();
   return key || DEFAULT_SETTINGS_TAB;
@@ -380,20 +501,12 @@ function normalizeAppSettings(value) {
 function readLegacySettingsFromLocalStorage() {
   if (typeof window === 'undefined' || !window.localStorage) return {};
   const read = (key) => {
-    try {
-      return window.localStorage.getItem(key);
-    } catch (_) {
-      return null;
-    }
+    return window.localStorage.getItem(key);
   };
   const readJson = (key, fallback) => {
     const raw = read(key);
     if (!raw) return fallback;
-    try {
-      return JSON.parse(raw);
-    } catch (_) {
-      return fallback;
-    }
+    return JSON.parse(raw);
   };
 
   const out = {};
@@ -468,26 +581,36 @@ function readLegacySettingsFromLocalStorage() {
 export function useAppSettings(clientId) {
   const [settings, setSettings] = useState(() => buildDefaultSettings());
   const [settingsReady, setSettingsReady] = useState(false);
+  const [settingsError, setSettingsError] = useState(null);
   const lastSavedJsonRef = useRef('');
+  const skipNextSaveRef = useRef(false);
   const saveTimerRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
     setSettingsReady(false);
+    setSettingsError(null);
+    skipNextSaveRef.current = false;
 
     (async () => {
       try {
         const res = await fetchAppSettings({ clientId });
         const serverSettings = (res && res.settings) || {};
         const hasServerSettings = !!(serverSettings && typeof serverSettings === 'object' && Object.keys(serverSettings).length);
-        const next = hasServerSettings ? normalizeAppSettings(serverSettings) : normalizeAppSettings(readLegacySettingsFromLocalStorage());
+        const persistedSettings = hasServerSettings ? serverSettings : readLegacySettingsFromLocalStorage();
+        assertValidPersistedSettings(persistedSettings);
+        const next = normalizeAppSettings(persistedSettings);
         if (cancelled) return;
         lastSavedJsonRef.current = hasServerSettings ? JSON.stringify(next) : '';
+        skipNextSaveRef.current = false;
         setSettings(next);
-      } catch (_) {
+        setSettingsError(null);
+      } catch (err) {
         if (cancelled) return;
         setSettings((prev) => normalizeAppSettings(prev));
         lastSavedJsonRef.current = '';
+        skipNextSaveRef.current = true;
+        setSettingsError(buildSettingsError('load', err));
       } finally {
         if (!cancelled) setSettingsReady(true);
       }
@@ -501,11 +624,7 @@ export function useAppSettings(clientId) {
   useEffect(() => {
     return () => {
       if (!saveTimerRef.current) return;
-      try {
-        clearTimeout(saveTimerRef.current);
-      } catch (_) {
-        // ignore
-      }
+      clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     };
   }, []);
@@ -513,14 +632,15 @@ export function useAppSettings(clientId) {
   useEffect(() => {
     if (!settingsReady) return;
     const serialized = JSON.stringify(settings);
+    if (skipNextSaveRef.current) {
+      lastSavedJsonRef.current = serialized;
+      skipNextSaveRef.current = false;
+      return;
+    }
     if (serialized === lastSavedJsonRef.current) return;
 
     if (saveTimerRef.current) {
-      try {
-        clearTimeout(saveTimerRef.current);
-      } catch (_) {
-        // ignore
-      }
+      clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
 
@@ -528,8 +648,8 @@ export function useAppSettings(clientId) {
       try {
         await saveAppSettings({ clientId, settings });
         lastSavedJsonRef.current = serialized;
-      } catch (_) {
-        // ignore
+      } catch (err) {
+        setSettingsError(buildSettingsError('save', err));
       } finally {
         saveTimerRef.current = null;
       }
@@ -537,11 +657,7 @@ export function useAppSettings(clientId) {
 
     return () => {
       if (!saveTimerRef.current) return;
-      try {
-        clearTimeout(saveTimerRef.current);
-      } catch (_) {
-        // ignore
-      }
+      clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     };
   }, [clientId, settings, settingsReady]);
@@ -640,6 +756,7 @@ export function useAppSettings(clientId) {
   return {
     ...settings,
     settingsReady,
+    settingsError,
     setTtsMode,
     setModelscopeVoice,
     setTtsSpeed,

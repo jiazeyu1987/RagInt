@@ -8,6 +8,20 @@ from pathlib import Path
 from flask import Blueprint, jsonify, request, send_file
 
 
+class OfflineManifestError(RuntimeError):
+    def __init__(self, status_code: int, error: str, detail: str | None = None):
+        super().__init__(error)
+        self.status_code = status_code
+        self.error = error
+        self.detail = detail
+
+    def to_response(self):
+        body = {"ok": False, "error": self.error}
+        if self.detail:
+            body["detail"] = self.detail
+        return jsonify(body), self.status_code
+
+
 def create_blueprint(deps):
     bp = Blueprint("offline_api", __name__)
 
@@ -17,13 +31,38 @@ def create_blueprint(deps):
 
     def _load_manifest() -> dict:
         if not manifest_path.exists():
-            return {"ok": False, "error": "offline_manifest_missing", "items": []}
+            raise OfflineManifestError(503, "offline_manifest_missing")
         try:
             with open(manifest_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return data if isinstance(data, dict) else {"ok": False, "error": "offline_manifest_invalid", "items": []}
-        except Exception as e:
-            return {"ok": False, "error": "offline_manifest_load_failed", "detail": str(e), "items": []}
+        except json.JSONDecodeError as e:
+            raise OfflineManifestError(500, "offline_manifest_load_failed", str(e)) from e
+        except OSError as e:
+            raise OfflineManifestError(503, "offline_manifest_load_failed", str(e)) from e
+        if not isinstance(data, dict):
+            raise OfflineManifestError(500, "offline_manifest_invalid")
+        items = data.get("items")
+        if not isinstance(items, list):
+            raise OfflineManifestError(500, "offline_manifest_invalid")
+        for item in items:
+            _validate_manifest_item(item)
+        return data
+
+    def _validate_manifest_item(item) -> None:
+        if not isinstance(item, dict):
+            raise OfflineManifestError(500, "offline_manifest_invalid")
+        item_id = str(item.get("id") or "").strip()
+        filename = str(item.get("filename") or "").strip()
+        if not item_id or not filename:
+            raise OfflineManifestError(500, "offline_manifest_invalid")
+        for field in ("order", "duration_ms"):
+            value = item.get(field, None)
+            if value is None:
+                continue
+            try:
+                int(value)
+            except (TypeError, ValueError) as exc:
+                raise OfflineManifestError(500, "offline_manifest_invalid") from exc
 
     def _safe_audio_path(filename: str) -> Path:
         fn = str(filename or "").replace("\\", "/").lstrip("/")
@@ -36,17 +75,16 @@ def create_blueprint(deps):
 
     @bp.route("/api/offline/manifest", methods=["GET"])
     def api_offline_manifest():
-        raw = _load_manifest()
+        try:
+            raw = _load_manifest()
+        except OfflineManifestError as e:
+            return e.to_response()
         base_url = str(request.host_url).rstrip("/")
-        items = raw.get("items") if isinstance(raw, dict) else None
-        if not isinstance(items, list):
-            items = []
+        items = raw["items"]
 
         out_items = []
-        for idx, it in enumerate(items):
-            if not isinstance(it, dict):
-                continue
-            item_id = str(it.get("id") or "").strip() or str(idx)
+        for it in items:
+            item_id = str(it.get("id") or "").strip()
             audio_url = it.get("audio_url")
             if not audio_url:
                 audio_url = f"{base_url}/api/offline/audio/{urllib.parse.quote(item_id)}"
@@ -65,15 +103,16 @@ def create_blueprint(deps):
         if not mid:
             return jsonify({"error": "item_id_required"}), 400
 
-        manifest = _load_manifest()
-        items = manifest.get("items") if isinstance(manifest, dict) else None
+        try:
+            manifest = _load_manifest()
+        except OfflineManifestError as e:
+            return e.to_response()
+        items = manifest.get("items")
         filename = None
         if isinstance(items, list):
             for it in items:
-                if not isinstance(it, dict):
-                    continue
                 if str(it.get("id") or "").strip() == mid:
-                    filename = it.get("filename") or it.get("file") or it.get("path")
+                    filename = it.get("filename")
                     break
 
         if not filename:
@@ -81,7 +120,7 @@ def create_blueprint(deps):
 
         try:
             p = _safe_audio_path(str(filename))
-        except Exception:
+        except ValueError:
             return jsonify({"error": "bad_path"}), 400
 
         if not p.exists() or not p.is_file():

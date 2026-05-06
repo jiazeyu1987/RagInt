@@ -34,10 +34,6 @@ export class VoiceInputManager {
   }
 
   dispose() {
-    try {
-      this._module.dispose();
-    } catch (_) {
-      // ignore
-    }
+    this._module.dispose();
   }
 }

@@ -38,9 +38,9 @@ export class RunCoordinator {
       const nextText = await preprocessVoiceText({ text: originalText, trigger });
       return String(nextText || '').trim() || originalText;
     } catch (e) {
-      // eslint-disable-next-line no-console
-      console.warn('[RUN] preprocess text failed', e);
-      return originalText;
+      const error = new Error('[RUN] preprocess text failed');
+      error.cause = e;
+      throw error;
     }
   }
 
@@ -141,29 +141,19 @@ export class RunCoordinator {
     this.removeQueuedQuestion(next.id);
     if (lastSpeakerRef) lastSpeakerRef.current = String(next.speaker || '');
     const prefixed = `【提问人：${String(next.speaker || '').trim() || '观众'}】${next.text}`;
-    try {
-      if (typeof beginDebugRun === 'function') beginDebugRun(next.priority === 'high' ? 'group_high' : 'group_next');
-      await this.ask(prefixed, { fromQueue: true });
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error('[QUEUE] auto ask failed', e);
-    }
+    if (typeof beginDebugRun === 'function') beginDebugRun(next.priority === 'high' ? 'group_high' : 'group_next');
+    await this.ask(prefixed, { fromQueue: true });
   }
 
   async answerQueuedNow(item) {
     const { lastSpeakerRef, beginDebugRun } = this.deps;
     if (!item || !item.id) return;
-    try {
-      this.removeQueuedQuestion(item.id);
-      if (lastSpeakerRef) lastSpeakerRef.current = String(item.speaker || '');
-      const prefixed = `【提问人：${String(item.speaker || '').trim() || '观众'}】${String(item.text || '').trim()}`;
-      if (this._isActiveRun()) this.interrupt(RUN_REASON.QUEUE_TAKEOVER);
-      if (typeof beginDebugRun === 'function') beginDebugRun(item.priority === 'high' ? 'group_high' : 'group_takeover');
-      await this.ask(prefixed, { fromQueue: true });
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error('[QUEUE] takeover failed', e);
-    }
+    this.removeQueuedQuestion(item.id);
+    if (lastSpeakerRef) lastSpeakerRef.current = String(item.speaker || '');
+    const prefixed = `【提问人：${String(item.speaker || '').trim() || '观众'}】${String(item.text || '').trim()}`;
+    if (this._isActiveRun()) this.interrupt(RUN_REASON.QUEUE_TAKEOVER);
+    if (typeof beginDebugRun === 'function') beginDebugRun(item.priority === 'high' ? 'group_high' : 'group_takeover');
+    await this.ask(prefixed, { fromQueue: true });
   }
 
   async submitUserText({
@@ -212,8 +202,8 @@ export class RunCoordinator {
           return { ok: true, kind: 'tour_command', action };
         }
       }
-    } catch (_) {
-      // ignore parse failures; fall back to normal ask
+    } catch (e) {
+      return { ok: false, kind: 'tour_command_failed', error: e };
     }
 
     if (groupMode) {

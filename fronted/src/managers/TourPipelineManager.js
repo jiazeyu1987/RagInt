@@ -66,20 +66,14 @@ export class TourPipelineManager {
     const cached = this._prefetchStore.get(idx);
     if (!cached) return false;
 
-    const segs = Array.isArray(cached.segments) && cached.segments.length ? cached.segments : null;
-    const fallback = !segs && String(cached.answerText || '').trim() ? [String(cached.answerText || '').trim()] : null;
-    const list = segs || fallback;
+    const list = Array.isArray(cached.segments) && cached.segments.length ? cached.segments : null;
     if (!list || !list.length) return false;
 
     for (const s of list) {
       const t = String(s || '').trim();
       if (!t) continue;
-      try {
-        if (enqueueSegment) enqueueSegment(t, { stopIndex: idx, source: 'prefetch_replay' });
-        if (ensureTtsRunning) ensureTtsRunning();
-      } catch (_) {
-        // ignore
-      }
+      if (enqueueSegment) enqueueSegment(t, { stopIndex: idx, source: 'prefetch_replay' });
+      if (ensureTtsRunning) ensureTtsRunning();
     }
 
     return true;
@@ -97,12 +91,8 @@ export class TourPipelineManager {
       const url = seg && seg.audio_url ? String(seg.audio_url || '').trim() : '';
       const text = seg && seg.text ? String(seg.text || '') : '';
       if (!url) continue;
-      try {
-        if (enqueueAudioSegment) enqueueAudioSegment(url, { stopIndex: idx, text, source: 'prefetch_replay' });
-        if (ensureTtsRunning) ensureTtsRunning();
-      } catch (_) {
-        // ignore
-      }
+      if (enqueueAudioSegment) enqueueAudioSegment(url, { stopIndex: idx, text, source: 'prefetch_replay' });
+      if (ensureTtsRunning) ensureTtsRunning();
     }
 
     return true;
@@ -459,14 +449,10 @@ export class TourPipelineManager {
             if (seg) {
               gotAnySegment = true;
               segments.push(seg);
-              try {
-                if (!this._isInterruptEpochCurrent(epoch)) return false;
-                if (enqueueSegment) enqueueSegment(seg, { stopIndex: idx, source: 'prefetch' });
-                if (!this._isInterruptEpochCurrent(epoch)) return false;
-                if (ensureTtsRunning) ensureTtsRunning();
-              } catch (_) {
-                // ignore
-              }
+              if (!this._isInterruptEpochCurrent(epoch)) return false;
+              if (enqueueSegment) enqueueSegment(seg, { stopIndex: idx, source: 'prefetch' });
+              if (!this._isInterruptEpochCurrent(epoch)) return false;
+              if (ensureTtsRunning) ensureTtsRunning();
             }
           }
           return true;
@@ -528,22 +514,19 @@ export class TourPipelineManager {
       const answerText = String((data && data.answer_text) || '');
       const tailOut = String((data && data.tail) || '').trim().slice(-80) || answerText.trim().slice(-80);
       const audioSegments = Array.isArray(data && data.segments) ? data.segments : [];
-      this._prefetchStore.set(idx, { answerText, tail: tailOut, createdAt: Date.now(), audioSegments });
-      this._log('[PREFETCH_REC] ready', `stopIndex=${idx}`, `segments=${audioSegments.length}`);
 
       if (enqueueAudioSegment && audioSegments.length) {
         for (const s of audioSegments) {
           const u = s && s.audio_url ? String(s.audio_url || '').trim() : '';
           const t = s && s.text ? String(s.text || '') : '';
           if (!u) continue;
-          try {
-            enqueueAudioSegment(u, { stopIndex: idx, text: t, source: 'prefetch_rec' });
-            if (ensureTtsRunning) ensureTtsRunning();
-          } catch (_) {
-            // ignore
-          }
+          enqueueAudioSegment(u, { stopIndex: idx, text: t, source: 'prefetch_rec' });
+          if (ensureTtsRunning) ensureTtsRunning();
         }
       }
+
+      this._prefetchStore.set(idx, { answerText, tail: tailOut, createdAt: Date.now(), audioSegments });
+      this._log('[PREFETCH_REC] ready', `stopIndex=${idx}`, `segments=${audioSegments.length}`);
 
       // Chain within the same prefetch window.
       const cur = this.getCurrentStopIndex();

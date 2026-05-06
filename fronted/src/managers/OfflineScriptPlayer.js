@@ -2,6 +2,21 @@ import { backendUrl, fetchJson } from '../api/backendClient';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const errorMessage = (err) => String((err && err.message) || err || 'offline_play_failed');
+
+const validateManifest = (data) => {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('offline_manifest_invalid');
+  }
+  if (data.ok === false) {
+    throw new Error(String(data.error || data.message || 'offline_manifest_response_failed'));
+  }
+  if (!Array.isArray(data.items)) {
+    throw new Error('offline_manifest_items_invalid');
+  }
+  return data;
+};
+
 export class OfflineScriptPlayer {
   constructor({ clientIdRef, emitClientEvent } = {}) {
     this._clientIdRef = clientIdRef || null;
@@ -19,7 +34,7 @@ export class OfflineScriptPlayer {
 
   async loadManifest() {
     const data = await fetchJson('/api/offline/manifest');
-    this._manifest = data || null;
+    this._manifest = validateManifest(data);
     return this._manifest;
   }
 
@@ -51,8 +66,16 @@ export class OfflineScriptPlayer {
     this._playing = true;
     this._sessionId = `offline_${Date.now()}`;
 
-    const manifest = this._manifest || (await this.loadManifest());
-    const items = Array.isArray(manifest && manifest.items) ? manifest.items : [];
+    let manifest;
+    try {
+      manifest = this._manifest ? validateManifest(this._manifest) : await this.loadManifest();
+    } catch (e) {
+      this._playing = false;
+      this._sessionId = null;
+      this._emit('offline_play_failed', { error: errorMessage(e) });
+      throw e;
+    }
+    const items = manifest.items;
     if (!items.length) {
       this._playing = false;
       this._emit('offline_play_failed', { error: 'manifest_empty' });

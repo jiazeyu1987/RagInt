@@ -163,6 +163,42 @@ describe('SettingsPanel', () => {
     view.unmount();
   });
 
+  test('rejects invalid stop prompt override shape instead of rendering empty prompts', () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() =>
+      render(
+        <SettingsPanel
+          {...buildProps({
+            activeTab: 'stop_prompt',
+            controlBarProps: {
+              tourStops: ['biz_stop'],
+              tourStopPromptOverrides: [],
+            },
+          })}
+        />
+      )
+    ).toThrow('settings_stop_prompt_overrides_invalid');
+    consoleErrorSpy.mockRestore();
+  });
+
+  test('rejects invalid explicit tour stop list shape instead of treating it as empty', () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() =>
+      render(
+        <SettingsPanel
+          {...buildProps({
+            activeTab: 'stop_prompt',
+            controlBarProps: {
+              tourStops: 'biz_stop',
+              tourStopPromptOverrides: {},
+            },
+          })}
+        />
+      )
+    ).toThrow('settings_tour_stops_invalid');
+    consoleErrorSpy.mockRestore();
+  });
+
   test('shows only silence timing control for conversation auto submit in asr tab', () => {
     const props = buildProps({
       activeTab: 'asr',
@@ -186,7 +222,7 @@ describe('SettingsPanel', () => {
     });
     const view = render(<SettingsPanel {...props} />);
 
-    expect(view.container.textContent).toContain('静音判定时长(ms)');
+    expect(view.container.textContent).toContain('静音判定时长（毫秒）');
     expect(view.container.textContent).not.toContain('语音结束后自动发送问题');
     expect(view.container.textContent).not.toContain('自动发送范围');
     view.unmount();

@@ -61,5 +61,50 @@ describe('useTourRecordings', () => {
     confirmSpy.mockRestore();
     hook.unmount();
   });
+
+  test('rejects missing recording preconditions before making requests', async () => {
+    const hook = renderHook((p) => useTourRecordings(p), {
+      activeTourRecordingIdRef: { current: '' },
+      selectedTourRecordingIdRef: { current: '' },
+      refreshTourRecordingOptions: jest.fn().mockResolvedValue(undefined),
+    });
+
+    await expect(hook.result().startTourRecordingArchive([])).rejects.toThrow('recording_stops_required');
+    await expect(hook.result().finishTourRecordingArchive()).rejects.toThrow('recording_id_required');
+    await expect(hook.result().loadTourRecordingMeta('')).rejects.toThrow('recording_id_required');
+    expect(fetchJson).not.toHaveBeenCalled();
+
+    hook.unmount();
+  });
+
+  test('propagates recording dependency failures instead of swallowing them', async () => {
+    const refreshTourRecordingOptions = jest.fn().mockRejectedValue(new Error('refresh_failed'));
+    const hook = renderHook((p) => useTourRecordings(p), {
+      clientIdRef: { current: 'cid-1' },
+      activeTourRecordingIdRef: { current: 'rec-1' },
+      selectedTourRecordingIdRef: { current: 'rec-1' },
+      refreshTourRecordingOptions,
+    });
+
+    fetchJson.mockRejectedValueOnce(new Error('finish_failed'));
+    await expect(hook.result().finishTourRecordingArchive()).rejects.toThrow('finish_failed');
+
+    fetchJson.mockRejectedValueOnce(new Error('meta_failed'));
+    await expect(hook.result().loadTourRecordingMeta('rec-1')).rejects.toThrow('meta_failed');
+
+    await expect(hook.result().refreshTourRecordings()).rejects.toThrow('refresh_failed');
+
+    hook.unmount();
+  });
+
+  test('requires refresh callback when refreshing recordings', async () => {
+    const hook = renderHook((p) => useTourRecordings(p), {});
+
+    await expect(hook.result().refreshTourRecordings()).rejects.toThrow(
+      'refresh_tour_recording_options_required'
+    );
+
+    hook.unmount();
+  });
 });
 

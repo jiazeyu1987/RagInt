@@ -48,3 +48,27 @@ def test_tour_control_command_flow(tmp_path):
     p6 = r6.get_json()
     assert p6["state"]["paused"] is False
     assert p6["state"]["status"] in ("playing", "queued")
+
+
+def test_tour_control_api_does_not_return_ok_for_corrupt_payload_json(tmp_path):
+    os.environ["RAGINT_TOUR_CONTROL_DB_PATH"] = str(tmp_path / "tour_control.db")
+    app = create_app()
+    c = app.test_client()
+
+    headers = {"X-Client-ID": "cid_corrupt_payload"}
+    r1 = c.post("/api/tour/control", headers=headers, json={"action": "jump", "payload": {"stop": "A"}})
+    assert r1.status_code == 200
+
+    store = app.config["deps"].tour_control_store
+    conn = store._connect()  # noqa: SLF001 - integration test seeds corrupt persisted JSON.
+    try:
+        conn.execute(
+            "UPDATE tour_control_commands SET payload_json = ? WHERE id = ?",
+            ("not-json", int(r1.get_json()["command_id"])),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    r2 = c.get("/api/tour/control?since_id=0", headers=headers)
+    assert r2.status_code == 500

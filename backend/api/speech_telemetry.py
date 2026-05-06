@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import time
 from dataclasses import dataclass
 
@@ -20,30 +19,26 @@ class AskStreamTelemetry:
         if not isinstance(payload, dict):
             return
 
-        try:
-            kind, text = classify_text_event(payload)
-            if not self._seen_first_text and kind == "chunk":
-                self._seen_first_text = True
-                with contextlib.suppress(Exception):
-                    self.ask_timings.set(self.request_id, t_ragflow_first_text=time.perf_counter())
-                self.event_store.emit(
-                    request_id=self.request_id,
-                    client_id=self.client_id,
-                    kind="ask",
-                    name="rag_first_text",
-                    chars=len(str(text or "")),
-                )
+        kind, text = classify_text_event(payload)
+        if not self._seen_first_text and kind == "chunk":
+            self.ask_timings.set(self.request_id, t_ragflow_first_text=time.perf_counter())
+            self.event_store.emit(
+                request_id=self.request_id,
+                client_id=self.client_id,
+                kind="ask",
+                name="rag_first_text",
+                chars=len(str(text or "")),
+            )
+            self._seen_first_text = True
 
-            if not self._seen_first_segment and kind == "segment":
-                self._seen_first_segment = True
-                seg = str(text or "")
-                self.event_store.emit(
-                    request_id=self.request_id,
-                    client_id=self.client_id,
-                    kind="ask",
-                    name="first_tts_segment",
-                    chars=len(seg),
-                    segment_seq=payload.get("segment_seq"),
-                )
-        except Exception:
-            return
+        if not self._seen_first_segment and kind == "segment":
+            seg = str(text or "")
+            self.event_store.emit(
+                request_id=self.request_id,
+                client_id=self.client_id,
+                kind="ask",
+                name="first_tts_segment",
+                chars=len(seg),
+                segment_seq=payload.get("segment_seq"),
+            )
+            self._seen_first_segment = True

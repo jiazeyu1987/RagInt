@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import sqlite3
 import uuid
 import wave
 from pathlib import Path
@@ -70,6 +71,20 @@ def _write_wav(path: Path, *, duration_ms: int = 1000, sample_rate: int = 16000)
         wf.writeframes(b"\x00\x00" * frames)
 
 
+def _corrupt_recording_json(deps: _Deps, recording_id: str, *, field: str) -> None:
+    if field not in {"metadata_json", "stops_json"}:
+        raise ValueError("unsupported_json_field")
+    conn = sqlite3.connect(str(deps.recording_store._db_path))
+    try:
+        conn.execute(
+            f"UPDATE recordings SET {field}=? WHERE recording_id=?",
+            ("{bad-json", recording_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def test_recordings_start_requires_non_empty_stops(work_dir: Path):
     app, _deps = _build_app(work_dir)
     c = app.test_client()
@@ -81,6 +96,10 @@ def test_recordings_start_requires_non_empty_stops(work_dir: Path):
     r2 = c.post("/api/recordings/start", json={"stops": "not-list"})
     assert r2.status_code == 400
     assert r2.get_json()["error"] == "stops_required"
+
+    r3 = c.post("/api/recordings/start", json={"stops": ["  "]})
+    assert r3.status_code == 400
+    assert r3.get_json()["error"] == "stops_required"
 
 
 def test_recordings_start_list_get_finish_roundtrip(work_dir: Path):
@@ -100,7 +119,11 @@ def test_recordings_start_list_get_finish_roundtrip(work_dir: Path):
     assert body["recording_id"] == "rec_roundtrip"
     assert body["metadata"]["tts_provider"] == "edge"
 
-    listed = c.get("/api/recordings?limit=bad")
+    bad_limit = c.get("/api/recordings?limit=bad")
+    assert bad_limit.status_code == 400
+    assert bad_limit.get_json()["error"] == "invalid_limit"
+
+    listed = c.get("/api/recordings?limit=50")
     assert listed.status_code == 200
     items = listed.get_json()["items"]
     assert len(items) >= 1
@@ -125,6 +148,120 @@ def test_recordings_start_list_get_finish_roundtrip(work_dir: Path):
     missing = c.get("/api/recordings/not_exists")
     assert missing.status_code == 404
     assert missing.get_json()["error"] == "not_found"
+
+
+def test_recordings_get_corrupt_metadata_json_does_not_return_empty_metadata(work_dir: Path):
+    app, deps = _build_app(work_dir)
+    deps.recording_store.create(recording_id="rec_bad_metadata", stops=["Stop A"], metadata={"source": "test"})
+    _corrupt_recording_json(deps, "rec_bad_metadata", field="metadata_json")
+
+    r = app.test_client().get("/api/recordings/rec_bad_metadata")
+
+    assert r.status_code == 500
+    body = r.get_json(silent=True)
+    assert not (body and body.get("metadata") == {})
+
+
+def test_recordings_list_corrupt_stops_json_does_not_return_zero_stop_count(work_dir: Path):
+    app, deps = _build_app(work_dir)
+    deps.recording_store.create(recording_id="rec_bad_stops", stops=["Stop A"])
+    _corrupt_recording_json(deps, "rec_bad_stops", field="stops_json")
+
+    r = app.test_client().get("/api/recordings")
+
+    assert r.status_code == 500
+    body = r.get_json(silent=True)
+    assert not (body and body.get("items"))
+
+
+def test_recordings_stop_payload_corrupt_stops_json_does_not_return_blank_stop(work_dir: Path):
+    app, deps = _build_app(work_dir)
+    deps.recording_store.create(recording_id="rec_bad_stop_payload", stops=["Stop A"])
+    _corrupt_recording_json(deps, "rec_bad_stop_payload", field="stops_json")
+
+    r = app.test_client().get("/api/recordings/rec_bad_stop_payload/stop/0")
+
+    assert r.status_code == 500
+    body = r.get_json(silent=True)
+    assert not (body and body.get("stop_name") == "")
+
+
+def test_recordings_start_store_error_does_not_return_success(work_dir: Path, monkeypatch):
+    app, deps = _build_app(work_dir)
+    c = app.test_client()
+
+    def _raise_create(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise RuntimeError("create failed")
+
+    monkeypatch.setattr(deps.recording_store, "create", _raise_create)
+
+    r = c.post("/api/recordings/start", json={"stops": ["Stop A"]})
+
+    assert r.status_code == 500
+    body = r.get_json(silent=True)
+    assert not (body and body.get("ok") is True)
+
+
+def test_recordings_start_malformed_json_returns_invalid_json(work_dir: Path):
+    app, _deps = _build_app(work_dir)
+    c = app.test_client()
+
+    r = c.post("/api/recordings/start", data="{bad-json", content_type="application/json")
+
+    assert r.status_code == 400
+    assert r.get_json()["error"] == "invalid_json"
+
+
+def test_recordings_list_store_error_does_not_return_success(work_dir: Path, monkeypatch):
+    app, deps = _build_app(work_dir)
+    c = app.test_client()
+
+    def _raise_list(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise RuntimeError("list failed")
+
+    monkeypatch.setattr(deps.recording_store, "list", _raise_list)
+
+    r = c.get("/api/recordings")
+
+    assert r.status_code == 500
+    body = r.get_json(silent=True)
+    assert not (body and body.get("ok") is True)
+
+
+def test_recordings_finish_missing_recording_returns_not_found(work_dir: Path):
+    app, _deps = _build_app(work_dir)
+    c = app.test_client()
+
+    finish = c.post("/api/recordings/not_exists/finish", json={})
+
+    assert finish.status_code == 404
+    body = finish.get_json()
+    assert body["ok"] is False
+    assert body["error"] == "not_found"
+
+
+def test_recordings_rename_missing_recording_returns_not_found(work_dir: Path):
+    app, _deps = _build_app(work_dir)
+    c = app.test_client()
+
+    rename = c.post("/api/recordings/not_exists/rename", json={"display_name": "New Name"})
+
+    assert rename.status_code == 404
+    body = rename.get_json()
+    assert body["ok"] is False
+    assert body["error"] == "not_found"
+
+
+def test_recordings_delete_missing_recording_returns_not_found(work_dir: Path):
+    app, _deps = _build_app(work_dir)
+    c = app.test_client()
+
+    delete = c.delete("/api/recordings/not_exists")
+
+    assert delete.status_code == 404
+    body = delete.get_json()
+    assert body["ok"] is False
+    assert body["error"] == "not_found"
 
 
 def test_recordings_stop_payload_found_and_not_found(work_dir: Path):
@@ -155,6 +292,29 @@ def test_recordings_stop_payload_found_and_not_found(work_dir: Path):
     missing = c.get("/api/recordings/not_exist/stop/0")
     assert missing.status_code == 404
     assert missing.get_json()["error"] == "not_found"
+
+    out_of_range = c.get("/api/recordings/rec_stop/stop/99")
+    assert out_of_range.status_code == 404
+    assert out_of_range.get_json()["error"] == "not_found"
+
+
+def test_recordings_stop_payload_missing_audio_file_does_not_omit_duration_silently(work_dir: Path):
+    app, deps = _build_app(work_dir)
+    deps.recording_store.create(recording_id="rec_missing_audio", stops=["Stop A"])
+    deps.recording_store.add_tts_audio(
+        recording_id="rec_missing_audio",
+        stop_index=0,
+        request_id="ask_1",
+        segment_index=0,
+        text="segment_a",
+        rel_path="missing.wav",
+    )
+
+    r = app.test_client().get("/api/recordings/rec_missing_audio/stop/0")
+
+    assert r.status_code == 500
+    body = r.get_json(silent=True)
+    assert not (body and body.get("segments") == [{"duration_ms": None}])
 
 
 def test_recordings_audio_bad_path_not_found_and_success(work_dir: Path):

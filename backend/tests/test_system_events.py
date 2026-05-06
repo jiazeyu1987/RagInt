@@ -19,6 +19,11 @@ class _Events:
         return [{"name": "ask_received", "fields": {"stop_name": "S1", "stop_id": "stop_1", "action_type": "guide"}}]
 
 
+class _FailingEvents(_Events):
+    def emit(self, **kwargs):  # noqa: ANN003
+        raise RuntimeError("event_store_down")
+
+
 class _Timings:
     def __init__(self):
         self.v = {"t_submit": 1.0, "t_play_end": 2.0}
@@ -29,6 +34,11 @@ class _Timings:
 
     def set(self, rid: str, **kwargs):
         self.set_calls.append((rid, dict(kwargs)))
+
+
+class _FailingTimings(_Timings):
+    def set(self, rid: str, **kwargs):
+        raise RuntimeError("timings_down")
 
 
 class _Registry:
@@ -84,6 +94,28 @@ def test_ingest_client_event_maps_wall_clock_timing_fields():
     )
     assert ingest_client_event(deps=deps, event=event2) is True
     assert ("r2", {"t_ask_client_start_ms": 1760000000222}) in deps.ask_timings.set_calls
+
+
+def test_ingest_client_event_fails_when_event_store_write_fails():
+    deps = _Deps()
+    deps.event_store = _FailingEvents()
+    event = parse_client_event(
+        req=_req(headers={"X-Request-ID": "r3"}),
+        data={"name": "play_end", "fields": {"t_client_wall_ms": 1760000000123}},
+    )
+
+    assert ingest_client_event(deps=deps, event=event) is False
+
+
+def test_ingest_client_event_fails_when_required_timing_write_fails():
+    deps = _Deps()
+    deps.ask_timings = _FailingTimings()
+    event = parse_client_event(
+        req=_req(headers={"X-Request-ID": "r4"}),
+        data={"name": "play_end", "fields": {"t_client_wall_ms": 1760000000123}},
+    )
+
+    assert ingest_client_event(deps=deps, event=event) is False
 
 
 def test_parse_status_request_id_from_header_or_query():

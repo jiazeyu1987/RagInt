@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import sqlite3
+
+import pytest
+
 from backend.services.ragflow_config_store import RagflowConfigStore
 
 
@@ -30,3 +35,31 @@ def test_ragflow_config_store_upsert_updates_config_version_fields(tmp_path):
     assert rec2.created_at_ms == 1000
     assert rec2.updated_at_ms == 2000
     assert rec2.config["k"] == "v2"
+
+
+def test_ragflow_config_store_upsert_rejects_non_dict_config(tmp_path):
+    store = RagflowConfigStore(tmp_path / "ragflow_config.db")
+
+    with pytest.raises(TypeError, match="config must be a dict"):
+        store.upsert(config=[])
+
+
+@pytest.mark.parametrize("config_json", ["{bad", "[]", "null"])
+def test_ragflow_config_store_exposes_invalid_stored_config_json(tmp_path, config_json):
+    db_path = tmp_path / "ragflow_config.db"
+    store = RagflowConfigStore(db_path)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            """
+            INSERT INTO ragflow_config (scope_id, config_json, created_at_ms, updated_at_ms)
+            VALUES (?, ?, ?, ?)
+            """,
+            ("global", config_json, 1000, 1000),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    with pytest.raises((json.JSONDecodeError, ValueError)):
+        store.get()

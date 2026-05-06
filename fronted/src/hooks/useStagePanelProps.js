@@ -15,11 +15,7 @@ export function useStagePanelProps({
 } = {}) {
   const sendStageCommand = useCallback(
     async (action, payload) => {
-      try {
-        await sendTourControl({ clientId: clientIdRef ? clientIdRef.current : '', action, payload: payload || {} });
-      } catch (_) {
-        // ignore
-      }
+      await sendTourControl({ clientId: clientIdRef ? clientIdRef.current : '', action, payload: payload || {} });
     },
     [clientIdRef]
   );

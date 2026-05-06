@@ -9,16 +9,48 @@ from backend.api.request_context import get_client_id
 from backend.api.request_validators import json_body_dict, parse_int_or_default
 
 
-def _parse_float_or_none(value):
+def _json_body_or_error():
+    try:
+        return json_body_dict(request), None
+    except ValueError as exc:
+        return None, bad_request_json(error=str(exc))
+
+
+def _parse_int_query(name: str, *, default: int, min_value: int | None = None, max_value: int | None = None):
+    try:
+        return parse_int_or_default(request.args.get(name), default=default, min_value=min_value, max_value=max_value), None
+    except ValueError as exc:
+        return None, bad_request_json(error="invalid_query_parameter", field=name, reason=str(exc))
+
+
+def _parse_float_query(name: str):
+    value = request.args.get(name)
     try:
         if value is None:
-            return None
+            return None, None
         text = str(value).strip()
         if not text:
-            return None
-        return float(text)
-    except Exception:
+            return None, None
+        return float(text), None
+    except (TypeError, ValueError) as exc:
+        return None, bad_request_json(error="invalid_query_parameter", field=name, reason="invalid_float")
+
+
+def _meta_or_error(data: dict):
+    if "meta" not in data:
+        return {}, None
+    meta = data.get("meta")
+    if not isinstance(meta, dict):
+        return None, bad_request_json(error="invalid_input", field="meta", reason="meta_must_be_object")
+    return meta, None
+
+
+def _audit_or_error(deps, **kwargs):
+    try:
+        deps.ops_store.audit(**kwargs)
         return None
+    except Exception as exc:
+        return jsonify({"ok": False, "error": "audit_failed", "detail": str(exc)}), 500
 
 
 def create_blueprint(deps):
@@ -32,7 +64,9 @@ def create_blueprint(deps):
     def api_ops_devices_list():
         if not OpsAuth.require_view(request):
             return unauthorized_json()
-        limit = parse_int_or_default(request.args.get("limit"), default=100, min_value=1, max_value=1000)
+        limit, err_resp = _parse_int_query("limit", default=100, min_value=1, max_value=1000)
+        if err_resp is not None:
+            return err_resp
         items = deps.ops_store.list_devices(limit=limit)
         return jsonify(
             {
@@ -53,12 +87,16 @@ def create_blueprint(deps):
 
     @bp.route("/api/ops/heartbeat", methods=["POST"])
     def api_ops_heartbeat():
-        data = json_body_dict(request)
+        data, err_resp = _json_body_or_error()
+        if err_resp is not None:
+            return err_resp
         device_id = str((data.get("device_id") or data.get("id") or "")).strip()
         name = data.get("name")
         model = data.get("model")
         version = data.get("version")
-        meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+        meta, meta_err = _meta_or_error(data)
+        if meta_err is not None:
+            return meta_err
         if not device_id:
             return bad_request_json(error="device_id_required")
         if OpsAuth.device_auth_required() and (not OpsAuth.require_view(request)) and (
@@ -70,17 +108,17 @@ def create_blueprint(deps):
             return jsonify({"ok": False, "error": "save_failed"}), 500
         client_id = get_client_id(request, data=data, default="-")
         deps.event_store.emit(request_id=f"hb_{device_id}", client_id=client_id, kind="ops", name="heartbeat", device_id=device_id)
-        try:
-            deps.ops_store.audit(
-                actor_kind="device",
-                actor_id=device_id,
-                action="heartbeat",
-                target_kind="device",
-                target_id=device_id,
-                payload={"model": model, "version": version},
-            )
-        except Exception:
-            pass
+        audit_err = _audit_or_error(
+            deps,
+            actor_kind="device",
+            actor_id=device_id,
+            action="heartbeat",
+            target_kind="device",
+            target_id=device_id,
+            payload={"model": model, "version": version},
+        )
+        if audit_err is not None:
+            return audit_err
         return ok_json(device_id=device_id)
 
     @bp.route("/api/ops/config", methods=["GET"])
@@ -99,7 +137,9 @@ def create_blueprint(deps):
     def api_ops_set_config():
         if not OpsAuth.require_admin(request):
             return unauthorized_json()
-        data = json_body_dict(request)
+        data, err_resp = _json_body_or_error()
+        if err_resp is not None:
+            return err_resp
         device_id = str((data.get("device_id") or data.get("id") or "")).strip()
         cfg = data.get("config") if isinstance(data.get("config"), dict) else None
         if not device_id or cfg is None:
@@ -117,27 +157,31 @@ def create_blueprint(deps):
             device_id=device_id,
             config_version=saved.config_version,
         )
-        try:
-            deps.ops_store.audit(
-                actor_kind="ops",
-                actor_id=str(client_id or "-"),
-                action="set_config",
-                target_kind="device",
-                target_id=device_id,
-                payload={"config_version": saved.config_version},
-            )
-        except Exception:
-            pass
+        audit_err = _audit_or_error(
+            deps,
+            actor_kind="ops",
+            actor_id=str(client_id or "-"),
+            action="set_config",
+            target_kind="device",
+            target_id=device_id,
+            payload={"config_version": saved.config_version},
+        )
+        if audit_err is not None:
+            return audit_err
         return ok_json(device_id=device_id, config_version=saved.config_version)
 
     @bp.route("/api/ops/register_device", methods=["POST"])
     def api_ops_register_device():
-        data = json_body_dict(request)
+        data, err_resp = _json_body_or_error()
+        if err_resp is not None:
+            return err_resp
         device_id = str((data.get("device_id") or data.get("id") or "")).strip()
         name = str((data.get("name") or "")).strip()
         model = str((data.get("model") or "")).strip()
         version = str((data.get("version") or "")).strip()
-        meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+        meta, meta_err = _meta_or_error(data)
+        if meta_err is not None:
+            return meta_err
         if not device_id:
             return bad_request_json(error="device_id_required")
         if not OpsAuth.device_shared_secret_ok(request, data):
@@ -148,24 +192,26 @@ def create_blueprint(deps):
         if not token:
             return jsonify({"ok": False, "error": "save_failed"}), 500
         client_id = get_client_id(request, data=data, default="-")
-        try:
-            deps.ops_store.audit(
-                actor_kind="ops" if OpsAuth.require_admin(request) else "device",
-                actor_id=str(client_id or "-"),
-                action="register_device",
-                target_kind="device",
-                target_id=device_id,
-                payload={"model": model, "version": version},
-            )
-        except Exception:
-            pass
+        audit_err = _audit_or_error(
+            deps,
+            actor_kind="ops" if OpsAuth.require_admin(request) else "device",
+            actor_id=str(client_id or "-"),
+            action="register_device",
+            target_kind="device",
+            target_id=device_id,
+            payload={"model": model, "version": version},
+        )
+        if audit_err is not None:
+            return audit_err
         return ok_json(device_id=device_id, device_token=token)
 
     @bp.route("/api/ops/audit", methods=["GET"])
     def api_ops_audit_list():
         if not OpsAuth.require_view(request):
             return unauthorized_json()
-        limit = parse_int_or_default(request.args.get("limit"), default=200, min_value=1, max_value=2000)
+        limit, err_resp = _parse_int_query("limit", default=200, min_value=1, max_value=2000)
+        if err_resp is not None:
+            return err_resp
         target_kind = request.args.get("target_kind")
         target_id = request.args.get("target_id")
         events = deps.ops_store.list_audit(limit=limit, target_kind=target_kind, target_id=target_id)
@@ -192,11 +238,17 @@ def create_blueprint(deps):
     def api_ops_qa_audio_pairs():
         # Keep QA-audio cache inspection open in-app.
         host_base = str((request.host_url or "")).rstrip("/")
-        limit = parse_int_or_default(request.args.get("limit"), default=100, min_value=1, max_value=500)
-        offset = parse_int_or_default(request.args.get("offset"), default=0, min_value=0, max_value=10_000_000)
+        limit, limit_err = _parse_int_query("limit", default=100, min_value=1, max_value=500)
+        if limit_err is not None:
+            return limit_err
+        offset, offset_err = _parse_int_query("offset", default=0, min_value=0, max_value=10_000_000)
+        if offset_err is not None:
+            return offset_err
         provider = str((request.args.get("provider") or "")).strip()
         voice = str((request.args.get("voice") or "")).strip()
-        speed = _parse_float_or_none(request.args.get("speed"))
+        speed, speed_err = _parse_float_query("speed")
+        if speed_err is not None:
+            return speed_err
         items = deps.qa_audio_cache_store.list_pairs(
             limit=limit,
             offset=offset,
@@ -226,39 +278,39 @@ def create_blueprint(deps):
         if not deleted:
             return jsonify({"ok": False, "error": "not_found"}), 404
         client_id = get_client_id(request, data=None, default="-")
-        try:
-            deps.ops_store.audit(
-                actor_kind="ops",
-                actor_id=str(client_id or "-"),
-                action="qa_audio_pair_delete",
-                target_kind="qa_audio_pair",
-                target_id=str(pair_id),
-                payload={},
-            )
-        except Exception:
-            pass
+        audit_err = _audit_or_error(
+            deps,
+            actor_kind="ops",
+            actor_id=str(client_id or "-"),
+            action="qa_audio_pair_delete",
+            target_kind="qa_audio_pair",
+            target_id=str(pair_id),
+            payload={},
+        )
+        if audit_err is not None:
+            return audit_err
         return ok_json(id=int(pair_id), deleted=True)
 
     @bp.route("/api/ops/qa_audio_pairs/cleanup_invalid_audio", methods=["POST"])
     def api_ops_qa_audio_pairs_cleanup_invalid_audio():
         result = deps.qa_audio_cache_store.cleanup_invalid_audio_pairs()
         client_id = get_client_id(request, data=None, default="-")
-        try:
-            deps.ops_store.audit(
-                actor_kind="ops",
-                actor_id=str(client_id or "-"),
-                action="qa_audio_pair_cleanup_invalid_audio",
-                target_kind="qa_audio_pair",
-                target_id="*",
-                payload={
-                    "scanned": int(result.get("scanned") or 0),
-                    "invalid": int(result.get("invalid") or 0),
-                    "deleted": int(result.get("deleted") or 0),
-                    "reason_counts": result.get("reason_counts") if isinstance(result.get("reason_counts"), dict) else {},
-                },
-            )
-        except Exception:
-            pass
+        audit_err = _audit_or_error(
+            deps,
+            actor_kind="ops",
+            actor_id=str(client_id or "-"),
+            action="qa_audio_pair_cleanup_invalid_audio",
+            target_kind="qa_audio_pair",
+            target_id="*",
+            payload={
+                "scanned": int(result.get("scanned") or 0),
+                "invalid": int(result.get("invalid") or 0),
+                "deleted": int(result.get("deleted") or 0),
+                "reason_counts": result.get("reason_counts") if isinstance(result.get("reason_counts"), dict) else {},
+            },
+        )
+        if audit_err is not None:
+            return audit_err
         return ok_json(
             scanned=int(result.get("scanned") or 0),
             invalid=int(result.get("invalid") or 0),

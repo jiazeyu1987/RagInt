@@ -55,6 +55,11 @@ class _Store:
         self.calls.append(dict(kwargs))
 
 
+class _FailingAddStore(_Store):
+    def add_tts_audio(self, **kwargs):
+        raise OSError("add_tts_audio_failed")
+
+
 class _Tts:
     def __init__(self, chunks):
         self._chunks = list(chunks)
@@ -74,6 +79,21 @@ class _FailingTts:
         provider = str(kwargs.get("provider") or "")
         self.calls.append(provider)
         raise RuntimeError(f"upstream_failed:{provider}")
+
+
+class _ProviderTts:
+    def __init__(self, outputs: dict[str, list[bytes] | Exception]):
+        self.outputs = outputs
+        self.calls: list[str] = []
+
+    def stream(self, **kwargs):  # noqa: ANN003
+        provider = str(kwargs.get("provider") or "")
+        self.calls.append(provider)
+        out = self.outputs[provider]
+        if isinstance(out, Exception):
+            raise out
+        for chunk in out:
+            yield chunk
 
 
 class _Cancel:
@@ -178,3 +198,103 @@ def test_flash_failure_does_not_fallback_to_sovtts1_and_keeps_upstream_error(tmp
     assert "tts_stream_failed" in names
     failed_evt = next(e for e in deps.event_store.events if e.get("name") == "tts_stream_failed")
     assert "upstream_failed:flash" in str(failed_evt.get("err") or "")
+
+
+def test_empty_output_without_explicit_fallback_chain_fails_without_next_provider(tmp_path):
+    deps = _Deps(tmp_path, chunks=[])
+    deps.tts_service = _ProviderTts({"flash": []})
+    ctx = TtsStreamContext(
+        deps=deps,
+        request_id="r-empty",
+        client_id="c-empty",
+        text="hello",
+        app_config={"tts": {"edge": {"enabled": True}}},
+        provider="flash",
+        endpoint="/api/text_to_speech_stream",
+        segment_index=0,
+        cancel_event=deps.cancel_event,
+        t_received=0.0,
+        recording_id=None,
+        stop_index=None,
+    )
+
+    with pytest.raises(RuntimeError, match="tts_provider_empty_output:flash"):
+        list(generate_streaming_tts_audio(ctx))
+    assert deps.tts_service.calls == ["flash"]
+    assert [e.get("name") for e in deps.event_store.events].count("tts_provider_fallback") == 0
+
+
+def test_explicit_fallback_chain_allows_next_provider_after_failure(tmp_path):
+    deps = _Deps(tmp_path, chunks=[])
+    deps.tts_service = _ProviderTts({"flash": RuntimeError("upstream_failed:flash"), "edge": [b"edge-bytes"]})
+    ctx = TtsStreamContext(
+        deps=deps,
+        request_id="r-chain",
+        client_id="c-chain",
+        text="hello",
+        app_config={"tts": {"fallback_chain": {"flash": ["edge"]}}},
+        provider="flash",
+        endpoint="/api/text_to_speech_stream",
+        segment_index=0,
+        cancel_event=deps.cancel_event,
+        t_received=0.0,
+        recording_id=None,
+        stop_index=None,
+    )
+
+    assert list(generate_streaming_tts_audio(ctx)) == [b"edge-bytes"]
+    assert deps.tts_service.calls == ["flash", "edge"]
+    fallback_evt = next(e for e in deps.event_store.events if e.get("name") == "tts_provider_fallback")
+    assert fallback_evt["from_provider"] == "flash"
+    assert fallback_evt["to_provider"] == "edge"
+    assert fallback_evt["reason"] == "exception"
+
+
+def test_missing_stream_provider_fails_without_implicit_edge_attempt(tmp_path):
+    deps = _Deps(tmp_path, chunks=[b"edge-bytes"])
+    ctx = TtsStreamContext(
+        deps=deps,
+        request_id="r4",
+        client_id="c4",
+        text="hello",
+        app_config={},
+        provider="",
+        endpoint="/api/text_to_speech_stream",
+        segment_index=0,
+        cancel_event=deps.cancel_event,
+        t_received=0.0,
+        recording_id=None,
+        stop_index=None,
+    )
+
+    with pytest.raises(RuntimeError, match="tts_provider_required"):
+        list(generate_streaming_tts_audio(ctx))
+    assert deps.tts_service.calls == []
+    failed_evt = next(e for e in deps.event_store.events if e.get("name") == "tts_stream_failed")
+    assert "tts_provider_required" in str(failed_evt.get("err") or "")
+
+
+def test_tts_streaming_recording_finalize_failure_fails_stream(tmp_path):
+    deps = _Deps(tmp_path, chunks=[b"a", b"b"], cancel_seq=[False, False, False])
+    deps.recording_store = _FailingAddStore(tmp_path)
+    ctx = TtsStreamContext(
+        deps=deps,
+        request_id="r5",
+        client_id="c5",
+        text="hello",
+        app_config={},
+        provider="edge",
+        endpoint="/api/text_to_speech_stream",
+        segment_index=0,
+        cancel_event=deps.cancel_event,
+        t_received=0.0,
+        recording_id="rec5",
+        stop_index=1,
+    )
+
+    with pytest.raises(RuntimeError, match="tts_recording_finalize_failed"):
+        list(generate_streaming_tts_audio(ctx))
+    names = [e.get("name") for e in deps.event_store.events]
+    assert "tts_stream_failed" in names
+    failed_evt = next(e for e in deps.event_store.events if e.get("name") == "tts_stream_failed")
+    assert "tts_recording_finalize_failed" in str(failed_evt.get("err") or "")

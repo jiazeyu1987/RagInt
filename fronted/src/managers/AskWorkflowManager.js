@@ -31,6 +31,15 @@ function sanitizeTurns(turns) {
   return out.slice(-MAX_CONTEXT_TURNS);
 }
 
+function requireRecordingStopPayload(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('recording_stop_invalid_response');
+  }
+  if (!Array.isArray(payload.chunks)) throw new Error('recording_stop_invalid_chunks');
+  if (!Array.isArray(payload.segments)) throw new Error('recording_stop_invalid_segments');
+  return payload;
+}
+
 
 export class AskWorkflowManager {
   constructor(deps) {
@@ -642,11 +651,11 @@ export class AskWorkflowManager {
         const recResp = await fetch(recUrl, { method: 'GET', signal: abortController.signal });
         if (!allow()) return '';
         if (!recResp.ok) throw new Error(`recording_stop_http_${recResp.status}`);
-        const recData = await recResp.json();
+        const recData = requireRecordingStopPayload(await recResp.json());
         if (!allow()) return '';
 
-        const chunks = Array.isArray(recData && recData.chunks) ? recData.chunks : [];
-        const segments = Array.isArray(recData && recData.segments) ? recData.segments : [];
+        const chunks = recData.chunks;
+        const segments = recData.segments;
 
         for (const c of chunks) {
           if (!allow()) break;
@@ -663,11 +672,18 @@ export class AskWorkflowManager {
           if (options.tourAction && !allow()) break;
           const audioUrl = resolveAudioUrl(item && item.audio_url ? String(item.audio_url || '').trim() : '');
           const segText = item && item.text ? String(item.text || '') : '';
-          if (!audioUrl || !ttsMgr || typeof ttsMgr.enqueueAudioUrl !== 'function') continue;
+          if (!audioUrl) throw new Error('recording_stop_invalid_audio_url');
+          if (!ttsEnabledRef || !ttsEnabledRef.current) continue;
+          if (ttsEnabledRef && ttsEnabledRef.current && (!ttsMgr || typeof ttsMgr.enqueueAudioUrl !== 'function')) {
+            throw new Error('recording_playback_tts_enqueue_missing');
+          }
           if (typeof debugMark === 'function') debugMark('ragflowFirstSegmentAt');
           if (!options.tourAction || allow()) ttsMgr.enqueueAudioUrl(audioUrl, { stopIndex: Number(stopIndex), text: segText });
           if (receivedSegmentsRef) receivedSegmentsRef.current = true;
-          if (!options.tourAction || allow()) ttsMgr.ensureRunning();
+          if (!options.tourAction || allow()) {
+            if (!ttsMgr || typeof ttsMgr.ensureRunning !== 'function') throw new Error('recording_playback_tts_runner_missing');
+            ttsMgr.ensureRunning();
+          }
         }
 
         if (typeof debugMark === 'function') debugMark('ragflowDoneAt');
@@ -1002,61 +1018,16 @@ export class AskWorkflowManager {
               return false;
             }
           } catch (err) {
-            // eslint-disable-next-line no-console
-            console.error('Error parsing chunk:', err);
+            const message = String((err && err.message) || err || '').trim();
+            throw new Error(`ask_stream_event_failed${message ? `: ${message}` : ''}`);
           }
           return true;
         },
       });
 
-      // Stream ended without explicit `done` event (e.g. client/server disconnect). Finalize to avoid UI getting stuck.
+      // Stream ended without explicit `done` event (e.g. client/server disconnect).
       if (allow() && !sawDone) {
-        try {
-          if (ttsMgr) {
-            if (ttsEnabledRef && ttsEnabledRef.current) {
-              try {
-                if (receivedSegmentsRef && !receivedSegmentsRef.current && !hasAudioHit && !ttsMgr.hasAnySegment() && fullAnswer.trim()) {
-                  ttsMgr.enqueueText(fullAnswer.trim(), {
-                    stopIndex: ttsStopIndexForAsk,
-                    source: 'ask_eof',
-                  });
-                  receivedSegmentsRef.current = true;
-                }
-              } catch (_) {
-                // ignore
-              }
-
-              try {
-                ttsMgr.markRagDone();
-                prefetchNextContinuousStop();
-                ttsMgr.ensureRunning();
-                await ttsMgr.waitForIdle();
-              } catch (_) {
-                // ignore
-              }
-            } else {
-              try {
-                ttsMgr.markRagDone();
-              } catch (_) {
-                // ignore
-              }
-            }
-          }
-        } catch (_) {
-          // ignore
-        }
-        if (allow()) {
-          try {
-            if (typeof setIsLoading === 'function') setIsLoading(false);
-          } catch (_) {
-            // ignore
-          }
-          try {
-            if (typeof debugMark === 'function') debugMark('ttsAllDoneAt');
-          } catch (_) {
-            // ignore
-          }
-        }
+        throw new Error('ragflow_stream_done_missing');
       }
 
       return fullAnswer;
@@ -1080,6 +1051,7 @@ export class AskWorkflowManager {
         }
       }
       if (allow() && typeof setIsLoading === 'function') setIsLoading(false);
+      return '';
     } finally {
       const isActiveRun = !!(activeAskRequestIdRef && activeAskRequestIdRef.current === requestId);
       const isAbortRun = !!(abortController && abortController.signal && abortController.signal.aborted);
@@ -1149,6 +1121,5 @@ export class AskWorkflowManager {
       }
     }
 
-    return fullAnswer;
   }
 }

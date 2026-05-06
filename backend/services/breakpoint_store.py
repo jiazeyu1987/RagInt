@@ -18,6 +18,10 @@ class BreakpointRecord:
     updated_at_ms: int
 
 
+class BreakpointStoreError(RuntimeError):
+    pass
+
+
 class BreakpointStore:
     def __init__(self, db_path: Path, logger: logging.Logger | None = None):
         self._logger = logger or logging.getLogger(__name__)
@@ -61,8 +65,9 @@ class BreakpointStore:
             return None
 
         with self._lock:
-            conn = self._connect()
+            conn = None
             try:
+                conn = self._connect()
                 row = conn.execute(
                     """
                     SELECT kind, client_id, state_json, created_at_ms, updated_at_ms
@@ -75,10 +80,10 @@ class BreakpointStore:
                     return None
                 try:
                     state = json.loads(str(row["state_json"] or "{}"))
-                except Exception:
-                    state = {}
+                except json.JSONDecodeError as exc:
+                    raise BreakpointStoreError("invalid_state_json") from exc
                 if not isinstance(state, dict):
-                    state = {}
+                    raise BreakpointStoreError("invalid_state_shape")
                 return BreakpointRecord(
                     kind=str(row["kind"] or k),
                     client_id=str(row["client_id"] or cid),
@@ -86,8 +91,13 @@ class BreakpointStore:
                     created_at_ms=int(row["created_at_ms"] or 0),
                     updated_at_ms=int(row["updated_at_ms"] or 0),
                 )
+            except sqlite3.Error as exc:
+                raise BreakpointStoreError("read_failed") from exc
+            except OSError as exc:
+                raise BreakpointStoreError("read_failed") from exc
             finally:
-                conn.close()
+                if conn is not None:
+                    conn.close()
 
     def upsert(self, *, kind: str, client_id: str, state: dict, now_ms: int | None = None) -> BreakpointRecord | None:
         k = str(kind or "").strip() or "tour"
@@ -99,8 +109,9 @@ class BreakpointStore:
         payload = json.dumps(state, ensure_ascii=False, separators=(",", ":"))
 
         with self._lock:
-            conn = self._connect()
+            conn = None
             try:
+                conn = self._connect()
                 conn.execute(
                     """
                     INSERT INTO breakpoints (kind, client_id, state_json, created_at_ms, updated_at_ms)
@@ -112,8 +123,13 @@ class BreakpointStore:
                     (k, cid, payload, int(now_ms), int(now_ms)),
                 )
                 conn.commit()
+            except sqlite3.Error as exc:
+                raise BreakpointStoreError("save_failed") from exc
+            except OSError as exc:
+                raise BreakpointStoreError("save_failed") from exc
             finally:
-                conn.close()
+                if conn is not None:
+                    conn.close()
 
         return self.get(kind=k, client_id=cid)
 
@@ -123,11 +139,16 @@ class BreakpointStore:
         if not cid:
             return False
         with self._lock:
-            conn = self._connect()
+            conn = None
             try:
+                conn = self._connect()
                 cur = conn.execute("DELETE FROM breakpoints WHERE kind = ? AND client_id = ?", (k, cid))
                 conn.commit()
                 return int(cur.rowcount or 0) > 0
+            except sqlite3.Error as exc:
+                raise BreakpointStoreError("delete_failed") from exc
+            except OSError as exc:
+                raise BreakpointStoreError("delete_failed") from exc
             finally:
-                conn.close()
-
+                if conn is not None:
+                    conn.close()

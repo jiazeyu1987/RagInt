@@ -133,22 +133,26 @@ def _apply_no_self_intro_prefix(*, new_part: str, intro_buf: str, intro_checked:
     return new_part, "", True, False
 
 
-def _extract_ragflow_chunk_content(chunk, *, agent_id: str, last_ragflow_content: str, logger) -> str | None:
-    content = None
+def _extract_ragflow_chunk_content(chunk, *, agent_id: str, last_ragflow_content: str, logger) -> str:
     if agent_id:
         if isinstance(chunk, str):
-            content = last_ragflow_content + chunk
+            return last_ragflow_content + chunk
         else:
-            content = str(chunk) if chunk is not None else ""
+            if chunk is None:
+                raise ValueError("ragflow agent stream chunk content is None")
+            raise TypeError(f"ragflow agent stream chunk must be str, got {type(chunk).__name__}")
     elif chunk and hasattr(chunk, "content"):
         content = chunk.content
     elif isinstance(chunk, dict) and "content" in chunk:
         content = chunk.get("content")
     else:
         logger.warning(f"Chunk没有content属性? {chunk}")
+        raise ValueError("ragflow stream chunk missing content")
     if content is None:
-        return None
-    return str(content)
+        raise ValueError("ragflow stream chunk content is None")
+    if not isinstance(content, str):
+        raise TypeError(f"ragflow stream chunk content must be str, got {type(content).__name__}")
+    return content
 
 
 def _diff_stream_content(*, content: str, last_content: str) -> tuple[str, str]:

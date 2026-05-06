@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import time
 from dataclasses import dataclass
 
@@ -68,7 +67,7 @@ def ingest_client_event(*, deps, event: ClientEventIngest) -> bool:
     if not event.request_id or not event.name:
         return False
 
-    with contextlib.suppress(Exception):
+    try:
         deps.event_store.emit(
             request_id=event.request_id,
             client_id=event.client_id,
@@ -77,10 +76,12 @@ def ingest_client_event(*, deps, event: ClientEventIngest) -> bool:
             level=event.level,
             **(event.fields or {}),
         )
+    except Exception:
+        return False
 
-    with contextlib.suppress(Exception):
-        now_perf = time.perf_counter()
-        client_wall_ms = _extract_client_wall_ms(event.fields)
+    now_perf = time.perf_counter()
+    client_wall_ms = _extract_client_wall_ms(event.fields)
+    try:
         if event.name in ("play_end", "tts_play_end", "playback_end"):
             updates = {"t_play_end": now_perf}
             if client_wall_ms is not None:
@@ -89,6 +90,8 @@ def ingest_client_event(*, deps, event: ClientEventIngest) -> bool:
         timing_key = _CLIENT_EVENT_TIMING_MAP.get(str(event.name or "").strip())
         if timing_key and client_wall_ms is not None:
             deps.ask_timings.set(event.request_id, **{timing_key: int(client_wall_ms)})
+    except Exception:
+        return False
 
     return True
 

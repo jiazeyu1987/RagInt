@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from backend.orchestrators.ragflow_streaming_core import _stream_ragflow_response
-from backend.orchestrators.ragflow_streaming_fallback import _stream_ragflow_unavailable_fallback
 from backend.orchestrators.ragflow_streaming_helpers import (
     _apply_no_self_intro_prefix,
     _apply_qa_max_chars_limit,
@@ -20,7 +19,6 @@ __all__ = [
     "AskStreamOutcome",
     "RagflowStreamSettings",
     "_stream_ragflow_response",
-    "_stream_ragflow_unavailable_fallback",
     "_apply_no_self_intro_prefix",
     "_apply_qa_max_chars_limit",
     "_close_response_safely",

@@ -3,6 +3,7 @@ from __future__ import annotations
 from flask import Flask
 
 from backend.api.speech import create_blueprint
+from backend.services.asr_text_filter import parse_asr_filter_response
 
 
 class _RagflowService:
@@ -61,13 +62,13 @@ def test_api_asr_filter_returns_corrected_text():
     assert data["ok"] is True
     assert data["text"] == "给我讲讲指引导丝"
     assert data["filtered"] is True
-    assert data["used_fallback"] is False
+    assert "used_fallback" not in data
     assert ragflow_service.calls[0]["chat_name"] == "语音模型"
     assert "给我讲讲指引导致" in ragflow_service.calls[0]["question"]
     assert "指引导丝,指引导管" in ragflow_service.calls[0]["question"]
 
 
-def test_api_asr_filter_falls_back_to_original_text_on_error():
+def test_api_asr_filter_fails_when_ragflow_filter_errors():
     ragflow_service = _RagflowService(should_raise=True)
     client = _app(ragflow_service).test_client()
 
@@ -80,10 +81,38 @@ def test_api_asr_filter_falls_back_to_original_text_on_error():
         },
     )
 
-    assert resp.status_code == 200
+    assert resp.status_code == 502
     data = resp.get_json()
-    assert data["ok"] is True
-    assert data["text"] == "给我讲讲指引导致"
-    assert data["filtered"] is False
-    assert data["used_fallback"] is True
-    assert "ragflow_chat_not_found" in data["error"]
+    assert data["ok"] is False
+    assert data["error"] == "asr_filter_failed"
+    assert "ragflow_chat_not_found" in data["detail"]
+
+
+def test_parse_asr_filter_response_rejects_invalid_model_output():
+    try:
+        parse_asr_filter_response(raw_text="not-json")
+    except ValueError as exc:
+        assert "invalid" in str(exc)
+    else:
+        raise AssertionError("invalid ASR filter output must fail instead of returning fallback text")
+
+
+def test_api_asr_filter_rejects_invalid_model_output_without_fallback_text():
+    original_text = "鍘熷鏂囨湰"
+    ragflow_service = _RagflowService(raw_output="not-json")
+    client = _app(ragflow_service).test_client()
+
+    resp = client.post(
+        "/api/asr/filter",
+        json={
+            "text": original_text,
+            "chat_name": "璇煶妯″瀷",
+            "prompt": "杈撳叆鏄瘂ASR鐨勮闊宠緭鍏",
+        },
+    )
+
+    assert resp.status_code == 502
+    data = resp.get_json()
+    assert data["ok"] is False
+    assert data["error"] == "asr_filter_invalid_response"
+    assert data.get("text") != original_text

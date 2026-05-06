@@ -62,5 +62,63 @@ describe('useTourBootstrap', () => {
 
     hook.unmount();
   });
+
+  test('reports meta load failure without clearing stops as a successful empty tour', async () => {
+    const error = new Error('HTTP 500 /api/tour/meta');
+    fetchJson.mockRejectedValue(error);
+
+    const setTourStops = jest.fn();
+    const onTourBootstrapError = jest.fn();
+
+    const hook = renderHook((p) => {
+      useTourBootstrap(p);
+      return null;
+    }, {
+      setTourStops,
+      onTourBootstrapError,
+    });
+
+    await hook.flush();
+    await hook.flush();
+
+    expect(onTourBootstrapError).toHaveBeenCalledWith(expect.objectContaining({
+      source: '/api/tour/meta',
+      error,
+    }));
+    expect(setTourStops).not.toHaveBeenCalledWith([]);
+
+    hook.unmount();
+  });
+
+  test('reports stops load failure without replacing the tour with an empty stop list', async () => {
+    const error = new Error('HTTP 500 /api/tour/stops');
+    fetchJson.mockImplementation((url) => {
+      if (url === '/api/tour/meta') return Promise.resolve({ zones: [], profiles: [] });
+      if (url === '/api/tour/stops') return Promise.reject(error);
+      return Promise.resolve({});
+    });
+
+    const setTourStops = jest.fn();
+    const onTourBootstrapError = jest.fn();
+
+    const hook = renderHook((p) => {
+      useTourBootstrap(p);
+      return null;
+    }, {
+      setTourStops,
+      onTourBootstrapError,
+    });
+
+    await hook.flush();
+    await hook.flush();
+
+    expect(onTourBootstrapError).toHaveBeenCalledWith(expect.objectContaining({
+      source: '/api/tour/stops',
+      error,
+    }));
+    expect(setTourStops).not.toHaveBeenCalledWith([]);
+
+    hook.unmount();
+  });
 });
 

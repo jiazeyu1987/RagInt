@@ -54,20 +54,14 @@ def _should_skip_provider(*, ctx: TtsStreamContext, provider: str) -> bool:
     svc = getattr(ctx.deps, "tts_service", None)
     if svc is None or not hasattr(svc, "should_skip_provider"):
         return False
-    try:
-        return bool(svc.should_skip_provider(ctx.request_id, provider))
-    except Exception:
-        return False
+    return bool(svc.should_skip_provider(ctx.request_id, provider))
 
 
 def _mark_provider_failed(*, ctx: TtsStreamContext, provider: str) -> None:
     svc = getattr(ctx.deps, "tts_service", None)
     if svc is None or not hasattr(svc, "mark_provider_failed"):
         return
-    try:
-        svc.mark_provider_failed(ctx.request_id, provider)
-    except Exception:
-        return
+    svc.mark_provider_failed(ctx.request_id, provider)
 
 
 def generate_streaming_tts_audio(ctx: TtsStreamContext) -> Iterable[bytes]:
@@ -98,9 +92,11 @@ def generate_streaming_tts_audio(ctx: TtsStreamContext) -> Iterable[bytes]:
             p_norm = str(p or "").strip().lower()
             if p_norm and p_norm not in dedup_attempt_providers:
                 dedup_attempt_providers.append(p_norm)
+        if not str(ctx.provider or "").strip():
+            raise RuntimeError("tts_provider_required")
         dedup_attempt_providers = [p for p in dedup_attempt_providers if not _should_skip_provider(ctx=ctx, provider=p)]
         if not dedup_attempt_providers:
-            dedup_attempt_providers = [str(ctx.provider or "").strip().lower() or "edge"]
+            raise RuntimeError("tts_provider_required")
 
         last_err: Exception | None = None
         selected_provider = dedup_attempt_providers[0] if dedup_attempt_providers else str(ctx.provider or "")

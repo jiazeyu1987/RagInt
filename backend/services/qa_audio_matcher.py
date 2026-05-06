@@ -61,10 +61,7 @@ class QaAudioMatcher:
         self._writeback_manager = CacheWritebackManager(store=store, tts_service=tts_service, logger=self._logger)
 
     def _set_last_debug(self, data: dict | None) -> None:
-        try:
-            self._debug_local.last = dict(data or {})
-        except Exception:
-            self._debug_local.last = {}
+        self._debug_local.last = dict(data or {})
 
     def get_last_debug(self) -> dict:
         data = getattr(self._debug_local, "last", None)
@@ -72,10 +69,7 @@ class QaAudioMatcher:
 
     @staticmethod
     def _norm_speed(v: float | int | str | None) -> float:
-        try:
-            x = float(v if v is not None else 1.0)
-        except Exception:
-            x = 1.0
+        x = float(v if v is not None else 1.0)
         return round(max(0.5, min(x, 2.0)), 2)
 
     # Compatibility wrappers (tests and callers may use these private methods).
@@ -186,10 +180,7 @@ class QaAudioMatcher:
             self._set_last_debug(debug)
             return None
 
-        try:
-            exact = self._recall_manager.find_exact_pair(question=ctx.question, tts_speed=ctx.speed)
-        except Exception:
-            exact = None
+        exact = self._recall_manager.find_exact_pair(question=ctx.question, tts_speed=ctx.speed)
         if exact is not None:
             audio_path = self._store.get_audio_file_path(pair_id=int(exact.id))
             if audio_path:
@@ -210,17 +201,21 @@ class QaAudioMatcher:
         debug["candidate_source"] = "tts_bucket"
         debug["candidate_count_in_tts_bucket"] = int(len(candidates))
         if not candidates:
-            fallback_candidates = self._recall_manager.search_candidates_any_bucket(question=ctx.question, top_k=ctx.top_k)
-            debug["candidate_count_any_bucket"] = int(len(fallback_candidates))
-            if fallback_candidates:
-                candidates = fallback_candidates
-                debug["candidate_source"] = "all_tts_buckets_fallback"
-                debug["candidate_fallback_used"] = True
+            cross_bucket_candidates = self._recall_manager.search_candidates_any_bucket(question=ctx.question, top_k=ctx.top_k)
+            debug["candidate_count_any_bucket"] = int(len(cross_bucket_candidates))
+            if cross_bucket_candidates:
+                candidates = cross_bucket_candidates
+                debug["candidate_source"] = "cross_tts_bucket_recall"
+                debug["cross_bucket_recall_used"] = True
             else:
                 debug["candidate_source"] = "no_candidates_any_bucket"
-                debug["candidate_fallback_used"] = True
+                debug["cross_bucket_recall_used"] = True
                 debug["no_candidates_in_any_bucket"] = True
         debug["candidate_count"] = int(len(candidates))
+        if not candidates:
+            self._miss_manager.mark(debug, reason="no_candidates_any_bucket")
+            self._set_last_debug(debug)
+            return None
 
         best_candidate, best_pair, best_recall, best_lexical, best_audio_url = self._recall_manager.select_best(
             question=ctx.question,
@@ -289,32 +284,9 @@ class QaAudioMatcher:
         debug["classifier_confidence"] = round(float(parsed.get("confidence") or 0.0), 4)
         debug["classifier_reason"] = str(parsed.get("reason") or "")
         if parsed.get("candidate_id") is not None:
-            try:
-                debug["candidate_id"] = int(parsed.get("candidate_id"))
-            except Exception:
-                pass
+            debug["candidate_id"] = int(parsed.get("candidate_id"))
 
         if not parsed.get("match"):
-            if best_candidate is not None and best_pair is not None and self._decision_manager.should_use_fallback(
-                lexical=best_lexical,
-                recall=best_recall,
-                entity_conflict=best_entity_conflict,
-            ):
-                reason = f"classifier_{str(parsed.get('reason') or 'no_match')}_fallback_similarity"
-                debug["hit"] = True
-                debug["reason"] = reason
-                debug["pair_id"] = int(best_pair.id)
-                debug["best_lexical"] = round(float(best_lexical), 4)
-                debug["best_recall"] = round(float(best_recall), 4)
-                self._set_last_debug(debug)
-                return self._hit_manager.build_payload(
-                    pair=best_pair,
-                    audio_url=best_audio_url,
-                    confidence=self._decision_manager.fallback_confidence(lexical=best_lexical, recall=best_recall),
-                    recall_score=best_recall,
-                    reason=reason,
-                )
-
             self._miss_manager.mark(debug, reason=f"classifier_no_match:{str(parsed.get('reason') or '')}")
             self._set_last_debug(debug)
             return None
@@ -456,16 +428,13 @@ class QaAudioMatcher:
             return
 
         def _task() -> None:
-            try:
-                self._upsert_from_answer_sync(
-                    question=q,
-                    answer=a,
-                    request_id=str(request_id or ""),
-                    tts_profile=tts_profile,
-                    app_config=app_config if isinstance(app_config, dict) else {},
-                )
-            except Exception as e:  # noqa: BLE001
-                self._logger.warning(f"[QA_AUDIO] upsert_task_failed request_id={request_id} err={e}", exc_info=True)
+            self._upsert_from_answer_sync(
+                question=q,
+                answer=a,
+                request_id=str(request_id or ""),
+                tts_profile=tts_profile,
+                app_config=app_config if isinstance(app_config, dict) else {},
+            )
 
         th = threading.Thread(target=_task, name=f"qa_audio_upsert_{int(time.time() * 1000)}", daemon=True)
         th.start()
@@ -506,20 +475,14 @@ class QaAudioMatcher:
         p = str(provider or "").strip().lower()
 
         if p in ("modelscope", "bailian", "dashscope", "flash"):
-            try:
-                sr = (((cfg.get("tts") or {}).get("bailian") or {}).get("sample_rate"))
-                if sr is not None and str(sr).strip() != "":
-                    return max(8000, int(sr))
-            except Exception:
-                pass
+            sr = (((cfg.get("tts") or {}).get("bailian") or {}).get("sample_rate"))
+            if sr is not None and str(sr).strip() != "":
+                return max(8000, int(sr))
 
         if p == "edge":
-            try:
-                fmt = str((((cfg.get("tts") or {}).get("edge") or {}).get("output_format") or "")).strip().lower()
-                m = re.search(r"(\d+)\s*khz", fmt)
-                if m:
-                    return max(8000, int(m.group(1)) * 1000)
-            except Exception:
-                pass
+            fmt = str((((cfg.get("tts") or {}).get("edge") or {}).get("output_format") or "")).strip().lower()
+            m = re.search(r"(\d+)\s*khz", fmt)
+            if m:
+                return max(8000, int(m.group(1)) * 1000)
 
         return 16000

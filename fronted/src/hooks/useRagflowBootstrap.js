@@ -47,7 +47,6 @@ export function useRagflowBootstrap({
         }
       } catch (error) {
         const nextSetters = settersRef.current || {};
-        if (!cancelled && typeof nextSetters.setChatOptions === 'function') nextSetters.setChatOptions([]);
         if (!cancelled && typeof nextSetters.onBootstrapError === 'function') {
           nextSetters.onBootstrapError({ scope: 'chats', error });
         }
@@ -64,7 +63,7 @@ export function useRagflowBootstrap({
       try {
         const data = await ragflowChatManager.listAgents();
         if (cancelled) return;
-        const agents = Array.isArray(data && data.agents) ? data.agents : [];
+        const agents = ragflowChatManager.getAgents(data);
         const nextSetters = settersRef.current || {};
         if (typeof nextSetters.setAgentOptions === 'function') nextSetters.setAgentOptions(agents);
         const defId = ragflowChatManager.resolveDefaultAgentId(data);
@@ -78,7 +77,6 @@ export function useRagflowBootstrap({
         }
       } catch (error) {
         const nextSetters = settersRef.current || {};
-        if (!cancelled && typeof nextSetters.setAgentOptions === 'function') nextSetters.setAgentOptions([]);
         if (!cancelled && typeof nextSetters.onBootstrapError === 'function') {
           nextSetters.onBootstrapError({ scope: 'agents', error });
         }

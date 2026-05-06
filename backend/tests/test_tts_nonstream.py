@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from flask import Flask, request
+import pytest
 
 from backend.api.tts_nonstream import emit_tts_request_received, parse_tts_request_context, stream_tts_audio
+from backend.services.tts_service import TTSSvc
 
 
 class _Cancel:
@@ -97,6 +99,21 @@ def test_stream_tts_audio_failure_emits_error_event():
     app = Flask(__name__)
     with app.test_request_context("/api/text_to_speech", method="POST", json={"text": "hello"}):
         ctx, _ = parse_tts_request_context(deps=deps, req=request, data={"text": "hello"})
-    out = list(stream_tts_audio(deps=deps, ctx=ctx, app_config={}, provider="edge", endpoint="/api/text_to_speech"))
-    assert out == []
+    with pytest.raises(RuntimeError, match="boom"):
+        list(stream_tts_audio(deps=deps, ctx=ctx, app_config={}, provider="edge", endpoint="/api/text_to_speech"))
     assert deps.event_store.items[-1]["name"] == "tts_failed"
+
+
+def test_tts_service_requires_explicit_provider():
+    svc = TTSSvc()
+
+    with pytest.raises(ValueError, match="tts_provider_required"):
+        list(
+            svc.stream(
+                text="hello",
+                request_id="r1",
+                config={},
+                provider="",
+                endpoint="/api/text_to_speech",
+            )
+        )

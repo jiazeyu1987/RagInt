@@ -20,8 +20,8 @@ export async function fetchJson(path, { method = 'GET', headers = {}, body, sign
   const text = await resp.text();
   try {
     return JSON.parse(text);
-  } catch (_) {
-    return { ok: true, text };
+  } catch (error) {
+    throw new Error(`Invalid JSON response ${path}`);
   }
 }
 

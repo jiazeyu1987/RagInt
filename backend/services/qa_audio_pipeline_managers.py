@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import threading
@@ -54,20 +53,11 @@ class QuestionIntakeManager:
         q = str(question or "").strip()
         p = str(provider or "").strip()
         v = str(voice or "").strip()
-        try:
-            s = float(speed if speed is not None else 1.0)
-        except Exception:
-            s = 1.0
+        s = float(speed if speed is not None else 1.0)
         s = round(max(0.5, min(s, 2.0)), 2)
-        try:
-            k = int(top_k if top_k is not None else 20)
-        except Exception:
-            k = 20
+        k = int(top_k if top_k is not None else 20)
         k = max(1, min(k, 50))
-        try:
-            t = float(threshold if threshold is not None else 0.85)
-        except Exception:
-            t = 0.85
+        t = float(threshold if threshold is not None else 0.85)
         t = max(0.0, min(t, 1.0))
         chat = str(classifier_chat_name or "问题比对").strip() or "问题比对"
         base = str(base_url or "")
@@ -222,7 +212,12 @@ class MatchClassifierManager:
 
     @classmethod
     def parse_classification(cls, raw_text: str) -> dict:
-        return parse_classification(raw_text)
+        parsed = parse_classification(raw_text)
+        if str(parsed.get("reason") or "") == "invalid_json":
+            raise ValueError("invalid_classifier_json")
+        if "match" not in parsed or "candidate_id" not in parsed or "confidence" not in parsed or "reason" not in parsed:
+            raise ValueError("invalid_classifier_json")
+        return parsed
 
     @staticmethod
     def compact_debug_raw(raw_text: str, *, head: int = 2000, tail: int = 2000) -> tuple[str, bool]:
@@ -235,8 +230,7 @@ class MatchClassifierManager:
             if isinstance(v, str):
                 return v
             if isinstance(v, (dict, list)):
-                with contextlib.suppress(Exception):
-                    return json.dumps(v, ensure_ascii=False)
+                return json.dumps(v, ensure_ascii=False)
             return str(v)
 
         def _chunk_text(chunk: Any) -> str:
@@ -256,53 +250,47 @@ class MatchClassifierManager:
                 return _to_text(chunk)
             return _to_text(chunk)
 
-        try:
-            sess = None
-            if self._ragflow_chat_manager is not None and hasattr(self._ragflow_chat_manager, "resolve_session"):
-                sess = self._ragflow_chat_manager.resolve_session(agent_id="", conversation_name=classifier_chat_name)
-            if not sess:
-                return ""
-            resp = sess.ask(prompt, stream=False)
-            if isinstance(resp, str):
-                return resp
-            if hasattr(resp, "content"):
-                return _to_text(getattr(resp, "content"))
-            if isinstance(resp, dict):
-                for k in ("answer", "content", "text"):
-                    if k in resp and resp.get(k):
-                        return _to_text(resp.get(k))
-            if hasattr(resp, "__iter__"):
-                parts: list[str] = []
-                current = ""
-                for chunk in resp:
-                    txt = _chunk_text(chunk)
-                    if not txt:
-                        continue
-                    if not current:
-                        current = txt
-                        continue
-                    if txt.startswith(current):
-                        current = txt
-                        continue
-                    if current.startswith(txt):
-                        continue
-                    parts.append(current)
+        sess = None
+        if self._ragflow_chat_manager is not None and hasattr(self._ragflow_chat_manager, "resolve_session"):
+            sess = self._ragflow_chat_manager.resolve_session(agent_id="", conversation_name=classifier_chat_name)
+        if not sess:
+            raise RuntimeError(f"qa_audio_classifier_session_missing classifier_chat_name={classifier_chat_name}")
+        resp = sess.ask(prompt, stream=False)
+        if isinstance(resp, str):
+            return resp
+        if hasattr(resp, "content"):
+            return _to_text(getattr(resp, "content"))
+        if isinstance(resp, dict):
+            for k in ("answer", "content", "text"):
+                if k in resp and resp.get(k):
+                    return _to_text(resp.get(k))
+        if hasattr(resp, "__iter__"):
+            parts: list[str] = []
+            current = ""
+            for chunk in resp:
+                txt = _chunk_text(chunk)
+                if not txt:
+                    continue
+                if not current:
                     current = txt
-                if current:
-                    parts.append(current)
-                return "".join(parts)
-            return str(resp or "")
-        except Exception as e:  # noqa: BLE001
-            self._logger.warning(f"[QA_AUDIO] classifier_call_failed err={e}")
-            return ""
+                    continue
+                if txt.startswith(current):
+                    current = txt
+                    continue
+                if current.startswith(txt):
+                    continue
+                parts.append(current)
+                current = txt
+            if current:
+                parts.append(current)
+            return "".join(parts)
+        return str(resp or "")
 
 
 class MatchDecisionManager:
     def __init__(self):
         self.heuristic_lexical_threshold = 0.45
         self.heuristic_recall_threshold = 0.62
-        self.fallback_lexical_threshold = 0.35
-        self.fallback_recall_threshold = 0.55
         self.soft_accept_lexical_threshold = 0.9
         self.soft_accept_confidence_threshold = 0.30
         self.soft_accept_recall_threshold = 0.20
@@ -310,16 +298,9 @@ class MatchDecisionManager:
     def should_use_heuristic(self, *, lexical: float, recall: float, entity_conflict: bool) -> bool:
         return (not entity_conflict) and lexical >= self.heuristic_lexical_threshold and recall >= self.heuristic_recall_threshold
 
-    def should_use_fallback(self, *, lexical: float, recall: float, entity_conflict: bool) -> bool:
-        return (not entity_conflict) and lexical >= self.fallback_lexical_threshold and recall >= self.fallback_recall_threshold
-
     @staticmethod
     def heuristic_confidence(*, lexical: float, recall: float) -> float:
         return min(0.98, max(0.86, (lexical * 0.6) + (recall * 0.4)))
-
-    @staticmethod
-    def fallback_confidence(*, lexical: float, recall: float) -> float:
-        return min(0.92, max(0.78, (lexical * 0.65) + (recall * 0.35)))
 
     def should_soft_accept(self, *, confidence: float, lexical: float, recall: float, entity_conflict: bool) -> bool:
         if entity_conflict:
@@ -421,8 +402,7 @@ class CacheWritebackManager:
             if chunk:
                 chunks.append(bytes(chunk))
         if not chunks:
-            self._logger.warning(f"[QA_AUDIO] tts_no_audio request_id={request_id}")
-            return None
+            raise ValueError(f"qa_audio_tts_no_audio request_id={request_id}")
 
         audio_bytes_raw = b"".join(chunks)
         wav_bytes = ensure_wav_bytes(
@@ -436,10 +416,7 @@ class CacheWritebackManager:
         audio_ext = ".wav"
         if not audio_bytes_to_store:
             if not _looks_like_known_audio_container(audio_bytes_raw):
-                self._logger.warning(
-                    f"[QA_AUDIO] tts_audio_unsupported_for_cache request_id={request_id} bytes={len(audio_bytes_raw)}"
-                )
-                return None
+                raise ValueError(f"qa_audio_tts_audio_unsupported request_id={request_id} bytes={len(audio_bytes_raw)}")
             audio_bytes_to_store = audio_bytes_raw
             audio_ext = _guess_audio_ext(audio_bytes_raw)
             self._logger.info(
@@ -463,4 +440,6 @@ class CacheWritebackManager:
             embedding=embed_fn(question),
             embedding_model="hash_char_ngram_v1",
         )
-        return int(pair_id) if pair_id else None
+        if not pair_id:
+            raise RuntimeError(f"qa_audio_store_upsert_failed request_id={request_id}")
+        return int(pair_id)

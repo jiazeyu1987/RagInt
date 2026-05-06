@@ -58,12 +58,9 @@ class AppSettingsStore:
         sid = str(row["scope_id"] or fallback_scope_id or "").strip()
         if not sid:
             return None
-        try:
-            settings = json.loads(str(row["settings_json"] or "{}"))
-        except Exception:
-            settings = {}
+        settings = json.loads(str(row["settings_json"] or "{}"))
         if not isinstance(settings, dict):
-            settings = {}
+            raise ValueError("app_settings_json_invalid")
         return AppSettingsRecord(
             scope_id=sid,
             settings=settings,

@@ -4,6 +4,8 @@ import json
 import queue
 import struct
 
+import pytest
+
 from backend.ws.sauc_proxy import (
     _CompressionType,
     _MessageFlags,
@@ -50,13 +52,19 @@ def _make_server_packet(*, message_type: int, flags: int, payload_obj: dict, seq
 
 def test_to_int_to_bool_and_header_helpers():
     assert _to_int("12.8", 10, min_value=1, max_value=20) == 13
-    assert _to_int("x", 10, min_value=1, max_value=20) == 10
-    assert _to_int(999, 10, min_value=1, max_value=100) == 100
 
     assert _to_bool(True) is True
     assert _to_bool("true") is True
     assert _to_bool("0") is False
-    assert _to_bool("unknown", fallback=True) is True
+
+    with pytest.raises(ValueError, match="sauc_config_invalid_seg_duration_ms"):
+        _to_int("x", 10, min_value=1, max_value=20)
+
+    with pytest.raises(ValueError, match="sauc_config_invalid_seg_duration_ms"):
+        _to_int(999, 10, min_value=1, max_value=100)
+
+    with pytest.raises(ValueError, match="sauc_config_invalid_enable_itn"):
+        _to_bool("unknown")
 
     h = _build_header(message_type=_MessageType.CLIENT_FULL_REQUEST, message_flags=_MessageFlags.POS_SEQUENCE)
     assert len(h) == 4
@@ -118,9 +126,12 @@ def test_parse_sauc_response_full_and_error_packets():
     assert err["payload_msg"]["msg"] == "bad"
 
 
-def test_parse_sauc_response_handles_invalid_payload_safely():
-    assert _parse_sauc_response(b"abc")["payload_msg"] is None
+def test_parse_sauc_response_rejects_short_packet_as_protocol_error():
+    with pytest.raises(ValueError, match="sauc_protocol_short_packet"):
+        _parse_sauc_response(b"abc")
 
+
+def test_parse_sauc_response_rejects_invalid_gzip_payload_as_protocol_error():
     raw = bytearray()
     raw.append((_ProtocolVersion.V1 << 4) | 1)
     raw.append((_MessageType.SERVER_FULL_RESPONSE << 4) | _MessageFlags.POS_SEQUENCE)
@@ -129,8 +140,24 @@ def test_parse_sauc_response_handles_invalid_payload_safely():
     raw.extend(struct.pack(">i", 1))
     raw.extend(struct.pack(">I", 4))
     raw.extend(b"xxxx")
-    out = _parse_sauc_response(bytes(raw))
-    assert out["payload_msg"] is None
+
+    with pytest.raises(ValueError, match="sauc_protocol_gzip_decode_failed"):
+        _parse_sauc_response(bytes(raw))
+
+
+def test_parse_sauc_response_rejects_invalid_json_payload_as_protocol_error():
+    raw = bytearray()
+    raw.append((_ProtocolVersion.V1 << 4) | 1)
+    raw.append((_MessageType.SERVER_FULL_RESPONSE << 4) | _MessageFlags.POS_SEQUENCE)
+    raw.append((_SerializationType.JSON << 4) | _CompressionType.GZIP)
+    raw.append(0x00)
+    payload = _gzip_compress(b"{not-json")
+    raw.extend(struct.pack(">i", 1))
+    raw.extend(struct.pack(">I", len(payload)))
+    raw.extend(payload)
+
+    with pytest.raises(ValueError, match="sauc_protocol_json_decode_failed"):
+        _parse_sauc_response(bytes(raw))
 
 
 def test_extract_transcript_text_and_delta_logic():
@@ -171,7 +198,7 @@ def test_parse_client_message_and_normalize_start_config():
             "resource_id": " rid ",
             "app_key": " app ",
             "access_key": " key ",
-            "seg_duration_ms": 10000,
+            "seg_duration_ms": 1000,
             "enable_itn": "false",
             "enable_punc": "1",
             "enable_ddc": "no",
@@ -188,6 +215,44 @@ def test_parse_client_message_and_normalize_start_config():
     assert cfg2.enable_ddc is False
     assert cfg2.show_utterances is True
     assert cfg2.enable_nonstream is True
+
+
+def test_normalize_start_config_rejects_invalid_numeric_and_boolean_values():
+    cfg, err = _normalize_start_config(
+        {
+            "ws_url": "wss://x",
+            "resource_id": "rid",
+            "app_key": "app",
+            "access_key": "key",
+            "seg_duration_ms": "not-a-number",
+        }
+    )
+    assert cfg is None
+    assert err == "sauc_config_invalid_seg_duration_ms"
+
+    cfg_out_of_range, err_out_of_range = _normalize_start_config(
+        {
+            "ws_url": "wss://x",
+            "resource_id": "rid",
+            "app_key": "app",
+            "access_key": "key",
+            "seg_duration_ms": 10000,
+        }
+    )
+    assert cfg_out_of_range is None
+    assert err_out_of_range == "sauc_config_invalid_seg_duration_ms"
+
+    cfg2, err2 = _normalize_start_config(
+        {
+            "ws_url": "wss://x",
+            "resource_id": "rid",
+            "app_key": "app",
+            "access_key": "key",
+            "enable_itn": "maybe",
+        }
+    )
+    assert cfg2 is None
+    assert err2 == "sauc_config_invalid_enable_itn"
 
 
 def test_queue_helpers_and_handshake_hints_and_error_message():

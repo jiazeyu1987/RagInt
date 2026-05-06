@@ -76,7 +76,7 @@ describe('backendClient', () => {
     await expect(fetchJson('/api/text_json')).resolves.toEqual({ ok: true, x: 2 });
   });
 
-  test('fetchJson returns text payload when text is not JSON', async () => {
+  test('fetchJson rejects text body that is not JSON', async () => {
     global.fetch.mockResolvedValueOnce(
       mockResponse({
         contentType: 'text/plain',
@@ -84,7 +84,7 @@ describe('backendClient', () => {
       })
     );
 
-    await expect(fetchJson('/api/text_plain')).resolves.toEqual({ ok: true, text: 'plain body' });
+    await expect(fetchJson('/api/text_plain')).rejects.toThrow('Invalid JSON response /api/text_plain');
   });
 
   test('cancelRequest is no-op when requestId is empty', () => {

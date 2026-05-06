@@ -21,10 +21,14 @@ def _parse_terms(raw) -> list[str]:
     if isinstance(raw, (list, tuple, set)):
         out = []
         for x in raw:
+            if isinstance(x, (dict, list, tuple, set)):
+                raise TypeError("safety blacklist terms must be strings")
             x = str(x or "").strip()
             if x:
                 out.append(x)
         return out
+    if isinstance(raw, dict):
+        raise TypeError("safety blacklist must be a string or list of strings")
 
     s = str(raw or "").strip()
     if not s:
@@ -49,10 +53,19 @@ class SensitiveWordsFilter:
 
     @classmethod
     def from_config(cls, cfg: dict | None) -> "SensitiveWordsFilter":
-        cfg = cfg if isinstance(cfg, dict) else {}
-        safety = cfg.get("safety") if isinstance(cfg.get("safety"), dict) else {}
+        if cfg is None:
+            cfg = {}
+        elif not isinstance(cfg, dict):
+            raise TypeError("safety config must be an object")
+        safety_raw = cfg.get("safety")
+        if safety_raw is None:
+            safety = {}
+        elif isinstance(safety_raw, dict):
+            safety = safety_raw
+        else:
+            raise TypeError("safety config section must be an object")
         raw = None
-        if isinstance(safety, dict) and "blacklist" in safety:
+        if "blacklist" in safety:
             raw = safety.get("blacklist")
         elif "sensitive_words" in cfg:
             raw = cfg.get("sensitive_words")
@@ -114,4 +127,3 @@ class SensitiveWordsFilter:
             if n and n in combined:
                 return orig, combined
         return None, combined
-

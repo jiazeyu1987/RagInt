@@ -11,24 +11,15 @@ export function useLocalStorageState(
   const storageKey = String(key || '').trim();
   const [value, setValue] = useState(() => {
     if (!storageKey) return typeof defaultValue === 'function' ? defaultValue() : defaultValue;
-    try {
-      const raw = localStorage.getItem(storageKey);
-      if (raw == null) return typeof defaultValue === 'function' ? defaultValue() : defaultValue;
-      return deserialize(raw);
-    } catch (_) {
-      return typeof defaultValue === 'function' ? defaultValue() : defaultValue;
-    }
+    const raw = localStorage.getItem(storageKey);
+    if (raw == null) return typeof defaultValue === 'function' ? defaultValue() : defaultValue;
+    return deserialize(raw);
   });
 
   useEffect(() => {
     if (!storageKey) return;
-    try {
-      localStorage.setItem(storageKey, serialize(value));
-    } catch (_) {
-      // ignore
-    }
+    localStorage.setItem(storageKey, serialize(value));
   }, [storageKey, value, serialize]);
 
   return [value, setValue];
 }
-

@@ -33,22 +33,13 @@ describe('parseTourCommand', () => {
     });
   });
 
-  test('uses safe defaults for missing payload fields', async () => {
-    fetchJson.mockResolvedValueOnce({ intent: 'none' });
-
-    await parseTourCommand();
-
-    expect(fetchJson).toHaveBeenCalledWith('/api/tour/command/parse', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Client-ID': '',
-      },
-      body: JSON.stringify({
-        text: '',
-        stops: [],
-      }),
+  test('rejects missing text and invalid stops before request', async () => {
+    await expect(parseTourCommand()).resolves.toEqual({ ok: false, error: 'text_required' });
+    await expect(parseTourCommand({ text: 'next', stops: 'bad' })).resolves.toEqual({
+      ok: false,
+      error: 'stops_list_required',
     });
+    expect(fetchJson).not.toHaveBeenCalled();
   });
 });
 

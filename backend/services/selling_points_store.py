@@ -69,27 +69,38 @@ class SellingPointsStore:
             return
 
     @staticmethod
-    def _normalize_level(level: str | None) -> str:
+    def _normalize_level(level: str | None, *, default: str | None = "public") -> str:
         v = str(level or "").strip().lower()
+        if not v and default is not None:
+            return default
         if v in ("public", "internal", "sensitive"):
             return v
-        return "public"
+        raise ValueError("selling_points_level_invalid")
 
     @staticmethod
-    def _normalize_status(status: str | None) -> str:
+    def _normalize_status(status: str | None, *, default: str | None = "published") -> str:
         v = str(status or "").strip().lower()
+        if not v and default is not None:
+            return default
         if v in ("draft", "review", "published"):
             return v
-        return "published"
+        raise ValueError("selling_points_status_invalid")
 
     @staticmethod
     def _levels_upto(max_level: str) -> tuple[str, ...]:
         order = ("public", "internal", "sensitive")
-        try:
-            idx = order.index(SellingPointsStore._normalize_level(max_level))
-        except Exception:
-            idx = 0
+        idx = order.index(SellingPointsStore._normalize_level(max_level, default=None))
         return order[: idx + 1]
+
+    @staticmethod
+    def _parse_tags_json(raw: object, *, stop_name: str, text: str) -> list[object]:
+        try:
+            tags = json.loads(str(raw))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid selling_points.tags_json for stop_name={stop_name!r} text={text!r}") from exc
+        if not isinstance(tags, list):
+            raise ValueError(f"invalid selling_points.tags_json for stop_name={stop_name!r} text={text!r}: expected list")
+        return tags
 
     def upsert(
         self,
@@ -109,7 +120,7 @@ class SellingPointsStore:
         try:
             w = float(weight)
         except Exception:
-            w = 0.0
+            raise ValueError("selling_points_weight_invalid") from None
         w = max(-1000.0, min(w, 1000.0))
         if now_ms is None:
             now_ms = int(time.time() * 1000)
@@ -191,20 +202,17 @@ class SellingPointsStore:
                 ).fetchall()
                 out: list[SellingPoint] = []
                 for r in rows:
-                    try:
-                        tags = json.loads(str(r["tags_json"] or "[]"))
-                    except Exception:
-                        tags = []
-                    if not isinstance(tags, list):
-                        tags = []
+                    row_stop_name = str(r["stop_name"] or sn)
+                    row_text = str(r["text"] or "")
+                    tags = self._parse_tags_json(r["tags_json"], stop_name=row_stop_name, text=row_text)
                     out.append(
                         SellingPoint(
-                            stop_name=str(r["stop_name"] or sn),
-                            text=str(r["text"] or ""),
+                            stop_name=row_stop_name,
+                            text=row_text,
                             weight=float(r["weight"] or 0.0),
                             tags=tuple(str(x).strip() for x in tags if str(x).strip()),
-                            level=self._normalize_level(str(r["level"] or "public")),
-                            status=self._normalize_status(str(r["status"] or "published")),
+                            level=self._normalize_level(str(r["level"] or ""), default=None),
+                            status=self._normalize_status(str(r["status"] or ""), default=None),
                             updated_at_ms=int(r["updated_at_ms"] or 0),
                         )
                     )
@@ -215,7 +223,7 @@ class SellingPointsStore:
     def set_status(self, *, stop_name: str, text: str, status: str, now_ms: int | None = None) -> bool:
         sn = str(stop_name or "").strip()
         t = str(text or "").strip()
-        st = self._normalize_status(status)
+        st = self._normalize_status(status, default=None)
         if not sn or not t:
             return False
         if now_ms is None:
@@ -253,7 +261,7 @@ class SellingPointsStore:
                     "SELECT status FROM selling_points WHERE stop_name = ? AND text = ?",
                     (sn, t),
                 ).fetchone()
-                current = self._normalize_status(str(row["status"])) if row else None
+                current = self._normalize_status(str(row["status"]), default=None) if row else None
             finally:
                 conn.close()
 
@@ -277,7 +285,10 @@ class SellingPointsStore:
 
     @staticmethod
     def pick_topn(*, points: list[SellingPoint], n: int) -> list[SellingPoint]:
-        n = max(0, min(int(n or 0), 20))
+        try:
+            n = max(0, min(int(n or 0), 20))
+        except Exception:
+            raise ValueError("selling_points_topn_invalid") from None
         if n <= 0:
             return []
         # already sorted by weight desc in list(), but keep stable behavior if caller passes unsorted list

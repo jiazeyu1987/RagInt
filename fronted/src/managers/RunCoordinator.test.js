@@ -133,4 +133,92 @@ describe('RunCoordinator', () => {
     expect(parseTourCommand).not.toHaveBeenCalled();
     expect(askQuestion).toHaveBeenCalledWith('next stop please', undefined);
   });
+
+  test('submitUserText fails fast when preprocessing fails', async () => {
+    const cause = new Error('preprocess unavailable');
+    const askQuestion = jest.fn().mockResolvedValue('');
+    const c = new RunCoordinator({
+      askQuestion,
+      preprocessVoiceText: jest.fn().mockRejectedValue(cause),
+    });
+
+    await expect(
+      c.submitUserText({
+        text: 'hello',
+        trigger: 'text',
+        groupMode: false,
+        useAgentMode: false,
+        selectedAgentId: '',
+      })
+    ).rejects.toMatchObject({
+      message: '[RUN] preprocess text failed',
+      cause,
+    });
+    expect(askQuestion).not.toHaveBeenCalled();
+  });
+
+  test('maybeStartNextQueuedQuestion propagates auto ask failures', async () => {
+    const failure = new Error('ask failed');
+    const queueRef = {
+      current: [{ id: 'q1', speaker: 'Alice', text: 'question', priority: 'normal' }],
+    };
+    const c = new RunCoordinator({
+      askQuestion: jest.fn().mockRejectedValue(failure),
+      beginDebugRun: jest.fn(),
+      getIsLoading: () => false,
+      askAbortRef: { current: null },
+      currentAudioRef: { current: null },
+      ttsManagerRef: { current: null },
+      queueRef,
+      setQuestionQueue: jest.fn(),
+      lastSpeakerRef: { current: '' },
+      groupModeRef: { current: true },
+      tourPipelineRef: { current: null },
+    });
+
+    await expect(c.maybeStartNextQueuedQuestion()).rejects.toBe(failure);
+  });
+
+  test('answerQueuedNow propagates takeover ask failures', async () => {
+    const failure = new Error('takeover failed');
+    const queueRef = {
+      current: [{ id: 'q1', speaker: 'Alice', text: 'question', priority: 'high' }],
+    };
+    const c = new RunCoordinator({
+      askQuestion: jest.fn().mockRejectedValue(failure),
+      beginDebugRun: jest.fn(),
+      getIsLoading: () => false,
+      askAbortRef: { current: null },
+      currentAudioRef: { current: null },
+      ttsManagerRef: { current: null },
+      queueRef,
+      setQuestionQueue: jest.fn(),
+      lastSpeakerRef: { current: '' },
+    });
+
+    await expect(c.answerQueuedNow(queueRef.current[0])).rejects.toBe(failure);
+  });
+
+  test('submitUserText returns tour_command_failed without falling back to ask', async () => {
+    const failure = new Error('tour command parse failed');
+    const askQuestion = jest.fn().mockResolvedValue('');
+    const c = new RunCoordinator({
+      askQuestion,
+      parseTourCommand: jest.fn().mockRejectedValue(failure),
+      guideEnabledRef: { current: true },
+      clientIdRef: { current: 'client-1' },
+      getTourStops: () => ['A'],
+    });
+
+    const res = await c.submitUserText({
+      text: 'next stop please',
+      trigger: 'wake_word',
+      groupMode: false,
+      useAgentMode: false,
+      selectedAgentId: '',
+    });
+
+    expect(res).toEqual({ ok: false, kind: 'tour_command_failed', error: failure });
+    expect(askQuestion).not.toHaveBeenCalled();
+  });
 });

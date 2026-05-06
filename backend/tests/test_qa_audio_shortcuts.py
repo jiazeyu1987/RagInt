@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+
+from backend.orchestrators.ask_shortcuts import _maybe_stream_cache_hit
 from backend.orchestrators.ask_shortcuts import _maybe_stream_audio_cache_hit
 from backend.services.safety_filter import SensitiveWordsFilter
 
@@ -12,6 +15,16 @@ class _Matcher:
     def find_match(self, **kwargs):  # noqa: ANN003
         self.calls.append(dict(kwargs))
         return dict(self.payload)
+
+
+class _FailingMatcher:
+    def find_match(self, **kwargs):  # noqa: ANN003
+        raise RuntimeError("qa matcher unavailable")
+
+
+class _FailingHistoryStore:
+    def cache_get(self, *, question: str, kb_version: str):  # noqa: ARG002
+        raise RuntimeError("cache store unavailable")
 
 
 def _collect(gen):
@@ -171,3 +184,43 @@ def test_audio_cache_shortcut_skips_lookup_when_disabled():
     assert payloads == []
     assert outcome is None
     assert len(matcher.calls) == 0
+
+
+def test_regular_cache_lookup_dependency_error_is_not_treated_as_miss():
+    safety = SensitiveWordsFilter.from_config({})
+
+    with pytest.raises(RuntimeError, match="cache store unavailable"):
+        _collect(
+            _maybe_stream_cache_hit(
+                request_id="ask_cache_fail",
+                question="q",
+                kb_version="kb1",
+                cache_enabled=True,
+                safety_filter=safety,
+                history_store=_FailingHistoryStore(),
+                logger=None,
+            )
+        )
+
+
+def test_audio_cache_lookup_dependency_error_is_not_treated_as_miss():
+    safety = SensitiveWordsFilter.from_config({})
+
+    with pytest.raises(RuntimeError, match="qa matcher unavailable"):
+        _collect(
+            _maybe_stream_audio_cache_hit(
+                request_id="ask_audio_fail",
+                question="q",
+                qa_audio_matcher=_FailingMatcher(),
+                qa_audio_cache_enabled=True,
+                qa_audio_recall_top_k=10,
+                qa_audio_classifier_threshold=0.8,
+                qa_audio_classifier_chat_name="qa_cls",
+                tts_provider="edge",
+                tts_voice="zh-CN-XiaoxiaoNeural",
+                tts_speed=1.0,
+                safety_filter=safety,
+                logger=None,
+                base_url="",
+            )
+        )

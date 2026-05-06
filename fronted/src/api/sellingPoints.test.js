@@ -10,11 +10,10 @@ describe('sellingPoints api wrappers', () => {
     fetchJson.mockReset();
   });
 
-  test('listSellingPoints returns empty result immediately when stop name is empty', async () => {
+  test('listSellingPoints reports missing stop name instead of empty success', async () => {
     await expect(listSellingPoints({ stopName: ' ' })).resolves.toEqual({
-      ok: true,
-      stop_name: '',
-      items: [],
+      ok: false,
+      error: 'stop_name_required',
     });
     expect(fetchJson).not.toHaveBeenCalled();
   });
@@ -25,13 +24,21 @@ describe('sellingPoints api wrappers', () => {
     expect(fetchJson).toHaveBeenCalledWith('/api/selling_points?stop_name=A%20B&limit=20');
   });
 
-  test('upsertSellingPoint normalizes payload', async () => {
+  test('listSellingPoints rejects invalid limit before request', async () => {
+    await expect(listSellingPoints({ stopName: 'A', limit: 'many' })).resolves.toEqual({
+      ok: false,
+      error: 'limit_invalid',
+    });
+    expect(fetchJson).not.toHaveBeenCalled();
+  });
+
+  test('upsertSellingPoint sends valid payload', async () => {
     fetchJson.mockResolvedValueOnce({ ok: true });
     await upsertSellingPoint({
       stopName: ' Stop-1 ',
       text: ' Selling point ',
       weight: '3.5',
-      tags: 'bad_tags',
+      tags: ['tag-a'],
     });
 
     expect(fetchJson).toHaveBeenCalledWith('/api/selling_points', {
@@ -41,9 +48,21 @@ describe('sellingPoints api wrappers', () => {
         stop_name: 'Stop-1',
         text: 'Selling point',
         weight: 3.5,
-        tags: [],
+        tags: ['tag-a'],
       }),
     });
+  });
+
+  test('upsertSellingPoint rejects invalid weight and tags before request', async () => {
+    await expect(upsertSellingPoint({ stopName: 'S', text: 'T', weight: 'heavy' })).resolves.toEqual({
+      ok: false,
+      error: 'weight_invalid',
+    });
+    await expect(upsertSellingPoint({ stopName: 'S', text: 'T', tags: 'bad_tags' })).resolves.toEqual({
+      ok: false,
+      error: 'tags_list_required',
+    });
+    expect(fetchJson).not.toHaveBeenCalled();
   });
 
   test('deleteSellingPoint sends delete request with encoded query', async () => {

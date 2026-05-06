@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from flask import Flask
 
-from backend.api.qa_audio_cache import create_blueprint
+from backend.api.qa_audio_cache import _detect_audio_mimetype, create_blueprint
 
 
 class _Deps:
@@ -22,9 +23,27 @@ class _Deps:
         return None
 
 
+class _MissingStoreDeps:
+    pass
+
+
+class _FailingStoreDeps:
+    def __init__(self):
+        self.qa_audio_cache_store = self
+
+    def get_audio_file_path(self, pair_id: int):
+        raise RuntimeError(f"store unavailable for pair {pair_id}")
+
+
 def _build_app(tmp_path: Path) -> Flask:
     app = Flask(__name__)
     app.register_blueprint(create_blueprint(_Deps(tmp_path)))
+    return app
+
+
+def _build_app_with_deps(deps) -> Flask:
+    app = Flask(__name__)
+    app.register_blueprint(create_blueprint(deps))
     return app
 
 
@@ -46,3 +65,25 @@ def test_qa_audio_cache_api_detects_mimetype_from_bytes(tmp_path: Path):
     assert miss.status_code == 404
     assert miss.get_json()["error"] == "not_found"
 
+
+def test_qa_audio_cache_api_returns_500_when_store_dependency_is_missing():
+    c = _build_app_with_deps(_MissingStoreDeps()).test_client()
+
+    resp = c.get("/api/qa_audio_cache/audio/1")
+
+    assert resp.status_code == 500
+
+
+def test_qa_audio_cache_api_returns_500_when_store_lookup_raises():
+    c = _build_app_with_deps(_FailingStoreDeps()).test_client()
+
+    resp = c.get("/api/qa_audio_cache/audio/1")
+
+    assert resp.status_code == 500
+
+
+def test_detect_audio_mimetype_raises_when_audio_file_cannot_be_read(tmp_path: Path):
+    missing_path = tmp_path / "missing.wav"
+
+    with pytest.raises(FileNotFoundError):
+        _detect_audio_mimetype(str(missing_path))

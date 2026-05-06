@@ -6,6 +6,7 @@ import threading
 import time
 
 from flask import Blueprint, jsonify, request, send_file
+from werkzeug.exceptions import BadRequest
 
 from backend.api.ragflow_config_cache import get_ragflow_config
 from backend.config import resolve_tts_request
@@ -13,44 +14,40 @@ from backend.services.audio_utils import ensure_wav_bytes
 
 
 def _guess_sample_rate(*, resolved_cfg: dict, provider: str) -> int:
-    cfg = resolved_cfg if isinstance(resolved_cfg, dict) else {}
+    if not isinstance(resolved_cfg, dict):
+        raise ValueError("tts_config_invalid")
+    cfg = resolved_cfg
     p = str(provider or "").strip().lower()
 
     if p in ("modelscope", "bailian", "dashscope", "flash"):
-        try:
-            sr = (((cfg.get("tts") or {}).get("bailian") or {}).get("sample_rate"))
-            if sr is not None and str(sr).strip() != "":
-                return max(8000, int(sr))
-        except Exception:
-            pass
+        sr = (((cfg.get("tts") or {}).get("bailian") or {}).get("sample_rate"))
+        if sr is None or str(sr).strip() == "":
+            raise ValueError("tts_sample_rate_missing")
+        return max(8000, int(sr))
 
     if p == "edge":
-        try:
-            fmt = str((((cfg.get("tts") or {}).get("edge") or {}).get("output_format") or "")).strip().lower()
-            m = re.search(r"(\d+)\s*khz", fmt)
-            if m:
-                return max(8000, int(m.group(1)) * 1000)
-        except Exception:
-            pass
+        fmt = str((((cfg.get("tts") or {}).get("edge") or {}).get("output_format") or "")).strip().lower()
+        m = re.search(r"(\d+)\s*khz", fmt)
+        if not m:
+            raise ValueError("tts_edge_output_format_sample_rate_missing")
+        return max(8000, int(m.group(1)) * 1000)
 
-    return 16000
+    raise ValueError("tts_provider_sample_rate_unsupported")
 
 
-def _safe_file_part(value: str, *, fallback: str = "seg") -> str:
+def _file_part(value: str, *, field: str) -> str:
     raw = str(value or "").strip()
     if not raw:
-        raw = fallback
+        raise ValueError(f"{field}_empty")
     out = re.sub(r"[^a-zA-Z0-9._-]+", "_", raw).strip("._")
-    return out or fallback
+    if not out:
+        raise ValueError(f"{field}_safe_part_empty")
+    return out
 
 
 def _detect_audio_mimetype(path: str) -> str:
-    head = b""
-    try:
-        with open(path, "rb") as f:
-            head = bytes(f.read(16) or b"")
-    except Exception:
-        head = b""
+    with open(path, "rb") as f:
+        head = bytes(f.read(16) or b"")
 
     if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WAVE":
         return "audio/wav"
@@ -83,23 +80,31 @@ def create_blueprint(deps):
         limit = request.args.get("limit", 50)
         try:
             limit = int(limit)
-        except Exception:
-            limit = 50
+        except (TypeError, ValueError):
+            return jsonify({"error": "invalid_limit"}), 400
         items = deps.recording_store.list(limit=limit)
         return jsonify({"items": items})
 
     @bp.route("/api/recordings/start", methods=["POST"])
     def start_recording():
-        data = request.get_json(silent=True) or {}
+        try:
+            data = request.get_json(silent=False) or {}
+        except BadRequest:
+            return jsonify({"error": "invalid_json"}), 400
+        if not isinstance(data, dict):
+            return jsonify({"error": "json_object_required"}), 400
         stops = data.get("stops") or []
         if not isinstance(stops, list) or not stops:
+            return jsonify({"error": "stops_required"}), 400
+        cleaned_stops = [str(s or "").strip() for s in stops if str(s or "").strip()]
+        if not cleaned_stops:
             return jsonify({"error": "stops_required"}), 400
         rid = str(data.get("recording_id") or "").strip() or f"rec_{int(time.time()*1000)}"
         raw_meta = data.get("metadata")
         metadata = raw_meta if isinstance(raw_meta, dict) else {}
         info = deps.recording_store.create(
             recording_id=rid,
-            stops=[str(s or "").strip() for s in stops if str(s or "").strip()],
+            stops=cleaned_stops,
             metadata=metadata,
         )
         return jsonify(
@@ -112,6 +117,8 @@ def create_blueprint(deps):
 
     @bp.route("/api/recordings/<recording_id>/finish", methods=["POST"])
     def finish_recording(recording_id: str):
+        if not deps.recording_store.get(recording_id):
+            return jsonify({"ok": False, "error": "not_found"}), 404
         deps.recording_store.finish(recording_id)
         return jsonify({"ok": True})
 
@@ -124,8 +131,15 @@ def create_blueprint(deps):
 
     @bp.route("/api/recordings/<recording_id>/rename", methods=["POST"])
     def rename_recording(recording_id: str):
-        data = request.get_json(silent=True) or {}
+        try:
+            data = request.get_json(silent=False) or {}
+        except BadRequest:
+            return jsonify({"ok": False, "error": "invalid_json"}), 400
+        if not isinstance(data, dict):
+            return jsonify({"ok": False, "error": "json_object_required"}), 400
         name = str((data.get("display_name") or data.get("name") or "")).strip()
+        if not deps.recording_store.get(recording_id):
+            return jsonify({"ok": False, "error": "not_found"}), 404
         try:
             deps.recording_store.set_display_name(recording_id, name)
             return jsonify({"ok": True, "recording_id": str(recording_id), "display_name": name})
@@ -134,6 +148,8 @@ def create_blueprint(deps):
 
     @bp.route("/api/recordings/<recording_id>", methods=["DELETE"])
     def delete_recording(recording_id: str):
+        if not deps.recording_store.get(recording_id):
+            return jsonify({"ok": False, "error": "not_found"}), 404
         try:
             deps.recording_store.delete(recording_id)
             return jsonify({"ok": True})
@@ -152,7 +168,7 @@ def create_blueprint(deps):
         try:
             path = deps.recording_store.safe_rel_audio_path(recording_id, filename)
             path = deps.recording_store.ensure_within_audio_dir(recording_id, path)
-        except Exception:
+        except ValueError:
             return jsonify({"error": "bad_path"}), 400
         if not path.exists() or not path.is_file():
             return jsonify({"error": "not_found"}), 404
@@ -161,10 +177,18 @@ def create_blueprint(deps):
 
     @bp.route("/api/recordings/<recording_id>/segment/<int:segment_id>/regenerate", methods=["POST"])
     def regenerate_recording_segment(recording_id: str, segment_id: int):
-        data = request.get_json(silent=True) or {}
+        try:
+            data = request.get_json(silent=False) or {}
+        except BadRequest:
+            return jsonify({"ok": False, "error": "invalid_json"}), 400
+        if not isinstance(data, dict):
+            return jsonify({"ok": False, "error": "json_object_required"}), 400
         text = str((data.get("text") or "")).strip()
         if not text:
             return jsonify({"ok": False, "error": "text_required"}), 400
+
+        if not deps.recording_store.get(recording_id):
+            return jsonify({"ok": False, "error": "not_found"}), 404
 
         seg = deps.recording_store.get_tts_segment(recording_id=recording_id, segment_id=int(segment_id))
         if not seg:
@@ -172,9 +196,14 @@ def create_blueprint(deps):
 
         app_config = get_ragflow_config(deps=deps)
         provider, resolved_cfg = resolve_tts_request(app_config, data=data, headers=request.headers)
-        provider_norm = str(provider or "").strip() or "modelscope"
+        provider_norm = str(provider or "").strip()
+        if not provider_norm:
+            return jsonify({"ok": False, "error": "tts_provider_required"}), 400
 
-        request_id = f"rec_regen_{_safe_file_part(recording_id, fallback='rec')}_{int(segment_id)}_{int(time.time() * 1000)}"
+        try:
+            request_id = f"rec_regen_{_file_part(recording_id, field='recording_id')}_{int(segment_id)}_{int(time.time() * 1000)}"
+        except ValueError as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
         chunks: list[bytes] = []
         try:
             for chunk in deps.tts_service.stream(
@@ -198,22 +227,28 @@ def create_blueprint(deps):
             return jsonify({"ok": False, "error": "tts_empty_audio"}), 502
 
         wav_raw = b"".join(chunks)
-        wav_bytes = ensure_wav_bytes(
-            wav_raw,
-            sample_rate=_guess_sample_rate(resolved_cfg=resolved_cfg, provider=provider_norm),
-            channels=1,
-            bits_per_sample=16,
-        )
+        try:
+            wav_bytes = ensure_wav_bytes(
+                wav_raw,
+                sample_rate=_guess_sample_rate(resolved_cfg=resolved_cfg, provider=provider_norm),
+                channels=1,
+                bits_per_sample=16,
+            )
+        except (TypeError, ValueError) as e:
+            return jsonify({"ok": False, "error": "tts_sample_rate_invalid", "detail": str(e)}), 502
         if not wav_bytes:
             return jsonify({"ok": False, "error": "tts_audio_not_wav_compatible"}), 502
 
         seg_part = seg.get("segment_index")
         if seg_part is None:
             seg_part = segment_id
-        filename = (
-            f"{_safe_file_part(str(seg.get('request_id') or request_id), fallback='ask')}"
-            f"_{_safe_file_part(str(seg_part), fallback=str(segment_id))}_{int(time.time() * 1000)}.wav"
-        )
+        try:
+            filename = (
+                f"{_file_part(str(seg.get('request_id') or request_id), field='request_id')}"
+                f"_{_file_part(str(seg_part), field='segment_index')}_{int(time.time() * 1000)}.wav"
+            )
+        except ValueError as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
 
         audio_dir = deps.recording_store.audio_dir(recording_id)
         tmp_path = (audio_dir / f"{filename}.part").resolve()
@@ -221,7 +256,7 @@ def create_blueprint(deps):
         try:
             final_path = deps.recording_store.ensure_within_audio_dir(recording_id, final_path)
             tmp_path = deps.recording_store.ensure_within_audio_dir(recording_id, tmp_path)
-        except Exception:
+        except ValueError:
             return jsonify({"ok": False, "error": "bad_path"}), 400
 
         try:
@@ -255,9 +290,12 @@ def create_blueprint(deps):
                     old_path = deps.recording_store.safe_rel_audio_path(recording_id, old_rel)
                     old_path = deps.recording_store.ensure_within_audio_dir(recording_id, old_path)
                     if old_path.exists() and old_path.is_file():
-                        old_path.unlink(missing_ok=True)
-            except Exception:
-                pass
+                        old_path.unlink()
+            except Exception as e:
+                deps.logger.warning(
+                    f"[REC] segment_regen_old_audio_cleanup_failed recording_id={recording_id} segment_id={segment_id} err={e}"
+                )
+                return jsonify({"ok": False, "error": "old_audio_cleanup_failed", "detail": str(e)}), 500
 
         rel = str(updated.get("rel_path") or "").replace("\\", "/").lstrip("/")
         version_ms = int(updated.get("updated_at_ms") or updated.get("created_at_ms") or int(time.time() * 1000))

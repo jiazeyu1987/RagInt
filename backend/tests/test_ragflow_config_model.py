@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from backend.orchestrators.ragflow_config import RagflowRuntimeConfig
 
 
@@ -33,4 +35,56 @@ def test_ragflow_runtime_config_parses_values():
     assert cfg.qa_audio_cache.classifier_chat_name == "qa_cls"
     assert cfg.text_cleaning.enabled is True
     assert cfg.text_cleaning.segment_min_chars == 7
+
+
+def test_ragflow_runtime_config_rejects_non_object_config():
+    with pytest.raises(ValueError, match="ragflow_config must be an object"):
+        RagflowRuntimeConfig.from_any(["not", "an", "object"])
+
+
+def test_ragflow_runtime_config_rejects_invalid_qa_cache_ttl():
+    with pytest.raises(ValueError, match=r"qa_cache\.ttl_s must be a number"):
+        RagflowRuntimeConfig.from_any({"qa_cache": {"ttl_s": "bad"}})
+
+
+def test_ragflow_runtime_config_rejects_non_finite_qa_cache_ttl():
+    with pytest.raises(ValueError, match=r"qa_cache\.ttl_s must be a finite number"):
+        RagflowRuntimeConfig.from_any({"qa_cache": {"ttl_s": "NaN"}})
+
+
+def test_ragflow_runtime_config_rejects_out_of_range_audio_cache_values_instead_of_clamping():
+    with pytest.raises(ValueError, match=r"qa_audio_cache\.recall_top_k must be >= 1"):
+        RagflowRuntimeConfig.from_any({"qa_audio_cache": {"recall_top_k": 0}})
+
+    with pytest.raises(ValueError, match=r"qa_audio_cache\.recall_top_k must be an integer"):
+        RagflowRuntimeConfig.from_any({"qa_audio_cache": {"recall_top_k": 1.5}})
+
+    with pytest.raises(ValueError, match=r"qa_audio_cache\.classifier_threshold must be <= 1"):
+        RagflowRuntimeConfig.from_any({"qa_audio_cache": {"classifier_threshold": 1.5}})
+
+
+def test_ragflow_runtime_config_rejects_non_object_qa_audio_cache():
+    with pytest.raises(ValueError, match="qa_audio_cache must be an object"):
+        RagflowRuntimeConfig.from_any({"qa_audio_cache": "enabled"})
+
+
+def test_ragflow_runtime_config_rejects_non_object_text_cleaning():
+    with pytest.raises(ValueError, match="text_cleaning must be an object"):
+        RagflowRuntimeConfig.from_any({"text_cleaning": "enabled"})
+
+
+def test_ragflow_runtime_config_rejects_invalid_text_cleaning_number():
+    with pytest.raises(ValueError, match=r"text_cleaning\.max_chunk_size must be a number"):
+        RagflowRuntimeConfig.from_any({"text_cleaning": {"max_chunk_size": "bad"}})
+
+
+def test_ragflow_runtime_config_rejects_bad_text_cleaning_ranges_instead_of_clamping():
+    with pytest.raises(ValueError, match=r"text_cleaning\.max_chunk_size must be >= 1"):
+        RagflowRuntimeConfig.from_any({"text_cleaning": {"max_chunk_size": 0}})
+
+    with pytest.raises(ValueError, match=r"text_cleaning\.segment_min_chars must be an integer"):
+        RagflowRuntimeConfig.from_any({"text_cleaning": {"segment_min_chars": 1.5}})
+
+    with pytest.raises(ValueError, match=r"text_cleaning\.segment_flush_interval_s must be a finite number"):
+        RagflowRuntimeConfig.from_any({"text_cleaning": {"segment_flush_interval_s": "inf"}})
 

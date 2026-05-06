@@ -130,7 +130,7 @@ def _app(deps: _Deps) -> Flask:
     return app
 
 
-def test_asr_filter_text_required_and_prompt_empty_short_circuit():
+def test_asr_filter_text_required_and_prompt_required():
     deps = _Deps()
     client = _app(deps).test_client()
 
@@ -139,12 +139,10 @@ def test_asr_filter_text_required_and_prompt_empty_short_circuit():
     assert bad.get_json()["error"] == "text_required"
 
     prompt_empty = client.post("/api/asr/filter", json={"text": "原始文本", "prompt": ""})
-    assert prompt_empty.status_code == 200
+    assert prompt_empty.status_code == 400
     body = prompt_empty.get_json()
-    assert body["ok"] is True
-    assert body["text"] == "原始文本"
-    assert body["used_fallback"] is True
-    assert body["reason"] == "prompt_empty"
+    assert body["ok"] is False
+    assert body["error"] == "prompt_required"
     assert deps.ragflow_service.calls == []
 
 
@@ -166,6 +164,37 @@ def test_sauc_proxy_health_reports_registration_and_history_tail():
     assert len(sp["event_history"]) == 10
     assert sp["event_history"][-1]["stage"] == "s14"
     assert isinstance(sp["receive_timeout_supported"], bool)
+
+
+def test_sauc_proxy_health_fails_when_dependency_introspection_errors(monkeypatch):
+    deps = _Deps()
+    client = _app(deps).test_client()
+    original_find_spec = speech_module.importlib.util.find_spec
+    original_import_module = speech_module.importlib.import_module
+
+    def fake_find_spec(name: str):
+        if name == "simple_websocket":
+            return object()
+        if name in {"aiohttp", "flask_sock"}:
+            return None
+        return original_find_spec(name)
+
+    def fake_import_module(name: str):
+        if name == "simple_websocket":
+            raise RuntimeError("broken dependency")
+        return original_import_module(name)
+
+    monkeypatch.setattr(speech_module.importlib.util, "find_spec", fake_find_spec)
+    monkeypatch.setattr(speech_module.importlib, "import_module", fake_import_module)
+
+    resp = client.get("/api/asr/sauc/health")
+
+    assert resp.status_code == 500
+    body = resp.get_json()
+    assert body["ok"] is False
+    assert body["error"] == "sauc_dependency_inspection_failed"
+    assert body["dependency"] == "simple_websocket"
+    assert "broken dependency" in body["detail"]
 
 
 def test_cancel_endpoint_covers_request_id_and_active_fallback():

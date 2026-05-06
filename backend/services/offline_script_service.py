@@ -41,38 +41,43 @@ class OfflineScriptService:
         return self._audio_dir
 
     def load_manifest(self) -> dict:
-        if self._manifest_path.exists():
-            with open(self._manifest_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return data if isinstance(data, dict) else {}
-        return {}
+        if not self._manifest_path.exists():
+            raise FileNotFoundError("offline_manifest_missing")
+        with open(self._manifest_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("offline_manifest_invalid")
+        items = data.get("items")
+        if not isinstance(items, list):
+            raise ValueError("offline_manifest_invalid")
+        return data
+
+    def _require_int_field(self, raw: dict, field: str) -> int | None:
+        value = raw.get(field, None)
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("offline_manifest_invalid") from exc
 
     def list_items(self) -> list[OfflineItem]:
         cfg = self.load_manifest()
-        items = cfg.get("items") if isinstance(cfg, dict) else None
-        if not isinstance(items, list):
-            return []
+        items = cfg["items"]
 
         out: list[OfflineItem] = []
         for raw in items:
             if not isinstance(raw, dict):
-                continue
+                raise ValueError("offline_manifest_invalid")
             item_id = str(raw.get("id") or "").strip()
             filename = str(raw.get("filename") or "").strip()
             title = str(raw.get("title") or raw.get("stop_name") or item_id or filename).strip()
             if not item_id or not filename:
-                continue
+                raise ValueError("offline_manifest_invalid")
             stop_id = str(raw.get("stop_id") or "").strip()
             stop_name = str(raw.get("stop_name") or "").strip()
-            try:
-                order = int(raw.get("order") or 0)
-            except Exception:
-                order = 0
-            duration_ms = raw.get("duration_ms", None)
-            try:
-                duration_ms = int(duration_ms) if duration_ms is not None else None
-            except Exception:
-                duration_ms = None
+            order = self._require_int_field(raw, "order")
+            duration_ms = self._require_int_field(raw, "duration_ms")
             out.append(
                 OfflineItem(
                     id=item_id,
@@ -80,7 +85,7 @@ class OfflineScriptService:
                     filename=filename,
                     stop_id=stop_id,
                     stop_name=stop_name,
-                    order=order,
+                    order=order or 0,
                     duration_ms=duration_ms,
                 )
             )

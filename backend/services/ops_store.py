@@ -117,6 +117,16 @@ class OpsStore:
     def _sha256(s: str) -> str:
         return hashlib.sha256(str(s or "").encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def _load_json_object(raw: object, *, field_name: str, record_id: str) -> dict:
+        try:
+            value = json.loads(str(raw))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{field_name} for {record_id} contains malformed JSON") from exc
+        if not isinstance(value, dict):
+            raise ValueError(f"{field_name} for {record_id} must be a JSON object")
+        return value
+
     def issue_device_token(self, *, device_id: str, now_ms: int | None = None) -> str | None:
         did = str(device_id or "").strip()
         if not did:
@@ -247,15 +257,15 @@ class OpsStore:
                 rows = conn.execute(sql, tuple(params + [limit])).fetchall()
                 out: list[AuditEvent] = []
                 for r in rows:
-                    try:
-                        payload = json.loads(str(r["payload_json"] or "{}"))
-                    except Exception:
-                        payload = {}
-                    if not isinstance(payload, dict):
-                        payload = {}
+                    event_id = int(r["id"] or 0)
+                    payload = self._load_json_object(
+                        r["payload_json"],
+                        field_name="ops_audit.payload_json",
+                        record_id=f"ops_audit.id={event_id}",
+                    )
                     out.append(
                         AuditEvent(
-                            id=int(r["id"] or 0),
+                            id=event_id,
                             ts_ms=int(r["ts_ms"] or 0),
                             actor_kind=str(r["actor_kind"] or ""),
                             actor_id=str(r["actor_id"] or ""),
@@ -326,15 +336,15 @@ class OpsStore:
                 ).fetchall()
                 out: list[Device] = []
                 for r in rows:
-                    try:
-                        meta = json.loads(str(r["meta_json"] or "{}"))
-                    except Exception:
-                        meta = {}
-                    if not isinstance(meta, dict):
-                        meta = {}
+                    device_id = str(r["device_id"] or "")
+                    meta = self._load_json_object(
+                        r["meta_json"],
+                        field_name="devices.meta_json",
+                        record_id=f"devices.device_id={device_id}",
+                    )
                     out.append(
                         Device(
-                            device_id=str(r["device_id"] or ""),
+                            device_id=device_id,
                             name=str(r["name"] or ""),
                             model=str(r["model"] or ""),
                             version=str(r["version"] or ""),
@@ -391,14 +401,14 @@ class OpsStore:
                 ).fetchone()
                 if not row:
                     return None
-                try:
-                    cfg = json.loads(str(row["config_json"] or "{}"))
-                except Exception:
-                    cfg = {}
-                if not isinstance(cfg, dict):
-                    cfg = {}
+                device_id = str(row["device_id"] or did)
+                cfg = self._load_json_object(
+                    row["config_json"],
+                    field_name="device_configs.config_json",
+                    record_id=f"device_configs.device_id={device_id}",
+                )
                 return DeviceConfig(
-                    device_id=str(row["device_id"] or did),
+                    device_id=device_id,
                     config_version=int(row["config_version"] or 0),
                     config=cfg,
                     updated_at_ms=int(row["updated_at_ms"] or 0),

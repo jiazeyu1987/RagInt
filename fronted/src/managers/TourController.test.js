@@ -107,7 +107,19 @@ describe('TourController', () => {
     expect(payload.stop_durations_s_override).toEqual({ A: 12, B: 34 });
   });
 
-  test('start clears invalid playback recording and falls back to tour plan', async () => {
+  test('start fails fast when tour plan cannot be loaded', async () => {
+    const deps = makeBaseDeps({
+      fetchJson: jest.fn().mockRejectedValue(new Error('HTTP 500 /api/tour/plan')),
+    });
+    const c = new TourController(deps);
+
+    await expect(c.start()).rejects.toThrow(/tour_plan/i);
+
+    expect(deps.beginDebugRun).not.toHaveBeenCalled();
+    expect(deps.askQuestion).not.toHaveBeenCalled();
+  });
+
+  test('start fails fast when playback recording has no stops', async () => {
     const deps = makeBaseDeps({
       playTourRecordingEnabledRef: { current: true },
       selectedTourRecordingIdRef: { current: 'rec-missing' },
@@ -115,17 +127,14 @@ describe('TourController', () => {
     });
     const c = new TourController(deps);
 
-    await c.start();
+    await expect(c.start()).rejects.toThrow(/tour_recording/i);
 
-    expect(deps.setPlayTourRecordingEnabled).toHaveBeenCalledWith(false);
-    expect(deps.setSelectedTourRecordingId).toHaveBeenCalledWith('');
-    expect(deps.playTourRecordingEnabledRef.current).toBe(false);
-    expect(deps.selectedTourRecordingIdRef.current).toBe('');
-    expect(deps.fetchJson).toHaveBeenCalledWith(
-      '/api/tour/plan',
-      expect.objectContaining({ method: 'POST', headers: { 'Content-Type': 'application/json' } })
-    );
-    expect(deps.askQuestion).toHaveBeenCalledWith('start_prompt', { tourAction: 'start', tourStopIndex: 0 });
+    expect(deps.fetchJson).not.toHaveBeenCalled();
+    expect(deps.setPlayTourRecordingEnabled).not.toHaveBeenCalled();
+    expect(deps.setSelectedTourRecordingId).not.toHaveBeenCalled();
+    expect(deps.playTourRecordingEnabledRef.current).toBe(true);
+    expect(deps.selectedTourRecordingIdRef.current).toBe('rec-missing');
+    expect(deps.askQuestion).not.toHaveBeenCalled();
   });
 
   test('start fails fast when ragflow new_session bootstrap fails', async () => {
@@ -146,6 +155,74 @@ describe('TourController', () => {
         source: 'tour_start_new_session',
       })
     );
+    expect(deps.askQuestion).not.toHaveBeenCalled();
+  });
+
+  test('start fails fast when recording archive startup fails', async () => {
+    const deps = makeBaseDeps({
+      tourRecordingEnabledRef: { current: true },
+      startTourRecordingArchive: jest.fn().mockRejectedValue(new Error('disk full')),
+    });
+    const c = new TourController(deps);
+
+    await expect(c.start()).rejects.toThrow(/tour_recording_archive_failed/i);
+
+    expect(deps.startTourRecordingArchive).toHaveBeenCalledWith(['Stop A', 'Stop B']);
+    expect(deps.beginDebugRun).not.toHaveBeenCalled();
+    expect(deps.askQuestion).not.toHaveBeenCalled();
+  });
+
+  test('continue fails fast when question resume playback cannot enqueue audio', async () => {
+    const deps = makeBaseDeps({
+      tourResumeRef: {
+        current: {
+          _question: {
+            stopIndex: 0,
+            audioSegments: [{ audio_url: 'blob:1', text: 'hello' }],
+          },
+        },
+      },
+      tourStateRef: { current: { stopIndex: 0 } },
+      getTtsManager: () => ({
+        resetForRun: jest.fn(),
+        enqueueAudioUrl: jest.fn(() => {
+          throw new Error('queue offline');
+        }),
+      }),
+    });
+    const c = new TourController(deps);
+
+    await expect(c.continue()).rejects.toThrow(/tour_question_resume_failed/i);
+
+    expect(deps.beginDebugRun).not.toHaveBeenCalled();
+    expect(deps.askQuestion).not.toHaveBeenCalled();
+  });
+
+  test('continue fails fast when stop resume idle wait fails', async () => {
+    const deps = makeBaseDeps({
+      tourResumeRef: {
+        current: {
+          0: {
+            kind: 'stop',
+            segments: ['cached stop narration'],
+          },
+        },
+      },
+      tourStateRef: { current: { stopIndex: 0 } },
+      setTourState: jest.fn(),
+      getTtsManager: () => ({
+        resetForRun: jest.fn(),
+        enqueueText: jest.fn(),
+        markRagDone: jest.fn(),
+        ensureRunning: jest.fn(),
+        waitForIdle: jest.fn().mockRejectedValue(new Error('speaker failed')),
+      }),
+    });
+    const c = new TourController(deps);
+
+    await expect(c.continue()).rejects.toThrow(/tour_resume_failed/i);
+
+    expect(deps.beginDebugRun).not.toHaveBeenCalled();
     expect(deps.askQuestion).not.toHaveBeenCalled();
   });
 });

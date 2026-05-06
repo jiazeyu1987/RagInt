@@ -67,27 +67,44 @@ def _safe_trim(value: Any) -> str:
     return str(value or "").strip()
 
 
-def _to_int(value: Any, fallback: int, *, min_value: int, max_value: int) -> int:
+def _is_config_value_missing(value: Any) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _to_int(
+    value: Any,
+    default: int,
+    *,
+    min_value: int,
+    max_value: int,
+    field_name: str = "seg_duration_ms",
+) -> int:
+    if _is_config_value_missing(value):
+        return int(default)
     try:
         n = int(round(float(value)))
     except Exception:
-        return fallback
-    return max(min_value, min(max_value, n))
+        raise ValueError(f"sauc_config_invalid_{field_name}")
+    if n < min_value or n > max_value:
+        raise ValueError(f"sauc_config_invalid_{field_name}")
+    return n
 
 
-def _to_bool(value: Any, fallback: bool = False) -> bool:
+def _to_bool(value: Any, default: bool = False, *, field_name: str = "enable_itn") -> bool:
+    if _is_config_value_missing(value):
+        return bool(default)
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)):
-        return bool(value)
+        if value in (0, 1):
+            return bool(value)
+        raise ValueError(f"sauc_config_invalid_{field_name}")
     text = _safe_trim(value).lower()
-    if not text:
-        return bool(fallback)
     if text in {"1", "true", "yes", "on"}:
         return True
     if text in {"0", "false", "no", "off"}:
         return False
-    return bool(fallback)
+    raise ValueError(f"sauc_config_invalid_{field_name}")
 
 
 def _gzip_compress(data: bytes) -> bytes:
@@ -156,48 +173,63 @@ def _parse_sauc_response(raw: bytes) -> dict[str, Any]:
         "payload_msg": None,
     }
     if not isinstance(raw, (bytes, bytearray)) or len(raw) < 4:
-        return out
+        raise ValueError("sauc_protocol_short_packet")
 
     msg = bytes(raw)
     header_size = msg[0] & 0x0F
+    header_bytes = header_size * 4
+    if header_bytes < 4 or len(msg) < header_bytes:
+        raise ValueError("sauc_protocol_short_header")
     message_type = msg[1] >> 4
     flags = msg[1] & 0x0F
     serialization = msg[2] >> 4
     compression = msg[2] & 0x0F
 
-    payload = msg[header_size * 4 :]
-    if flags & 0x01 and len(payload) >= 4:
+    payload = msg[header_bytes:]
+    if flags & 0x01:
+        if len(payload) < 4:
+            raise ValueError("sauc_protocol_short_sequence")
         out["payload_sequence"] = struct.unpack(">i", payload[:4])[0]
         payload = payload[4:]
     if flags & 0x02:
         out["is_last_package"] = True
-    if flags & 0x04 and len(payload) >= 4:
+    if flags & 0x04:
+        if len(payload) < 4:
+            raise ValueError("sauc_protocol_short_event")
         out["event"] = struct.unpack(">i", payload[:4])[0]
         payload = payload[4:]
 
     if message_type == _MessageType.SERVER_FULL_RESPONSE:
         if len(payload) < 4:
-            return out
+            raise ValueError("sauc_protocol_short_payload_size")
+        payload_size = struct.unpack(">I", payload[:4])[0]
         payload = payload[4:]
+        if len(payload) < payload_size:
+            raise ValueError("sauc_protocol_short_payload")
+        payload = payload[:payload_size]
     elif message_type == _MessageType.SERVER_ERROR_RESPONSE:
         if len(payload) < 8:
-            return out
+            raise ValueError("sauc_protocol_short_error_response")
         out["code"] = struct.unpack(">i", payload[:4])[0]
+        payload_size = struct.unpack(">I", payload[4:8])[0]
         payload = payload[8:]
+        if len(payload) < payload_size:
+            raise ValueError("sauc_protocol_short_payload")
+        payload = payload[:payload_size]
     if not payload:
         return out
 
     if compression == _CompressionType.GZIP:
         try:
             payload = _gzip_decompress(payload)
-        except Exception:
-            return out
+        except Exception as exc:
+            raise ValueError("sauc_protocol_gzip_decode_failed") from exc
 
     if serialization == _SerializationType.JSON:
         try:
             out["payload_msg"] = json.loads(payload.decode("utf-8"))
-        except Exception:
-            out["payload_msg"] = None
+        except Exception as exc:
+            raise ValueError("sauc_protocol_json_decode_failed") from exc
     return out
 
 
@@ -313,19 +345,28 @@ def _normalize_start_config(raw: Any) -> tuple[SaucStartConfig | None, str | Non
     if not ws_url or not resource_id or not app_key or not access_key:
         return None, "sauc_config_required_fields_missing"
 
-    cfg = SaucStartConfig(
-        ws_url=ws_url,
-        resource_id=resource_id,
-        app_key=app_key,
-        access_key=access_key,
-        model_name=_safe_trim(data.get("model_name")) or DEFAULT_MODEL_NAME,
-        seg_duration_ms=_to_int(data.get("seg_duration_ms"), DEFAULT_SEGMENT_DURATION_MS, min_value=50, max_value=1000),
-        enable_itn=_to_bool(data.get("enable_itn"), True),
-        enable_punc=_to_bool(data.get("enable_punc"), True),
-        enable_ddc=_to_bool(data.get("enable_ddc"), True),
-        show_utterances=_to_bool(data.get("show_utterances"), True),
-        enable_nonstream=_to_bool(data.get("enable_nonstream"), False),
-    )
+    try:
+        cfg = SaucStartConfig(
+            ws_url=ws_url,
+            resource_id=resource_id,
+            app_key=app_key,
+            access_key=access_key,
+            model_name=_safe_trim(data.get("model_name")) or DEFAULT_MODEL_NAME,
+            seg_duration_ms=_to_int(
+                data.get("seg_duration_ms"),
+                DEFAULT_SEGMENT_DURATION_MS,
+                min_value=50,
+                max_value=1000,
+                field_name="seg_duration_ms",
+            ),
+            enable_itn=_to_bool(data.get("enable_itn"), True, field_name="enable_itn"),
+            enable_punc=_to_bool(data.get("enable_punc"), True, field_name="enable_punc"),
+            enable_ddc=_to_bool(data.get("enable_ddc"), True, field_name="enable_ddc"),
+            show_utterances=_to_bool(data.get("show_utterances"), True, field_name="show_utterances"),
+            enable_nonstream=_to_bool(data.get("enable_nonstream"), False, field_name="enable_nonstream"),
+        )
+    except ValueError as exc:
+        return None, str(exc)
     return cfg, None
 
 

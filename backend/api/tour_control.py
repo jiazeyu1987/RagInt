@@ -5,20 +5,28 @@ from flask import Blueprint, jsonify, request
 from backend.api.request_context import get_client_id
 
 
+def _parse_int_arg(name: str, default: int) -> tuple[int | None, str | None]:
+    raw = request.args.get(name)
+    if raw is None or raw == "":
+        return default, None
+    try:
+        return int(raw), None
+    except (TypeError, ValueError):
+        return None, f"invalid_{name}"
+
+
 def create_blueprint(deps):
     bp = Blueprint("tour_control_api", __name__)
 
     @bp.route("/api/tour/control", methods=["GET"])
     def api_tour_control_get():
         client_id = get_client_id(request, default="-")
-        try:
-            since_id = int(request.args.get("since_id") or 0)
-        except Exception:
-            since_id = 0
-        try:
-            limit = int(request.args.get("limit") or 50)
-        except Exception:
-            limit = 50
+        since_id, err = _parse_int_arg("since_id", 0)
+        if err:
+            return jsonify({"ok": False, "error": err}), 400
+        limit, err = _parse_int_arg("limit", 50)
+        if err:
+            return jsonify({"ok": False, "error": err}), 400
 
         state = deps.tour_control_store.get_state(client_id=client_id)
         effective_status = deps.tour_control_store.get_effective_status(client_id=client_id)
@@ -57,7 +65,9 @@ def create_blueprint(deps):
         data = request.get_json() or {}
         client_id = get_client_id(request, data=data, default="-")
         action = str((data.get("action") or "")).strip().lower()
-        payload = data.get("payload") if isinstance(data.get("payload"), dict) else {}
+        if "payload" in data and not isinstance(data.get("payload"), dict):
+            return jsonify({"ok": False, "error": "invalid_payload"}), 400
+        payload = data.get("payload") or {}
         if not action:
             return jsonify({"ok": False, "error": "action_required"}), 400
 
@@ -75,7 +85,7 @@ def create_blueprint(deps):
         command_id = data.get("command_id")
         try:
             command_id = int(command_id)
-        except Exception:
+        except (TypeError, ValueError):
             command_id = 0
         if command_id <= 0:
             return jsonify({"ok": False, "error": "command_id_required"}), 400

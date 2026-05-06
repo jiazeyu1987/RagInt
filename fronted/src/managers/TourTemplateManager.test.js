@@ -27,6 +27,41 @@ describe('TourTemplateManager', () => {
     ]);
   });
 
+  test('normalizeTemplates keeps an empty template list as empty', () => {
+    expect(TourTemplateManager.normalizeTemplates([])).toEqual([]);
+  });
+
+  test('normalizeTemplates rejects non-array template input', () => {
+    expect(() => TourTemplateManager.normalizeTemplates({ id: 't1' })).toThrow('templates must be an array');
+    expect(() => TourTemplateManager.ensureTemplates({ templates: null })).toThrow('templates must be an array');
+  });
+
+  test('selectTemplate rejects non-array template input but allows an empty list', () => {
+    expect(TourTemplateManager.selectTemplate([], 'missing')).toBeNull();
+    expect(() => TourTemplateManager.selectTemplate({ id: 't1' }, 't1')).toThrow('templates must be an array');
+  });
+
+  test('normalizeTemplates rejects malformed template items instead of defaulting fields', () => {
+    expect(() => TourTemplateManager.normalizeTemplates([null])).toThrow('template must be a plain object');
+    expect(() => TourTemplateManager.normalizeTemplates([{ id: 123, name: 'A', stops: [] }])).toThrow(
+      'template id must be a non-empty string'
+    );
+    expect(() => TourTemplateManager.normalizeTemplates([{ id: 't1', name: '', stops: [] }])).toThrow(
+      'template name must be a non-empty string'
+    );
+  });
+
+  test('normalizeTemplateStops rejects bad stop schema instead of dropping rows', () => {
+    expect(() => TourTemplateManager.normalizeTemplateStops(null)).toThrow('template stops must be an array');
+    expect(() => TourTemplateManager.normalizeTemplateStops([null])).toThrow('template stop must be a plain object');
+    expect(() => TourTemplateManager.normalizeTemplateStops([{ name: 42, duration_s: 30 }])).toThrow(
+      'template stop name must be a non-empty string'
+    );
+    expect(() => TourTemplateManager.normalizeTemplateStops([{ name: 'A', duration_s: '30' }])).toThrow(
+      'template stop duration_s must be a finite number'
+    );
+  });
+
   test('clampDuration keeps values in [1, 3600]', () => {
     expect(TourTemplateManager.clampDuration(0)).toBe(1);
     expect(TourTemplateManager.clampDuration(5000)).toBe(3600);
@@ -95,6 +130,22 @@ describe('TourTemplateManager', () => {
       A: 12,
       C: 1,
     });
+  });
+
+  test('buildOverrides keeps no selected template empty', () => {
+    expect(TourTemplateManager.buildOverrides(null)).toEqual({ enabledStops: [], durationMap: {} });
+  });
+
+  test('buildOverrides rejects malformed selected template stops instead of ignoring them', () => {
+    expect(() => TourTemplateManager.buildOverrides({ stops: null })).toThrow(
+      'selected template stops must be an array'
+    );
+    expect(() => TourTemplateManager.buildOverrides({ stops: [{ name: 'A', enabled: 'yes', duration_s: 30 }] })).toThrow(
+      'selected template stop enabled must be a boolean'
+    );
+    expect(() => TourTemplateManager.buildOverrides({ stops: [{ name: 'A', duration_s: '30' }] })).toThrow(
+      'selected template stop duration_s must be a finite number'
+    );
   });
 });
 

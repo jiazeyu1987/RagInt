@@ -28,6 +28,7 @@ describe('useHistoryPanel', () => {
 
     expect(fetchJson).toHaveBeenCalledWith('/api/history?sort=time&limit=200');
     expect(hook.result().historyItems).toEqual([{ question: 'q1' }]);
+    expect(hook.result().historyError).toBe('');
     hook.unmount();
   });
 
@@ -47,13 +48,36 @@ describe('useHistoryPanel', () => {
     hook.unmount();
   });
 
-  test('fetchHistory handles request error by resetting to empty list', async () => {
+  test('fetchHistory reports request error instead of silent empty list', async () => {
     fetchJson.mockRejectedValueOnce(new Error('history_failed'));
     const hook = renderHook((props) => useHistoryPanel(props), { enabled: true });
 
     await hook.flush();
 
     expect(hook.result().historyItems).toEqual([]);
+    expect(hook.result().historyError).toBe('history_failed');
+    hook.unmount();
+  });
+
+  test('fetchHistory reports backend failure response', async () => {
+    fetchJson.mockResolvedValueOnce({ ok: false, error: 'history_store_invalid_response' });
+    const hook = renderHook((props) => useHistoryPanel(props), { enabled: true });
+
+    await hook.flush();
+
+    expect(hook.result().historyItems).toEqual([]);
+    expect(hook.result().historyError).toBe('history_store_invalid_response');
+    hook.unmount();
+  });
+
+  test('fetchHistory reports invalid response shape', async () => {
+    fetchJson.mockResolvedValueOnce({ items: {} });
+    const hook = renderHook((props) => useHistoryPanel(props), { enabled: true });
+
+    await hook.flush();
+
+    expect(hook.result().historyItems).toEqual([]);
+    expect(hook.result().historyError).toBe('history_invalid_response');
     hook.unmount();
   });
 });

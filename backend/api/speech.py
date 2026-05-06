@@ -7,7 +7,7 @@ import sys
 
 from flask import Blueprint, Response, current_app, jsonify, request
 
-from backend.api.http_responses import bad_request_json
+from backend.api.http_responses import bad_request_json, error_json
 from backend.api.ragflow_config_cache import get_ragflow_config
 from backend.api.request_validators import json_body_dict
 from backend.api.speech_cancel import handle_cancel_request
@@ -55,17 +55,28 @@ def create_blueprint(deps):
                 simple_ws_version = str(getattr(simple_ws, "__version__", "") or "")
                 receive_sig = inspect.signature(simple_ws.Server.receive)
                 receive_timeout_supported = "timeout" in receive_sig.parameters
-            except Exception:
-                simple_ws_version = ""
-                receive_timeout_supported = False
+            except Exception as e:
+                deps.logger.error("sauc_health_dependency_inspection_failed dependency=simple_websocket err=%s", e, exc_info=True)
+                return error_json(
+                    error="sauc_dependency_inspection_failed",
+                    status=500,
+                    dependency="simple_websocket",
+                    detail=str(e),
+                )
 
         flask_sock_version = ""
         if flask_sock_available:
             try:
                 flask_sock = importlib.import_module("flask_sock")
                 flask_sock_version = str(getattr(flask_sock, "__version__", "") or "")
-            except Exception:
-                flask_sock_version = ""
+            except Exception as e:
+                deps.logger.error("sauc_health_dependency_inspection_failed dependency=flask_sock err=%s", e, exc_info=True)
+                return error_json(
+                    error="sauc_dependency_inspection_failed",
+                    status=500,
+                    dependency="flask_sock",
+                    detail=str(e),
+                )
 
         flask_version = ""
         werkzeug_version = ""
@@ -73,14 +84,16 @@ def create_blueprint(deps):
             import flask as _flask
 
             flask_version = str(getattr(_flask, "__version__", "") or "")
-        except Exception:
-            flask_version = ""
+        except Exception as e:
+            deps.logger.error("sauc_health_dependency_inspection_failed dependency=flask err=%s", e, exc_info=True)
+            return error_json(error="sauc_dependency_inspection_failed", status=500, dependency="flask", detail=str(e))
         try:
             import werkzeug as _werkzeug
 
             werkzeug_version = str(getattr(_werkzeug, "__version__", "") or "")
-        except Exception:
-            werkzeug_version = ""
+        except Exception as e:
+            deps.logger.error("sauc_health_dependency_inspection_failed dependency=werkzeug err=%s", e, exc_info=True)
+            return error_json(error="sauc_dependency_inspection_failed", status=500, dependency="werkzeug", detail=str(e))
 
         sauc_sock_registered = bool(current_app.config.get("RAGINT_SAUC_PROXY_REGISTERED"))
         sauc_last_event = current_app.config.get("RAGINT_SAUC_LAST_EVENT") or {}
@@ -126,16 +139,7 @@ def create_blueprint(deps):
 
         prompt_template = str(data.get("prompt") or "").strip()
         if not prompt_template:
-            return jsonify(
-                {
-                    "ok": True,
-                    "text": text,
-                    "original_text": text,
-                    "filtered": False,
-                    "used_fallback": True,
-                    "reason": "prompt_empty",
-                }
-            )
+            return bad_request_json(error="prompt_required")
 
         chat_name = str(data.get("chat_name") or "").strip() or DEFAULT_ASR_FILTER_CHAT_NAME
         domain_terms_text = stringify_domain_terms(data.get("domain_terms"))
@@ -150,31 +154,22 @@ def create_blueprint(deps):
                 chat_name=chat_name,
                 question=prompt,
             )
-            parsed_text = parse_asr_filter_response(raw_text=raw_output, fallback_text="")
-            corrected_text = parsed_text or text
+            corrected_text = parse_asr_filter_response(raw_text=raw_output)
             return jsonify(
                 {
                     "ok": True,
                     "text": corrected_text,
                     "original_text": text,
                     "filtered": corrected_text != text,
-                    "used_fallback": not bool(parsed_text),
                     "chat_name": chat_name,
                 }
             )
+        except ValueError as e:
+            deps.logger.warning("asr_filter_invalid_response chat=%s err=%s", chat_name, e, exc_info=True)
+            return error_json(error="asr_filter_invalid_response", status=502, chat_name=chat_name, detail=str(e))
         except Exception as e:
             deps.logger.warning("asr_filter_failed chat=%s err=%s", chat_name, e, exc_info=True)
-            return jsonify(
-                {
-                    "ok": True,
-                    "text": text,
-                    "original_text": text,
-                    "filtered": False,
-                    "used_fallback": True,
-                    "chat_name": chat_name,
-                    "error": str(e),
-                }
-            )
+            return error_json(error="asr_filter_failed", status=502, chat_name=chat_name, detail=str(e))
 
     @bp.route("/api/ask", methods=["POST"])
     def ask_question():
@@ -182,12 +177,9 @@ def create_blueprint(deps):
         t_server_receive_wall_ms = int(time.time() * 1000)
         deps.logger.info("received ask request")
         data = json_body_dict(request, silent=False)
-        try:
-            payload_keys = sorted(list((data or {}).keys())) if isinstance(data, dict) else []
-            question_chars = len(str((data or {}).get("question") or "").strip()) if isinstance(data, dict) else 0
-            deps.logger.info("ask payload summary: keys=%s question_chars=%s", payload_keys, question_chars)
-        except Exception:
-            deps.logger.info("ask payload summary unavailable")
+        payload_keys = sorted(list((data or {}).keys())) if isinstance(data, dict) else []
+        question_chars = len(str((data or {}).get("question") or "").strip()) if isinstance(data, dict) else 0
+        deps.logger.info("ask payload summary: keys=%s question_chars=%s", payload_keys, question_chars)
 
         parsed, err = parse_ask_request(deps=deps, data=data)
         if err is not None:

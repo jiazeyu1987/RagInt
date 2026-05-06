@@ -39,21 +39,15 @@ describe('sendTourControl', () => {
     });
   });
 
-  test('normalizes invalid payload as empty object', async () => {
-    fetchJson.mockResolvedValueOnce({ ok: true });
-
-    await sendTourControl({
+  test('rejects invalid payload before request', async () => {
+    const result = await sendTourControl({
       clientId: '',
       action: 'pause',
       payload: 'bad_payload',
     });
 
-    expect(fetchJson).toHaveBeenCalledWith('/api/tour/control', expect.objectContaining({
-      body: JSON.stringify({
-        action: 'pause',
-        payload: {},
-      }),
-    }));
+    expect(result).toEqual({ ok: false, error: 'payload_object_required' });
+    expect(fetchJson).not.toHaveBeenCalled();
   });
 });
 

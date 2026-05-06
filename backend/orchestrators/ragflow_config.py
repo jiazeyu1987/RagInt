@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from backend.orchestrators.text_cleaning import TextCleaningCfg, _parse_text_cleaning_cfg
@@ -43,7 +44,12 @@ class RagflowRuntimeConfig:
 
     @staticmethod
     def from_any(ragflow_config: dict | None) -> RagflowRuntimeConfig:
-        raw = ragflow_config if isinstance(ragflow_config, dict) else {}
+        if ragflow_config is None:
+            raw = {}
+        elif isinstance(ragflow_config, dict):
+            raw = ragflow_config
+        else:
+            raise ValueError("ragflow_config must be an object")
         kb_version = _get_kb_version(raw)
         qa_cache = _parse_qa_cache_cfg(raw)
         qa_constraints = _parse_qa_constraints_cfg(raw)
@@ -59,56 +65,96 @@ class RagflowRuntimeConfig:
         )
 
 
-def _get_kb_version(ragflow_config: dict) -> str:
+def _optional_object(ragflow_config: dict, key: str) -> dict:
+    cfg = ragflow_config.get(key, {})
+    if not isinstance(cfg, dict):
+        raise ValueError(f"{key} must be an object")
+    return cfg
+
+
+def _number_field(cfg: dict, key: str, *, default, cast, label: str):
+    if key not in cfg:
+        return default
+    raw = cfg[key]
+    if isinstance(raw, bool):
+        raise ValueError(f"{label} must be a number")
+    if cast is int and isinstance(raw, float) and not raw.is_integer():
+        raise ValueError(f"{label} must be an integer")
     try:
-        kb = ragflow_config.get("kb")
-        kb_version = ragflow_config.get("kb_version") or (kb.get("version") if isinstance(kb, dict) else "")
-        return str(kb_version or "").strip()
-    except Exception:
-        return ""
+        value = cast(raw)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"{label} must be a number") from e
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"{label} must be a finite number")
+    if cast is int and str(raw).strip().lower() in ("nan", "inf", "+inf", "-inf", "infinity", "+infinity", "-infinity"):
+        raise ValueError(f"{label} must be a finite number")
+    return value
+
+
+def _min_value(label: str, value, minimum):
+    if value < minimum:
+        raise ValueError(f"{label} must be >= {minimum}")
+    return value
+
+
+def _range_value(label: str, value, *, minimum, maximum):
+    if value < minimum:
+        raise ValueError(f"{label} must be >= {minimum}")
+    if value > maximum:
+        raise ValueError(f"{label} must be <= {maximum}")
+    return value
+
+
+def _get_kb_version(ragflow_config: dict) -> str:
+    kb = ragflow_config.get("kb")
+    kb_version = ragflow_config.get("kb_version") or (kb.get("version") if isinstance(kb, dict) else "")
+    return str(kb_version or "").strip()
 
 
 def _parse_qa_cache_cfg(ragflow_config: dict) -> QaCacheCfg:
-    cache_cfg = ragflow_config.get("qa_cache", {}) if isinstance(ragflow_config, dict) else {}
-    if not isinstance(cache_cfg, dict):
-        cache_cfg = {}
+    cache_cfg = _optional_object(ragflow_config, "qa_cache")
     enabled = bool(cache_cfg.get("enabled", True))
-    try:
-        ttl_s = float(cache_cfg.get("ttl_s", 3600.0))
-    except Exception:
-        ttl_s = 3600.0
-    return QaCacheCfg(enabled=enabled, ttl_s=max(0.0, ttl_s))
+    ttl_s = _number_field(cache_cfg, "ttl_s", default=3600.0, cast=float, label="qa_cache.ttl_s")
+    return QaCacheCfg(enabled=enabled, ttl_s=_min_value("qa_cache.ttl_s", ttl_s, 0.0))
 
 
 def _parse_qa_constraints_cfg(ragflow_config: dict) -> QaConstraintsCfg:
-    qa_cfg = ragflow_config.get("qa_constraints", {}) if isinstance(ragflow_config, dict) else {}
-    if not isinstance(qa_cfg, dict):
-        qa_cfg = {}
+    qa_cfg = _optional_object(ragflow_config, "qa_constraints")
     enabled = bool(qa_cfg.get("enabled", True))
     no_self_intro = bool(qa_cfg.get("no_self_intro", True))
-    try:
-        max_answer_chars = int(qa_cfg.get("max_answer_chars") or 150)
-    except Exception:
-        max_answer_chars = 150
-    return QaConstraintsCfg(enabled=enabled, no_self_intro=no_self_intro, max_answer_chars=max(0, max_answer_chars))
+    max_answer_chars = _number_field(
+        qa_cfg,
+        "max_answer_chars",
+        default=150,
+        cast=int,
+        label="qa_constraints.max_answer_chars",
+    )
+    return QaConstraintsCfg(
+        enabled=enabled,
+        no_self_intro=no_self_intro,
+        max_answer_chars=_min_value("qa_constraints.max_answer_chars", max_answer_chars, 0),
+    )
 
 
 def _parse_qa_audio_cache_cfg(ragflow_config: dict) -> QaAudioCacheCfg:
-    cfg = ragflow_config.get("qa_audio_cache", {}) if isinstance(ragflow_config, dict) else {}
-    if not isinstance(cfg, dict):
-        cfg = {}
+    cfg = _optional_object(ragflow_config, "qa_audio_cache")
     enabled = bool(cfg.get("enabled", True))
-    try:
-        recall_top_k = int(cfg.get("recall_top_k") or 20)
-    except Exception:
-        recall_top_k = 20
-    try:
-        classifier_threshold = float(cfg.get("classifier_threshold") or 0.85)
-    except Exception:
-        classifier_threshold = 0.85
+    recall_top_k = _number_field(cfg, "recall_top_k", default=20, cast=int, label="qa_audio_cache.recall_top_k")
+    classifier_threshold = _number_field(
+        cfg,
+        "classifier_threshold",
+        default=0.85,
+        cast=float,
+        label="qa_audio_cache.classifier_threshold",
+    )
     classifier_chat_name = str(cfg.get("classifier_chat_name") or "问题比对").strip() or "问题比对"
-    recall_top_k = max(1, min(recall_top_k, 50))
-    classifier_threshold = max(0.0, min(classifier_threshold, 1.0))
+    recall_top_k = _range_value("qa_audio_cache.recall_top_k", recall_top_k, minimum=1, maximum=50)
+    classifier_threshold = _range_value(
+        "qa_audio_cache.classifier_threshold",
+        classifier_threshold,
+        minimum=0,
+        maximum=1,
+    )
     return QaAudioCacheCfg(
         enabled=enabled,
         recall_top_k=recall_top_k,

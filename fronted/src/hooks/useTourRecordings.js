@@ -12,7 +12,7 @@ export function useTourRecordings({
   const startTourRecordingArchive = useCallback(
     async (stops) => {
       const list = Array.isArray(stops) ? stops.map((s) => String(s || '').trim()).filter(Boolean) : [];
-      if (!list.length) return '';
+      if (!list.length) throw new Error('recording_stops_required');
       const profile = typeof getCurrentTtsProfile === 'function' ? getCurrentTtsProfile() : {};
       const provider = String((profile && profile.provider) || '').trim();
       const voice = String((profile && profile.voice) || '').trim();
@@ -40,38 +40,25 @@ export function useTourRecordings({
   const finishTourRecordingArchive = useCallback(
     async (recordingId) => {
       const rid = String(recordingId || '').trim() || String(activeTourRecordingIdRef ? activeTourRecordingIdRef.current : '').trim();
-      if (!rid) return;
-      try {
-        await fetchJson(`/api/recordings/${encodeURIComponent(rid)}/finish`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Client-ID': clientIdRef ? clientIdRef.current : '' },
-          body: JSON.stringify({ ok: true }),
-        });
-      } catch (_) {
-        // ignore
-      }
+      if (!rid) throw new Error('recording_id_required');
+      await fetchJson(`/api/recordings/${encodeURIComponent(rid)}/finish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Client-ID': clientIdRef ? clientIdRef.current : '' },
+        body: JSON.stringify({ ok: true }),
+      });
     },
     [activeTourRecordingIdRef, clientIdRef]
   );
 
   const loadTourRecordingMeta = useCallback(async (recordingId) => {
     const rid = String(recordingId || '').trim();
-    if (!rid) return null;
-    try {
-      return await fetchJson(`/api/recordings/${encodeURIComponent(rid)}`);
-    } catch (_) {
-      return null;
-    }
+    if (!rid) throw new Error('recording_id_required');
+    return fetchJson(`/api/recordings/${encodeURIComponent(rid)}`);
   }, []);
 
   const refreshTourRecordings = useCallback(async () => {
-    try {
-      if (typeof refreshTourRecordingOptions === 'function') {
-        await refreshTourRecordingOptions();
-      }
-    } catch (_) {
-      // ignore
-    }
+    if (typeof refreshTourRecordingOptions !== 'function') throw new Error('refresh_tour_recording_options_required');
+    await refreshTourRecordingOptions();
   }, [refreshTourRecordingOptions]);
 
   const renameSelectedTourRecording = useCallback(async () => {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import sqlite3
 import threading
@@ -133,11 +134,15 @@ class QaAudioCacheStore:
 
     @staticmethod
     def _norm_tts_speed(v: float | int | str | None) -> float:
+        if v is None:
+            return 1.0
         try:
-            speed = float(v if v is not None else 1.0)
-        except Exception:
-            speed = 1.0
-        return round(max(0.5, min(speed, 2.0)), 2)
+            speed = float(v)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid_tts_speed value={v!r}") from exc
+        if not math.isfinite(speed) or speed < 0.5 or speed > 2.0:
+            raise ValueError(f"invalid_tts_speed value={v!r}")
+        return round(speed, 2)
 
     @staticmethod
     def _normalize_audio_ext(v: str | None) -> str:
@@ -148,7 +153,7 @@ class QaAudioCacheStore:
             ext = f".{ext}"
         if ext in (".wav", ".mp3", ".ogg", ".flac"):
             return ext
-        return ".wav"
+        raise ValueError(f"unsupported_audio_ext ext={ext}")
 
     def _now_ms(self) -> int:
         return int(time.time() * 1000)
@@ -298,13 +303,12 @@ class QaAudioCacheStore:
         pair = self.get_pair(pair_id=int(pair_id))
         if not pair:
             return None
-        try:
-            p = self._safe_audio_path(pair.audio_rel_path)
-        except Exception:
-            return None
+        p = self._safe_audio_path(pair.audio_rel_path)
         if not (p.exists() and p.is_file()):
-            return None
+            raise FileNotFoundError(f"qa_audio_file_missing pair_id={int(pair_id)} path={pair.audio_rel_path}")
         self._repair_audio_file_if_needed(p, tts_provider=pair.tts_provider)
+        if int(p.stat().st_size) <= 0:
+            raise ValueError(f"qa_audio_file_empty pair_id={int(pair_id)} path={pair.audio_rel_path}")
         return p
 
     @staticmethod
@@ -315,10 +319,7 @@ class QaAudioCacheStore:
         return 16000
 
     def _repair_audio_file_if_needed(self, path: Path, *, tts_provider: str) -> None:
-        try:
-            raw = path.read_bytes()
-        except Exception:
-            return
+        raw = path.read_bytes()
         if not raw:
             return
         fixed = ensure_wav_bytes(
@@ -335,13 +336,10 @@ class QaAudioCacheStore:
                 f.write(fixed)
             os.replace(str(tmp), str(path))
             self._logger.info(f"[QA_AUDIO] repaired_audio_file file={path.name} bytes={len(fixed)}")
-        except Exception as e:
-            self._logger.warning(f"[QA_AUDIO] repaired_audio_file_failed file={path.name} err={e}")
-            try:
-                if tmp.exists():
-                    tmp.unlink(missing_ok=True)
-            except Exception:
-                pass
+        except Exception:
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
+            raise
 
     def search_candidates(
         self,
@@ -397,10 +395,7 @@ class QaAudioCacheStore:
 
         out: list[QaAudioCandidate] = []
         for r in rows:
-            try:
-                v = self._from_blob(int(r["embedding_dim"]), r["vector_blob"])
-            except Exception:
-                continue
+            v = self._from_blob(int(r["embedding_dim"]), r["vector_blob"])
             score = self._cosine(q, v)
             out.append(
                 QaAudioCandidate(
@@ -515,12 +510,9 @@ class QaAudioCacheStore:
                 conn.commit()
 
                 if old_rel_path and old_rel_path != rel_path:
-                    try:
-                        old_path = self._safe_audio_path(old_rel_path)
-                        if old_path.exists() and old_path.is_file():
-                            old_path.unlink(missing_ok=True)
-                    except Exception:
-                        pass
+                    old_path = self._safe_audio_path(old_rel_path)
+                    if old_path.exists() and old_path.is_file():
+                        old_path.unlink(missing_ok=True)
                 return pair_id
             finally:
                 conn.close()
@@ -577,16 +569,13 @@ class QaAudioCacheStore:
                 if sample_rate <= 0:
                     return 0.0
                 return float(frames) / float(sample_rate)
-        except Exception:
-            return None
+        except (wave.Error, EOFError) as exc:
+            raise ValueError(f"wav_duration_unreadable path={path}") from exc
 
     @staticmethod
     def _is_riff_wav_file(path: Path) -> bool:
-        try:
-            with open(path, "rb") as f:
-                head = bytes(f.read(12) or b"")
-        except Exception:
-            return False
+        with open(path, "rb") as f:
+            head = bytes(f.read(12) or b"")
         return len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WAVE"
 
     def cleanup_invalid_audio_pairs(self) -> dict:
@@ -633,10 +622,7 @@ class QaAudioCacheStore:
                     reason = "audio_file_missing"
                 else:
                     self._repair_audio_file_if_needed(path, tts_provider=tts_provider)
-                    try:
-                        file_size = int(path.stat().st_size)
-                    except Exception:
-                        file_size = 0
+                    file_size = int(path.stat().st_size)
                     if file_size <= 0:
                         reason = "audio_file_empty"
                     elif self._is_riff_wav_file(path):
@@ -668,22 +654,26 @@ class QaAudioCacheStore:
                                 continue
                             deleted_ids.append(pid)
                             deleted_paths.append(str(row["audio_rel_path"] or ""))
+                finally:
+                    conn.close()
+
+            for rel_path in deleted_paths:
+                if not rel_path:
+                    continue
+                p = self._safe_audio_path(rel_path)
+                if p.exists() and p.is_file():
+                    p.unlink(missing_ok=True)
+
+            with self._lock:
+                conn = self._connect()
+                try:
+                    if deleted_ids:
                         for pid in deleted_ids:
                             conn.execute("DELETE FROM qa_audio_embeddings WHERE pair_id = ?", (pid,))
                             conn.execute("DELETE FROM qa_audio_pairs WHERE id = ?", (pid,))
                     conn.commit()
                 finally:
                     conn.close()
-
-        for rel_path in deleted_paths:
-            if not rel_path:
-                continue
-            try:
-                p = self._safe_audio_path(rel_path)
-                if p.exists() and p.is_file():
-                    p.unlink(missing_ok=True)
-            except Exception:
-                pass
 
         return {
             "scanned": int(len(rows)),
@@ -709,10 +699,7 @@ class QaAudioCacheStore:
                 conn.close()
 
         if rel:
-            try:
-                p = self._safe_audio_path(rel)
-                if p.exists() and p.is_file():
-                    p.unlink(missing_ok=True)
-            except Exception:
-                pass
+            p = self._safe_audio_path(rel)
+            if p.exists() and p.is_file():
+                p.unlink(missing_ok=True)
         return True

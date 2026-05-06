@@ -36,7 +36,13 @@ export function QaAudioCachePanel() {
     setLoading(true);
     try {
       const data = await fetchJson(`/api/ops/qa_audio_pairs?${query}`);
-      const list = Array.isArray(data && data.items) ? data.items : [];
+      if (data && data.ok === false) {
+        throw new Error(String(data.error || 'qa_audio_cache_load_failed'));
+      }
+      if (!Array.isArray(data && data.items)) {
+        throw new Error('qa_audio_cache_invalid_response');
+      }
+      const list = data.items;
       setItems(list);
       setErr('');
     } catch (e) {

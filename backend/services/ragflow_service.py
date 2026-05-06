@@ -110,14 +110,16 @@ def _ragflow_named_value(item):
     return str(item).strip()
 
 
-def _find_named_resource(list_fn, expected_name: str, *, filter_key: str, page_size: int = 100):
+def _find_named_resource(list_fn, expected_name: str, *, filter_key: str, error_code: str, page_size: int = 100):
     name = str(expected_name or "").strip()
     if not name:
         return None
 
     page = 1
     while True:
-        items = list_fn(page=page, page_size=page_size, **{filter_key: name}) or []
+        items = list_fn(page=page, page_size=page_size, **{filter_key: name})
+        if items is None or not isinstance(items, (list, tuple)):
+            raise RuntimeError(error_code)
         for item in items:
             if _ragflow_named_value(item) == name:
                 return item
@@ -127,7 +129,12 @@ def _find_named_resource(list_fn, expected_name: str, *, filter_key: str, page_s
 
 
 def find_dataset_by_name(client, dataset_name):
-    dataset = _find_named_resource(client.list_datasets, dataset_name, filter_key="name")
+    dataset = _find_named_resource(
+        client.list_datasets,
+        dataset_name,
+        filter_key="name",
+        error_code="ragflow_list_datasets_unexpected_response",
+    )
     if dataset is None:
         return None
     if hasattr(dataset, "id"):
@@ -138,7 +145,12 @@ def find_dataset_by_name(client, dataset_name):
 
 
 def find_chat_by_name(client, chat_name):
-    return _find_named_resource(client.list_chats, chat_name, filter_key="name")
+    return _find_named_resource(
+        client.list_chats,
+        chat_name,
+        filter_key="name",
+        error_code="ragflow_list_chats_unexpected_response",
+    )
 
 
 def _is_duplicate_chat_name_error(err: Exception) -> bool:
@@ -194,22 +206,30 @@ class RagflowService:
         try:
             st = self._config_path.stat()
             mtime_ns = int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9)))
-        except Exception:
-            mtime_ns = -1
+        except OSError as e:
+            self._logger.warning("ragflow_config_file_stat_failed path=%s err=%s", str(self._config_path), e)
+            raise
         try:
             with open(self._config_path, "r", encoding="utf-8") as f:
                 raw = json.load(f)
-            return (raw if isinstance(raw, dict) else {}), int(mtime_ns)
-        except Exception as e:
+        except json.JSONDecodeError as e:
+            self._logger.warning("ragflow_config_file_json_invalid path=%s err=%s", str(self._config_path), e)
+            raise
+        except OSError as e:
             self._logger.warning("ragflow_config_file_read_failed path=%s err=%s", str(self._config_path), e)
-            return {}, int(mtime_ns)
+            raise
+        if not isinstance(raw, dict):
+            raise RuntimeError(f"ragflow_config_file_invalid: expected object at {self._config_path}")
+        return raw, int(mtime_ns)
 
     def _api_request(self, *, method: str, path: str, json_body: dict | None = None, timeout: int = 15):
         cfg = self._last_loaded_cfg if self._last_loaded_cfg is not None else self.load_config()
         api_key = (cfg.get("api_key") or "").strip()
-        base_url = (cfg.get("base_url") or "http://127.0.0.1").strip().rstrip("/")
+        base_url = str(cfg.get("base_url") or "").strip().rstrip("/")
         if not api_key or api_key in ["YOUR_RAGFLOW_API_KEY_HERE", "your_api_key_here"]:
             raise RuntimeError("ragflow_api_key_invalid")
+        if not base_url:
+            raise RuntimeError("ragflow_base_url_missing")
         url = f"{base_url}{path}"
         headers = {"Authorization": f"Bearer {api_key}"}
         resp = requests.request(method=method.upper(), url=url, headers=headers, json=json_body, timeout=timeout)
@@ -218,8 +238,14 @@ class RagflowService:
             return {}
         try:
             return resp.json()
-        except Exception:
-            return {"ok": True, "text": resp.text}
+        except ValueError as e:
+            self._logger.warning(
+                "ragflow_api_response_json_parse_failed method=%s path=%s err=%s",
+                method.upper(),
+                path,
+                e,
+            )
+            raise RuntimeError("ragflow_api_response_json_parse_failed") from e
 
     @staticmethod
     def _extract_data_list(payload):
@@ -233,7 +259,16 @@ class RagflowService:
                     return docs
         if isinstance(payload, list):
             return payload
-        return []
+        raise RuntimeError("ragflow_api_response_unexpected_shape")
+
+    @staticmethod
+    def _api_payload_failed(payload) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        code = payload.get("code")
+        if code not in (None, 0):
+            return True
+        return payload.get("ok") is False
 
     @staticmethod
     def _resolve_base_endpoint(base_url: str) -> tuple[str, str, int]:
@@ -311,7 +346,7 @@ class RagflowService:
                     rec = self._config_store.get(scope_id=self._config_scope_id)
                 except Exception as e:
                     self._logger.warning("ragflow_config_db_read_failed err=%s", e)
-                    rec = None
+                    raise
                 if rec is not None:
                     revision = ("db", int(rec.updated_at_ms or 0))
                     if not force and self._last_loaded_cfg is not None and revision == self._last_loaded_revision:
@@ -330,9 +365,8 @@ class RagflowService:
                         rec = self._config_store.upsert(scope_id=self._config_scope_id, config=seed_cfg)
                     except Exception as e:
                         self._logger.warning("ragflow_config_db_bootstrap_failed err=%s", e)
-                        rec = None
-                    if rec is not None:
-                        revision = ("db", int(rec.updated_at_ms or 0))
+                        raise
+                    revision = ("db", int(rec.updated_at_ms or 0))
                     if not force and self._last_loaded_cfg is not None and revision == self._last_loaded_revision:
                         return self._last_loaded_cfg
                     raw = rec.config if isinstance(rec.config, dict) else {}
@@ -369,14 +403,24 @@ class RagflowService:
 
     def init(self) -> bool:
         cfg = self.load_config()
-        api_key = cfg.get("api_key", "")
-        base_url = str(cfg.get("base_url") or "http://127.0.0.1").strip().rstrip("/")
+        api_key = str(cfg.get("api_key") or "").strip()
+        base_url = str(cfg.get("base_url") or "").strip().rstrip("/")
         dataset_name = cfg.get("dataset_name", "")
         conversation_name = cfg.get("default_conversation_name", "语音问答")
 
         if not api_key or api_key in ["YOUR_RAGFLOW_API_KEY_HERE", "your_api_key_here"]:
             self._logger.error("RAGFlow API key无效")
-            return False
+            raise RagflowInitError(
+                "ragflow_api_key_invalid",
+                "RAGFlow初始化失败: API key无效或缺失。",
+                details={"api_key_configured": bool(api_key)},
+            )
+        if not base_url:
+            raise RagflowInitError(
+                "ragflow_base_url_missing",
+                "RAGFlow初始化失败: 缺少 base_url 配置。",
+                details={"base_url": base_url},
+            )
 
         self._ensure_base_url_reachable(base_url)
         self.client = RAGFlow(api_key=api_key, base_url=base_url)
@@ -391,8 +435,10 @@ class RagflowService:
 
     def list_chats(self) -> dict:
         if not self.client:
-            return {"chats": [], "default": self.default_chat_name, "error": "ragflow_not_initialized"}
-        chats = self.client.list_chats() or []
+            raise RuntimeError("ragflow_not_initialized")
+        chats = self.client.list_chats()
+        if chats is None or not isinstance(chats, (list, tuple)):
+            raise RuntimeError("ragflow_list_chats_unexpected_response")
         items = []
         for c in chats:
             d = _ragflow_chat_to_dict(c)
@@ -404,9 +450,11 @@ class RagflowService:
     def list_agents(self) -> dict:
         cfg = self._last_loaded_cfg if self._last_loaded_cfg is not None else self.load_config()
         api_key = (cfg.get("api_key") or "").strip()
-        base_url = (cfg.get("base_url") or "http://127.0.0.1").strip().rstrip("/")
+        base_url = str(cfg.get("base_url") or "").strip().rstrip("/")
         if not api_key or api_key in ["YOUR_RAGFLOW_API_KEY_HERE", "your_api_key_here"]:
-            return {"agents": [], "default": None, "error": "ragflow_api_key_invalid"}
+            raise RuntimeError("ragflow_api_key_invalid")
+        if not base_url:
+            raise RuntimeError("ragflow_base_url_missing")
 
         url = f"{base_url}/api/v1/agents"
         headers = {"Authorization": f"Bearer {api_key}"}
@@ -416,12 +464,12 @@ class RagflowService:
                 payload = r.json()
         except Exception as e:
             self._logger.error(f"ragflow_list_agents_failed url={url} err={e}", exc_info=True)
-            return {"agents": [], "default": None, "error": "ragflow_agents_fetch_failed"}
+            raise RuntimeError("ragflow_agents_fetch_failed") from e
 
         data = payload.get("data") if isinstance(payload, dict) else None
         if not isinstance(data, list):
             self._logger.warning(f"ragflow_list_agents_unexpected_response url={url} payload_type={type(payload)}")
-            return {"agents": [], "default": None, "error": "ragflow_agents_unexpected_response"}
+            raise RuntimeError("ragflow_agents_unexpected_response")
 
         agents = []
         for a in data:
@@ -527,20 +575,11 @@ class RagflowService:
             return _ragflow_response_text(resp).strip()
         finally:
             if chat_id and session_id:
-                try:
-                    self._api_request(
-                        method="DELETE",
-                        path=f"/api/v1/chats/{chat_id}/sessions",
-                        json_body={"ids": [session_id]},
-                    )
-                except Exception as e:
-                    self._logger.warning(
-                        "ragflow_delete_one_shot_session_failed chat=%s chat_id=%s session_id=%s err=%s",
-                        name,
-                        chat_id,
-                        session_id,
-                        e,
-                    )
+                self._api_request(
+                    method="DELETE",
+                    path=f"/api/v1/chats/{chat_id}/sessions",
+                    json_body={"ids": [session_id]},
+                )
 
     def create_new_session(self, chat_name: str) -> dict:
         if not self.client:
@@ -583,6 +622,24 @@ class RagflowService:
             return {"ok": False, "deleted": 0, "chat_name": name, "error": "chat_id_missing"}
 
         payload = self._api_request(method="GET", path=f"/api/v1/chats/{chat_id}/sessions")
+        if self._api_payload_failed(payload):
+            self._logger.warning(
+                "ragflow_list_chat_sessions_failed chat=%s chat_id=%s resp=%s",
+                name,
+                chat_id,
+                payload,
+            )
+            return {
+                "ok": False,
+                "deleted": 0,
+                "chat_name": name,
+                "chat_id": str(chat_id),
+                "chat_found": True,
+                "session_ids": [],
+                "error": "ragflow_list_sessions_failed",
+                "upstream": payload,
+            }
+
         session_items = self._extract_data_list(payload)
         session_ids: list[str] = []
         for item in session_items:
@@ -599,10 +656,7 @@ class RagflowService:
         delete_payload = {"ids": session_ids} if session_ids else None
         delete_resp = self._api_request(method="DELETE", path=f"/api/v1/chats/{chat_id}/sessions", json_body=delete_payload)
 
-        with self._lock:
-            self._sessions.pop(name, None)
-
-        if isinstance(delete_resp, dict) and delete_resp.get("code") not in (None, 0):
+        if self._api_payload_failed(delete_resp):
             self._logger.warning(
                 "ragflow_clear_chat_sessions_failed chat=%s chat_id=%s total=%s resp=%s",
                 name,
@@ -620,6 +674,9 @@ class RagflowService:
                 "error": "ragflow_delete_session_failed",
                 "upstream": delete_resp,
             }
+
+        with self._lock:
+            self._sessions.pop(name, None)
 
         self._logger.info(
             "ragflow_clear_chat_sessions chat=%s chat_id=%s deleted=%s",

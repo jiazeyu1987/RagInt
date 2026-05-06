@@ -6,6 +6,11 @@ export function useBackendStatus(requestId, { intervalMs = 800, enabled = true }
   const [status, setStatus] = useState(null);
   const [error, setError] = useState(null);
 
+  function requireStatusPayload(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('status_response_invalid');
+    return data;
+  }
+
   useEffect(() => {
     let cancelled = false;
     let timer = null;
@@ -17,9 +22,9 @@ export function useBackendStatus(requestId, { intervalMs = 800, enabled = true }
 
     const tick = async () => {
       try {
-        const data = await fetchJson(`/api/status?request_id=${encodeURIComponent(rid)}`);
+        const data = requireStatusPayload(await fetchJson(`/api/status?request_id=${encodeURIComponent(rid)}`));
         if (cancelled) return;
-        setStatus(data || null);
+        setStatus(data);
         setError(null);
       } catch (e) {
         if (cancelled) return;
