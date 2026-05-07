@@ -2,6 +2,14 @@ function safeTrim(value) {
   return String(value == null ? '' : value).trim();
 }
 
+function errorMessage(error) {
+  return safeTrim(error && error.message ? error.message : error);
+}
+
+function createAsrFilterError(message) {
+  return new Error(safeTrim(message) || 'ASR filter failed');
+}
+
 const FILTER_CACHE_TTL_MS = 30000;
 
 function parseWakeWordList(raw) {
@@ -225,14 +233,13 @@ export class AsrPostProcessPipeline {
   } = {}) {
     const sourceText = safeTrim(text);
     if (!sourceText) return '';
-    if (!this._filterAsrText) return sourceText;
+    if (!this._filterAsrText) throw createAsrFilterError('ASR filter dependency is required');
     const cacheKey = buildFilterCacheKey({ text: sourceText, prompt, chatName, domainTerms });
     const cachedText = this._getCachedFilterText(cacheKey);
     if (cachedText) return cachedText;
 
     if (this._filterInFlight && safeTrim(this._filterInFlight.key) === cacheKey && this._filterInFlight.promise) {
-      const sharedText = await this._filterInFlight.promise;
-      return safeTrim(sharedText) || sourceText;
+      return this._filterInFlight.promise;
     }
 
     const inFlightPromise = (async () => {
@@ -242,7 +249,8 @@ export class AsrPostProcessPipeline {
         chatName: safeTrim(chatName),
         domainTerms: safeTrim(domainTerms),
       });
-      const correctedText = safeTrim(res && res.text) || sourceText;
+      const correctedText = safeTrim(res && res.text);
+      if (!correctedText) throw createAsrFilterError('ASR filter returned invalid text');
       this._setCachedFilterText(cacheKey, correctedText);
       return correctedText;
     })();
@@ -266,27 +274,24 @@ export class AsrPostProcessPipeline {
   } = {}) {
     const sourceText = safeTrim(text);
     if (!sourceText) return { ok: false, reason: 'empty_text', text: '' };
-    if (!asrTextFilterEnabled || !this._filterAsrText) return { ok: false, reason: 'filter_disabled', text: sourceText };
+    if (!asrTextFilterEnabled) return { ok: false, reason: 'filter_disabled', text: sourceText };
+    if (!this._filterAsrText) throw createAsrFilterError('ASR filter dependency is required');
 
     const prompt = safeTrim(asrTextFilterPrompt);
     const chatName = safeTrim(asrTextFilterChatName);
-    if (!prompt || !chatName) return { ok: false, reason: 'filter_config_missing', text: sourceText };
+    if (!prompt || !chatName) throw createAsrFilterError('ASR filter config missing');
 
     const domainTerms = buildAsrFilterDomainTerms({
       domainTermsText: asrTextFilterTerms,
       wakeWordText: wakeWordEnabled ? wakeWord : '',
     });
-    try {
-      const correctedText = await this._resolveFilteredText({
-        text: sourceText,
-        prompt,
-        chatName,
-        domainTerms,
-      });
-      return { ok: true, reason: 'prefetched', text: correctedText, correctedText };
-    } catch (_) {
-      return { ok: false, reason: 'prefetch_failed', text: sourceText };
-    }
+    const correctedText = await this._resolveFilteredText({
+      text: sourceText,
+      prompt,
+      chatName,
+      domainTerms,
+    });
+    return { ok: true, reason: 'prefetched', text: correctedText, correctedText };
   }
 
   async process({
@@ -337,32 +342,31 @@ export class AsrPostProcessPipeline {
     const holdActive = this._now() < Number(this._wakeHoldUntilMs || 0);
     let correctedText = originalText;
 
-    if (asrTextFilterEnabled && this._filterAsrText) {
+    if (asrTextFilterEnabled) {
+      if (!this._filterAsrText) throw createAsrFilterError('ASR filter dependency is required');
       const prompt = safeTrim(asrTextFilterPrompt);
       const chatName = safeTrim(asrTextFilterChatName);
+      if (!prompt || !chatName) throw createAsrFilterError('ASR filter config missing');
       const domainTerms = buildAsrFilterDomainTerms({
         domainTermsText: asrTextFilterTerms,
         wakeWordText: wakeWordEnabled ? wakeWord : '',
       });
-      if (prompt && chatName) {
-        try {
-          if (typeof onStageChange === 'function') onStageChange('filtering');
-          if (typeof onStatusChange === 'function') onStatusChange('processing_asr_text');
-          emitEvent('filtering_started', { text: originalText, rawText: originalText, chatName, domainTerms });
-          correctedText =
-            (await this._resolveFilteredText({
-              text: originalText,
-              prompt,
-              chatName,
-              domainTerms,
-            })) || originalText;
-          emitEvent('filtering_finished', { text: correctedText, rawText: originalText, correctedText });
-        } catch (_) {
-          correctedText = originalText;
-          emitEvent('filtering_failed', { text: originalText, rawText: originalText });
-        } finally {
-          if (typeof onStatusChange === 'function') onStatusChange('');
-        }
+      try {
+        if (typeof onStageChange === 'function') onStageChange('filtering');
+        if (typeof onStatusChange === 'function') onStatusChange('processing_asr_text');
+        emitEvent('filtering_started', { text: originalText, rawText: originalText, chatName, domainTerms });
+        correctedText = await this._resolveFilteredText({
+          text: originalText,
+          prompt,
+          chatName,
+          domainTerms,
+        });
+        emitEvent('filtering_finished', { text: correctedText, rawText: originalText, correctedText });
+      } catch (error) {
+        emitEvent('filtering_failed', { text: originalText, rawText: originalText, error: errorMessage(error) });
+        throw error;
+      } finally {
+        if (typeof onStatusChange === 'function') onStatusChange('');
       }
     }
 

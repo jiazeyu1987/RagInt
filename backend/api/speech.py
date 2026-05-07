@@ -39,7 +39,7 @@ from backend.services.asr_text_filter import (
 
 def create_blueprint(deps):
     bp = Blueprint("speech_api", __name__)
-    rag_chat_manager = getattr(deps, "ragflow_chat_manager", None) or getattr(deps, "ragflow_service", None)
+    rag_chat_manager = getattr(deps, "ragflow_chat_manager", None)
 
     @bp.route("/api/asr/sauc/health", methods=["GET"])
     def api_sauc_proxy_health():
@@ -148,6 +148,14 @@ def create_blueprint(deps):
             asr_text=text,
             domain_terms_text=domain_terms_text,
         )
+        if rag_chat_manager is None:
+            deps.logger.error("asr_filter_dependency_missing dependency=ragflow_chat_manager")
+            return error_json(
+                error="asr_filter_dependency_missing",
+                status=500,
+                dependency="ragflow_chat_manager",
+                detail="ragflow_chat_manager is required for ASR filter",
+            )
 
         try:
             raw_output = rag_chat_manager.ask_chat(

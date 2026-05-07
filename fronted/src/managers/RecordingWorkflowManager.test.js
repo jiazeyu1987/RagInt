@@ -105,7 +105,8 @@ describe('RecordingWorkflowManager', () => {
     workflow._snapshotBaseText();
     workflow._ensureRecorder();
 
-    recorderConfig.onFinalTimeout('partial text');
+    recorderConfig.onPartialText('partial text');
+    recorderConfig.onFinalTimeout('timeout fallback ignored');
 
     expect(setInputText).toHaveBeenLastCalledWith('base text partial text');
     expect(onFinalText).toHaveBeenCalledWith('partial text');
@@ -136,7 +137,8 @@ describe('RecordingWorkflowManager', () => {
     workflow._snapshotBaseText();
     workflow._ensureRecorder();
 
-    recorderConfig.onFinalTimeout('partial text');
+    recorderConfig.onPartialText('partial text');
+    recorderConfig.onFinalTimeout('timeout fallback ignored');
 
     expect(setInputText).toHaveBeenLastCalledWith('base text');
     expect(onFinalText).toHaveBeenCalledWith('');
@@ -272,5 +274,29 @@ describe('RecordingWorkflowManager', () => {
     });
 
     expect(() => workflow.stop()).toThrow('recorder_stop_failed');
+  });
+
+  test('recordOnce rejects when final text never arrives instead of returning empty success', async () => {
+    VoiceKitWsRecorderManager.mockImplementation(() => ({
+      start: jest.fn().mockResolvedValue(true),
+      stop: jest.fn(),
+      cancel: jest.fn(),
+      isRecording: false,
+    }));
+
+    const workflow = new RecordingWorkflowManager();
+    workflow.setDeps({
+      baseUrl: 'http://localhost:9380',
+      clientId: 'client-1',
+      setIsLoading: jest.fn(),
+      onRecognizingChange: jest.fn(),
+      onAsrStageChange: jest.fn(),
+    });
+
+    const pending = workflow.recordOnce({ maxRecordMs: 500, totalTimeoutMs: 1200 });
+    await Promise.resolve();
+    jest.advanceTimersByTime(1200);
+
+    await expect(pending).rejects.toThrow('record_once_timeout');
   });
 });

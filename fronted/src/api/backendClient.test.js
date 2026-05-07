@@ -65,6 +65,32 @@ describe('backendClient', () => {
     await expect(fetchJson('/api/forbidden')).rejects.toThrow('HTTP 403 /api/forbidden');
   });
 
+  test('fetchJson exposes structured non-ok JSON error', async () => {
+    global.fetch.mockResolvedValueOnce(
+      mockResponse({
+        ok: false,
+        status: 500,
+        jsonValue: { ok: false, error: 'ragflow_chat_not_found' },
+      })
+    );
+
+    await expect(fetchJson('/api/ragflow/chats/clear_sessions')).rejects.toThrow('ragflow_chat_not_found');
+  });
+
+  test('fetchJson rejects malformed JSON error bodies explicitly', async () => {
+    global.fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      headers: { get: () => 'application/json' },
+      json: jest.fn(async () => {
+        throw new SyntaxError('bad json');
+      }),
+      text: jest.fn(),
+    });
+
+    await expect(fetchJson('/api/broken')).rejects.toThrow('Invalid JSON error response /api/broken');
+  });
+
   test('fetchJson parses JSON from text body when content type is not json', async () => {
     global.fetch.mockResolvedValueOnce(
       mockResponse({
@@ -158,13 +184,15 @@ describe('backendClient', () => {
     });
   });
 
-  test('emitClientEvent returns structured error when request fails', async () => {
+  test('emitClientEvent exposes request failures instead of returning a default error result', async () => {
     global.fetch.mockRejectedValueOnce(new Error('network_down'));
-    const result = await emitClientEvent({
-      requestId: 'rid',
-      name: 'evt',
-    });
-    expect(result).toEqual({ ok: false, error: 'network_down' });
+
+    await expect(
+      emitClientEvent({
+        requestId: 'rid',
+        name: 'evt',
+      })
+    ).rejects.toThrow('network_down');
   });
 
   test('filterAsrText posts normalized payload fields', async () => {

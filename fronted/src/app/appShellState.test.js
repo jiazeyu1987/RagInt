@@ -2,8 +2,12 @@ import {
   TOUR_BTN_MODE,
   UI_VIEW_MODE_STORAGE_KEY,
   cloneAsrProbeState,
+  createInitialAnswerCacheMeta,
   createInitialAsrProbeState,
+  createInitialTourButtonState,
+  createInitialTourMeta,
   hasTourEntryParam,
+  isPointerEventSupported,
   normalizeUiViewMode,
   readInitialUiViewMode,
   reduceTourButtonState,
@@ -30,6 +34,29 @@ describe('appShellState helpers', () => {
     expect(normalizeUiViewMode('simple')).toBe('simple');
     expect(normalizeUiViewMode(' full ')).toBe('full');
     expect(normalizeUiViewMode('unknown')).toBe('full');
+  });
+
+  test('builds app shell initial state objects without sharing references', () => {
+    expect(createInitialAnswerCacheMeta()).toEqual({ hit: false, type: '' });
+    expect(createInitialTourButtonState()).toEqual({ started: false, mode: TOUR_BTN_MODE.START });
+
+    const firstTourMeta = createInitialTourMeta();
+    const secondTourMeta = createInitialTourMeta();
+    expect(firstTourMeta).toEqual({
+      zones: ['\u9ed8\u8ba4\u8def\u7ebf'],
+      profiles: ['\u5927\u4f17', '\u513f\u7ae5', '\u4e13\u4e1a'],
+      default_zone: '\u9ed8\u8ba4\u8def\u7ebf',
+      default_profile: '\u5927\u4f17',
+    });
+    expect(firstTourMeta).not.toBe(secondTourMeta);
+    expect(firstTourMeta.zones).not.toBe(secondTourMeta.zones);
+    expect(firstTourMeta.profiles).not.toBe(secondTourMeta.profiles);
+  });
+
+  test('detects pointer event support from an explicit window-like object', () => {
+    expect(isPointerEventSupported({ PointerEvent: function PointerEvent() {} })).toBe(true);
+    expect(isPointerEventSupported({})).toBe(false);
+    expect(isPointerEventSupported(null)).toBe(false);
   });
 
   test('detects tour entry param and resolves initial UI mode', () => {

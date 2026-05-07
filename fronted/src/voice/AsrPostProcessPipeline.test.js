@@ -127,4 +127,54 @@ describe('AsrPostProcessPipeline', () => {
     expect(result.accepted).toBe(true);
     expect(result.text).toBe('介绍一下展品');
   });
+  test('fails fast when ASR filter returns an invalid model output', async () => {
+    const filterAsrText = jest.fn().mockResolvedValue({ text: '   ' });
+    const pipeline = new AsrPostProcessPipeline({ filterAsrText });
+    pipeline.setPendingAsrText('raw asr text');
+
+    await expect(
+      pipeline.process({
+        text: 'raw asr text',
+        trigger: 'voice',
+        asrTextFilterEnabled: true,
+        asrTextFilterPrompt: 'prompt',
+        asrTextFilterChatName: 'voice model',
+      })
+    ).rejects.toThrow('ASR filter returned invalid text');
+  });
+
+  test('surfaces ASR filter failures instead of accepting raw text', async () => {
+    const filterAsrText = jest.fn().mockRejectedValue(new Error('model unavailable'));
+    const events = [];
+    const pipeline = new AsrPostProcessPipeline({ filterAsrText, now: () => 1234 });
+    pipeline.setPendingAsrText('raw asr text');
+
+    await expect(
+      pipeline.process({
+        text: 'raw asr text',
+        trigger: 'voice',
+        asrTextFilterEnabled: true,
+        asrTextFilterPrompt: 'prompt',
+        asrTextFilterChatName: 'voice model',
+        onEvent: (event) => events.push(event),
+      })
+    ).rejects.toThrow('model unavailable');
+
+    expect(events.map((event) => event.name)).toContain('filtering_failed');
+    expect(events.find((event) => event.name === 'filtering_failed').fields.error).toBe('model unavailable');
+  });
+
+  test('prefetch exposes ASR filter failures instead of returning raw text', async () => {
+    const filterAsrText = jest.fn().mockRejectedValue(new Error('prefetch backend down'));
+    const pipeline = new AsrPostProcessPipeline({ filterAsrText });
+
+    await expect(
+      pipeline.prefetchFilter({
+        text: 'raw asr text',
+        asrTextFilterEnabled: true,
+        asrTextFilterPrompt: 'prompt',
+        asrTextFilterChatName: 'voice model',
+      })
+    ).rejects.toThrow('prefetch backend down');
+  });
 });

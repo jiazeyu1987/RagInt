@@ -40,6 +40,15 @@ def test_scrub_rejects_non_object_instead_of_returning_empty_config():
         ConfigService.scrub_secrets(["not", "a", "config"])  # type: ignore[arg-type]
 
 
+def test_write_config_rejects_non_object_instead_of_persisting_empty_config(tmp_path: Path):
+    service = _svc(tmp_path)
+
+    with pytest.raises(ValueError, match="config_not_object"):
+        service.write_config(None)  # type: ignore[arg-type]
+
+    assert not service.config_path.exists()
+
+
 def test_validate_rejects_invalid_numeric_fields_instead_of_warning_and_importing(tmp_path: Path):
     service = _svc(tmp_path)
 

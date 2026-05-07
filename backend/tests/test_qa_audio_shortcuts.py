@@ -186,6 +186,60 @@ def test_audio_cache_shortcut_skips_lookup_when_disabled():
     assert len(matcher.calls) == 0
 
 
+def test_audio_cache_shortcut_requires_matcher_when_enabled():
+    safety = SensitiveWordsFilter.from_config({})
+
+    with pytest.raises(RuntimeError, match="qa_audio_matcher_required"):
+        _collect(
+            _maybe_stream_audio_cache_hit(
+                request_id="ask_audio_missing_matcher",
+                question="q",
+                qa_audio_matcher=None,
+                qa_audio_cache_enabled=True,
+                qa_audio_recall_top_k=10,
+                qa_audio_classifier_threshold=0.8,
+                qa_audio_classifier_chat_name="qa_cls",
+                tts_provider="edge",
+                tts_voice="zh-CN-XiaoxiaoNeural",
+                tts_speed=1.0,
+                safety_filter=safety,
+                logger=None,
+                base_url="",
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("payload", "missing_field"),
+    [
+        ({"pair_id": 7, "audio_url": "/api/qa_audio_cache/audio/7"}, "answer_text"),
+        ({"pair_id": 7, "answer_text": "cached answer"}, "audio_url"),
+    ],
+)
+def test_audio_cache_shortcut_rejects_malformed_hit(payload, missing_field):
+    matcher = _Matcher(payload=payload)
+    safety = SensitiveWordsFilter.from_config({})
+
+    with pytest.raises(ValueError, match=fr"qa_audio_cache_hit_malformed.*{missing_field}"):
+        _collect(
+            _maybe_stream_audio_cache_hit(
+                request_id="ask_audio_malformed",
+                question="q",
+                qa_audio_matcher=matcher,
+                qa_audio_cache_enabled=True,
+                qa_audio_recall_top_k=10,
+                qa_audio_classifier_threshold=0.8,
+                qa_audio_classifier_chat_name="qa_cls",
+                tts_provider="edge",
+                tts_voice="zh-CN-XiaoxiaoNeural",
+                tts_speed=1.0,
+                safety_filter=safety,
+                logger=None,
+                base_url="",
+            )
+        )
+
+
 def test_regular_cache_lookup_dependency_error_is_not_treated_as_miss():
     safety = SensitiveWordsFilter.from_config({})
 

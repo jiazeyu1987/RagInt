@@ -67,31 +67,25 @@ def ingest_client_event(*, deps, event: ClientEventIngest) -> bool:
     if not event.request_id or not event.name:
         return False
 
-    try:
-        deps.event_store.emit(
-            request_id=event.request_id,
-            client_id=event.client_id,
-            kind=event.kind,
-            name=event.name,
-            level=event.level,
-            **(event.fields or {}),
-        )
-    except Exception:
-        return False
+    deps.event_store.emit(
+        request_id=event.request_id,
+        client_id=event.client_id,
+        kind=event.kind,
+        name=event.name,
+        level=event.level,
+        **(event.fields or {}),
+    )
 
     now_perf = time.perf_counter()
     client_wall_ms = _extract_client_wall_ms(event.fields)
-    try:
-        if event.name in ("play_end", "tts_play_end", "playback_end"):
-            updates = {"t_play_end": now_perf}
-            if client_wall_ms is not None:
-                updates["t_play_end_client_ms"] = int(client_wall_ms)
-            deps.ask_timings.set(event.request_id, **updates)
-        timing_key = _CLIENT_EVENT_TIMING_MAP.get(str(event.name or "").strip())
-        if timing_key and client_wall_ms is not None:
-            deps.ask_timings.set(event.request_id, **{timing_key: int(client_wall_ms)})
-    except Exception:
-        return False
+    if event.name in ("play_end", "tts_play_end", "playback_end"):
+        updates = {"t_play_end": now_perf}
+        if client_wall_ms is not None:
+            updates["t_play_end_client_ms"] = int(client_wall_ms)
+        deps.ask_timings.set(event.request_id, **updates)
+    timing_key = _CLIENT_EVENT_TIMING_MAP.get(str(event.name or "").strip())
+    if timing_key and client_wall_ms is not None:
+        deps.ask_timings.set(event.request_id, **{timing_key: int(client_wall_ms)})
 
     return True
 

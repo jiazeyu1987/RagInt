@@ -45,10 +45,15 @@ import { getBackendBase } from '../config/backend';
 import { ASK_TRACE_DEBUG, WAKE_HOLD_MS } from '../config/features';
 import { parseTourCommand } from '../api/tourCommand';
 import {
-  TOUR_BTN_MODE,
+  MAX_PRE_GENERATE_COUNT,
+  PREFERRED_TTS_SAMPLE_RATE,
   buildSendButtonClassName,
   buildSubmitDisabled,
   buildTourToggleViewModel,
+  createInitialAnswerCacheMeta,
+  createInitialTourButtonState,
+  createInitialTourMeta,
+  isPointerEventSupported,
 } from './appShellState';
 import { useAppShellE2eBridge } from './useAppShellE2eBridge';
 import { useAppShellAsrInput } from './useAppShellAsrInput';
@@ -76,7 +81,7 @@ function AppShell() {
   const backendBase = getBackendBase();
   const [lastQuestion, setLastQuestion] = useState('');
   const [answer, setAnswer] = useState('');
-  const [answerCacheMeta, setAnswerCacheMeta] = useState({ hit: false, type: '' });
+  const [answerCacheMeta, setAnswerCacheMeta] = useState(createInitialAnswerCacheMeta);
   const [qaCacheDebug, setQaCacheDebug] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const { queueStatus, setQueueStatus, showTransientQueueStatus } = useTransientQueueStatus();
@@ -89,7 +94,7 @@ function AppShell() {
     markRagflowAvailable,
     markRagflowUnavailable,
   } = useRagflowConnectionState();
-  const [tourButtonState, setTourButtonState] = useState({ started: false, mode: TOUR_BTN_MODE.START });
+  const [tourButtonState, setTourButtonState] = useState(createInitialTourButtonState);
   const { uiViewMode, openFullUi, openSimpleUi, openPadHome } = useAppShellUiMode();
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const clientId = useClientId();
@@ -237,12 +242,7 @@ function AppShell() {
   const [tourStopDurations, setTourStopDurations] = useState([]); // aligned with tourStops
   const [tourStopTargetChars, setTourStopTargetChars] = useState([]); // aligned with tourStops
   const [tourState, setTourState] = useTourState();
-  const [tourMeta, setTourMeta] = useState({
-    zones: ['\u9ed8\u8ba4\u8def\u7ebf'],
-    profiles: ['\u5927\u4f17', '\u513f\u7ae5', '\u4e13\u4e1a'],
-    default_zone: '\u9ed8\u8ba4\u8def\u7ebf',
-    default_profile: '\u5927\u4f17',
-  });
+  const [tourMeta, setTourMeta] = useState(createInitialTourMeta);
   const [questionPriority, setQuestionPriority] = useState('normal'); // 'normal' | 'high'
   const [questionQueue, setQuestionQueue] = useState([]);
   const [stageSpeedMode, setStageSpeedMode] = useState('normal'); // 'normal' | 'fast'
@@ -324,10 +324,16 @@ function AppShell() {
         // ignore
       }
     },
+    onError: ({ phase, error }) => {
+      const message = String((error && error.message) || error || '').trim();
+      if (!message) return;
+      setQueueStatus(`断点同步失败: ${message}`);
+      // eslint-disable-next-line no-console
+      console.error(`[BREAKPOINT_SYNC_${String(phase || 'unknown').toUpperCase()}]`, error);
+    },
   });
 
   const messagesEndRef = useRef(null);
-  const PREFERRED_TTS_SAMPLE_RATE = 16000;
   const ttsEnabledRef = useRef(true);
   const continuousTourRef = useRef(continuousTour);
   const tourRecordingEnabledRef = useRef(tourRecordingEnabled);
@@ -433,7 +439,7 @@ function AppShell() {
   const tourControllerRef = useRef(null);
   const runCoordinatorRef = useRef(null);
 
-  const POINTER_SUPPORTED = typeof window !== 'undefined' && 'PointerEvent' in window;
+  const POINTER_SUPPORTED = isPointerEventSupported();
 
   const { cancelBackendRequest, decodeAndConvertToWav16kMono, unlockAudio } = useAppShellBrowserServices({
     clientIdRef,
@@ -520,8 +526,6 @@ function AppShell() {
   });
 
   const { getTourStopName, buildTourPrompt, nowMs } = useAppShellTourHelpers({ tourStops, getTourPipeline });
-
-  const MAX_PRE_GENERATE_COUNT = 2;
 
   const { getTtsManager } = useAppShellTtsManager({
     ttsManagerRef,

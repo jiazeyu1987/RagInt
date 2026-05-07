@@ -13,8 +13,17 @@ export async function fetchJson(path, { method = 'GET', headers = {}, body, sign
   });
   const ct = (resp.headers.get('content-type') || '').toLowerCase();
   if (!resp.ok) {
-    const msg = `HTTP ${resp.status} ${path}`;
-    throw new Error(msg);
+    if (ct.includes('application/json')) {
+      let payload = null;
+      try {
+        payload = await resp.json();
+      } catch {
+        throw new Error(`Invalid JSON error response ${path}`);
+      }
+      const detail = String((payload && (payload.error || payload.detail)) || '').trim();
+      if (detail) throw new Error(detail);
+    }
+    throw new Error(`HTTP ${resp.status} ${path}`);
   }
   if (ct.includes('application/json')) return resp.json();
   const text = await resp.text();
@@ -61,15 +70,11 @@ export async function emitClientEvent({ requestId, clientId, kind, name, level, 
     fields: fields && typeof fields === 'object' ? fields : {},
   };
   if (!payload.name) return { ok: false, error: 'name_required' };
-  try {
-    return await fetchJson('/api/client_events', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Client-ID': payload.client_id },
-      body: JSON.stringify(payload),
-    });
-  } catch (e) {
-    return { ok: false, error: String((e && e.message) || e || 'emit_failed') };
-  }
+  return fetchJson('/api/client_events', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Client-ID': payload.client_id },
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function filterAsrText({ text, prompt, chatName, domainTerms } = {}) {

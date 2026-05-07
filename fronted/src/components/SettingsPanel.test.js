@@ -199,6 +199,20 @@ describe('SettingsPanel', () => {
     consoleErrorSpy.mockRestore();
   });
 
+  test('rejects invalid explicit active tab instead of rendering the default tab', () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() =>
+      render(
+        <SettingsPanel
+          {...buildProps({
+            activeTab: 'missing-tab',
+          })}
+        />
+      )
+    ).toThrow('settings_active_tab_invalid');
+    consoleErrorSpy.mockRestore();
+  });
+
   test('shows only silence timing control for conversation auto submit in asr tab', () => {
     const props = buildProps({
       activeTab: 'asr',

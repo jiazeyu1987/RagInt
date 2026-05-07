@@ -99,9 +99,19 @@ describe('useVoiceInputManager', () => {
   test('disposes module on unmount', () => {
     const hook = renderHook((p) => useVoiceInputManager(p), {
       clientIdRef: { current: 'cid' },
+      setInputText: jest.fn(),
     });
     const manager = mockState.lastInstance;
     hook.unmount();
     expect(manager.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  test('fails fast when required voice input dependencies are missing', () => {
+    expect(() =>
+      renderHook((p) => useVoiceInputManager(p), {
+        baseUrl: 'http://unit.test',
+        clientIdRef: { current: 'cid' },
+      })
+    ).toThrow('useVoiceInputManager requires setInputText');
   });
 });

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+import asyncio
+import logging
 import queue
 import struct
+import sys
+import types
 
 import pytest
 
@@ -25,6 +29,7 @@ from backend.ws.sauc_proxy import (
     _parse_sauc_response,
     _queue_get,
     _queue_put_drop_oldest,
+    _run_sauc_proxy_async,
     _to_bool,
     _to_int,
 )
@@ -143,6 +148,107 @@ def test_parse_sauc_response_rejects_invalid_gzip_payload_as_protocol_error():
 
     with pytest.raises(ValueError, match="sauc_protocol_gzip_decode_failed"):
         _parse_sauc_response(bytes(raw))
+
+
+def test_run_sauc_proxy_async_propagates_stream_protocol_errors(monkeypatch):
+    ready_packet = _make_server_packet(
+        message_type=_MessageType.SERVER_FULL_RESPONSE,
+        flags=_MessageFlags.POS_SEQUENCE,
+        seq=1,
+        payload_obj={"result": {"text": ""}},
+    )
+    bad_stream_packet = bytearray()
+    bad_stream_packet.append((_ProtocolVersion.V1 << 4) | 1)
+    bad_stream_packet.append((_MessageType.SERVER_FULL_RESPONSE << 4) | _MessageFlags.POS_SEQUENCE)
+    bad_stream_packet.append((_SerializationType.JSON << 4) | _CompressionType.GZIP)
+    bad_stream_packet.append(0x00)
+    bad_stream_packet.extend(struct.pack(">i", 2))
+    bad_stream_packet.extend(struct.pack(">I", 4))
+    bad_stream_packet.extend(b"xxxx")
+
+    ws_types = types.SimpleNamespace(
+        BINARY="binary",
+        CLOSE="close",
+        CLOSED="closed",
+        CLOSING="closing",
+        ERROR="error",
+    )
+
+    class FakeMessage:
+        def __init__(self, msg_type: str, data: bytes):
+            self.type = msg_type
+            self.data = data
+
+    class FakeUpstream:
+        def __init__(self):
+            self.sent: list[bytes] = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def send_bytes(self, data: bytes):
+            self.sent.append(data)
+
+        async def receive(self, timeout=None):
+            del timeout
+            return FakeMessage(ws_types.BINARY, ready_packet)
+
+        def __aiter__(self):
+            self._iterated = False
+            return self
+
+        async def __anext__(self):
+            if getattr(self, "_iterated", False):
+                raise StopAsyncIteration
+            self._iterated = True
+            return FakeMessage(ws_types.BINARY, bytes(bad_stream_packet))
+
+    class FakeSession:
+        def __init__(self, timeout=None):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def ws_connect(self, ws_url, headers=None, heartbeat=None):
+            del ws_url, headers, heartbeat
+            return FakeUpstream()
+
+    fake_aiohttp = types.SimpleNamespace(
+        ClientTimeout=lambda **kwargs: kwargs,
+        ClientSession=FakeSession,
+        WSMsgType=ws_types,
+    )
+    monkeypatch.setitem(sys.modules, "aiohttp", fake_aiohttp)
+
+    cfg, err = _normalize_start_config(
+        {
+            "ws_url": "wss://x",
+            "resource_id": "rid",
+            "app_key": "app",
+            "access_key": "key",
+        }
+    )
+    assert err is None
+    assert cfg is not None
+
+    with pytest.raises(ValueError, match="sauc_protocol_gzip_decode_failed"):
+        asyncio.run(
+            _run_sauc_proxy_async(
+                cfg=cfg,
+                request_id="rid-1",
+                audio_queue=queue.Queue(),
+                events_queue=queue.Queue(),
+                stop_event=types.SimpleNamespace(is_set=lambda: False),
+                logger=logging.getLogger("test.sauc_proxy"),
+            )
+        )
 
 
 def test_parse_sauc_response_rejects_invalid_json_payload_as_protocol_error():

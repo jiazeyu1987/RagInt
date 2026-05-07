@@ -142,6 +142,24 @@ def test_clear_chat_sessions_returns_failure_when_delete_api_reports_not_ok():
     ]
 
 
+def test_clear_chat_sessions_returns_failure_when_chat_is_not_found():
+    svc = RagflowService(Path("dummy.json"), logger=_Logger())
+    svc.client = _EmptyClient()
+    svc._sessions["missing_chat"] = {"id": "cached_session"}
+
+    result = svc.clear_chat_sessions("missing_chat")
+
+    assert result == {
+        "ok": False,
+        "deleted": 0,
+        "chat_name": "missing_chat",
+        "session_ids": [],
+        "chat_found": False,
+        "error": "ragflow_chat_not_found",
+    }
+    assert svc._sessions["missing_chat"] == {"id": "cached_session"}
+
+
 def test_clear_chat_sessions_raises_when_session_list_shape_is_unexpected():
     svc = RagflowService(Path("dummy.json"), logger=_Logger())
     svc.client = _Client()
@@ -483,6 +501,16 @@ def test_save_config_writes_db_when_store_enabled(tmp_path):
     assert "__meta" not in rec.config
 
 
+def test_save_config_rejects_non_dict_payload(tmp_path):
+    store = RagflowConfigStore(tmp_path / "ragflow_config.db")
+    svc = RagflowService(tmp_path / "ragflow_config.json", logger=_Logger(), config_store=store)
+
+    with pytest.raises(ValueError, match="RAGFlow config must be a dict"):
+        svc.save_config(["bad"])
+
+    assert store.get() is None
+
+
 def test_db_config_not_overridden_by_env_after_bootstrap(tmp_path, monkeypatch):
     store = RagflowConfigStore(tmp_path / "ragflow_config.db")
     store.upsert(config={"api_key": "db_key", "base_url": "http://db.example"})
@@ -507,6 +535,25 @@ def test_env_bootstrap_used_only_when_db_empty(tmp_path, monkeypatch):
     monkeypatch.setenv("RAGFLOW_API_KEY", "env_key_changed")
     loaded2 = svc.load_config(force=True)
     assert loaded2["api_key"] == "env_key"
+
+
+def test_db_env_bootstrap_ignores_invalid_legacy_file_when_not_enabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("RAGFLOW_API_KEY", "env_key")
+    monkeypatch.setenv("RAGFLOW_BASE_URL", "http://env.example")
+    monkeypatch.delenv("RAGINT_ENABLE_LEGACY_FILE_BOOTSTRAP", raising=False)
+
+    config_path = tmp_path / "ragflow_config.json"
+    config_path.write_text("{not valid json", encoding="utf-8")
+    store = RagflowConfigStore(tmp_path / "ragflow_config.db")
+    svc = RagflowService(config_path, logger=_Logger(), config_store=store)
+
+    loaded = svc.load_config(force=True)
+
+    assert loaded["api_key"] == "env_key"
+    assert loaded["base_url"] == "http://env.example"
+    rec = store.get()
+    assert rec is not None
+    assert rec.config["api_key"] == "env_key"
 
 
 def test_load_config_raises_when_db_read_fails_without_file_bootstrap(tmp_path, monkeypatch):

@@ -6,9 +6,32 @@ export const TOUR_BTN_MODE = {
 
 export const UI_VIEW_MODE_STORAGE_KEY = 'ragint_ui_view_mode_v1';
 export const TOUR_RAGFLOW_CHAT_NAME = '\u5c55\u5385\u804a\u5929';
+export const PREFERRED_TTS_SAMPLE_RATE = 16000;
+export const MAX_PRE_GENERATE_COUNT = 2;
 
 export function trimText(value) {
   return String(value == null ? '' : value).trim();
+}
+
+export function createInitialAnswerCacheMeta() {
+  return { hit: false, type: '' };
+}
+
+export function createInitialTourButtonState() {
+  return { started: false, mode: TOUR_BTN_MODE.START };
+}
+
+export function createInitialTourMeta() {
+  return {
+    zones: ['\u9ed8\u8ba4\u8def\u7ebf'],
+    profiles: ['\u5927\u4f17', '\u513f\u7ae5', '\u4e13\u4e1a'],
+    default_zone: '\u9ed8\u8ba4\u8def\u7ebf',
+    default_profile: '\u5927\u4f17',
+  };
+}
+
+export function isPointerEventSupported(windowLike = typeof window === 'undefined' ? null : window) {
+  return !!(windowLike && 'PointerEvent' in windowLike);
 }
 
 export function createInitialAsrProbeState() {
@@ -97,7 +120,7 @@ export function readInitialUiViewMode() {
 
 export function reduceTourButtonState(state, event) {
   const type = String((event && event.type) || '').trim();
-  if (type === 'RESET') return { started: false, mode: TOUR_BTN_MODE.START };
+  if (type === 'RESET') return createInitialTourButtonState();
   if (type === 'START_CLICK') return { started: true, mode: TOUR_BTN_MODE.INTERRUPT };
   if (type === 'INTERRUPT_CLICK') return state.started ? { ...state, mode: TOUR_BTN_MODE.CONTINUE } : state;
   if (type === 'CONTINUE_CLICK') return state.started ? { ...state, mode: TOUR_BTN_MODE.INTERRUPT } : state;

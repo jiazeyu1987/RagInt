@@ -17,6 +17,14 @@ class RagflowConfigRecord:
     updated_at_ms: int
 
 
+class RagflowConfigStoreCorruptError(RuntimeError):
+    def __init__(self, scope_id: str, reason: str):
+        self.code = "ragflow_config_store_corrupt"
+        self.scope_id = str(scope_id or "").strip() or "global"
+        self.reason = str(reason or "invalid stored config").strip()
+        super().__init__(f"{self.code}: scope_id={self.scope_id!r}: {self.reason}")
+
+
 class RagflowConfigStore:
     def __init__(self, db_path: Path, logger: logging.Logger | None = None):
         self._logger = logger or logging.getLogger(__name__)
@@ -56,14 +64,17 @@ class RagflowConfigStore:
         if not row:
             return None
         sid = str(row["scope_id"] or fallback_scope_id or "").strip()
-        if not sid:
-            raise ValueError("ragflow_config.scope_id must be non-empty for existing records")
-        raw_config = row["config_json"]
-        if raw_config is None:
-            raise ValueError(f"ragflow_config.config_json is required for scope_id={sid!r}")
-        cfg = json.loads(str(raw_config))
-        if not isinstance(cfg, dict):
-            raise ValueError(f"ragflow_config.config_json must decode to an object for scope_id={sid!r}")
+        try:
+            if not sid:
+                raise ValueError("ragflow_config.scope_id must be non-empty for existing records")
+            raw_config = row["config_json"]
+            if raw_config is None:
+                raise ValueError("ragflow_config.config_json is required")
+            cfg = json.loads(str(raw_config))
+            if not isinstance(cfg, dict):
+                raise ValueError("ragflow_config.config_json must decode to an object")
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
+            raise RagflowConfigStoreCorruptError(sid or fallback_scope_id, str(e)) from e
         return RagflowConfigRecord(
             scope_id=sid,
             config=cfg,

@@ -70,4 +70,84 @@ describe('RagflowChunkManager', () => {
       ['done'],
     ]);
   });
+
+  test('rejects malformed SSE data instead of skipping it', async () => {
+    global.TextDecoder = class {
+      decode(value) {
+        return typeof value === 'string' ? value : '';
+      }
+    };
+    const manager = new RagflowChunkManager({ fetchImpl: jest.fn() });
+    let readCount = 0;
+    const response = {
+      body: {
+        getReader() {
+          return {
+            async read() {
+              readCount += 1;
+              if (readCount === 1) return { done: false, value: 'data: {bad-json}\n' };
+              return { done: true, value: undefined };
+            },
+          };
+        },
+      },
+    };
+
+    await expect(manager.readSseStream(response, {})).rejects.toThrow('ragflow_sse_event_invalid_json');
+  });
+
+  test('parses final SSE buffer even when stream has no trailing newline', async () => {
+    global.TextDecoder = class {
+      decode(value) {
+        return typeof value === 'string' ? value : '';
+      }
+    };
+    const events = [];
+    const manager = new RagflowChunkManager({ fetchImpl: jest.fn() });
+    let readCount = 0;
+    const response = {
+      body: {
+        getReader() {
+          return {
+            async read() {
+              readCount += 1;
+              if (readCount === 1) return { done: false, value: 'data: {"done":true}' };
+              return { done: true, value: undefined };
+            },
+          };
+        },
+      },
+    };
+
+    await manager.readSseStream(response, {
+      onDone: async (data) => events.push(data),
+    });
+
+    expect(events).toEqual([{ done: true }]);
+  });
+
+  test('rejects malformed final SSE buffer without trailing newline', async () => {
+    global.TextDecoder = class {
+      decode(value) {
+        return typeof value === 'string' ? value : '';
+      }
+    };
+    const manager = new RagflowChunkManager({ fetchImpl: jest.fn() });
+    let readCount = 0;
+    const response = {
+      body: {
+        getReader() {
+          return {
+            async read() {
+              readCount += 1;
+              if (readCount === 1) return { done: false, value: 'data: {bad-json}' };
+              return { done: true, value: undefined };
+            },
+          };
+        },
+      },
+    };
+
+    await expect(manager.readSseStream(response, {})).rejects.toThrow('ragflow_sse_event_invalid_json');
+  });
 });

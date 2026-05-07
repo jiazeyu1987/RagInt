@@ -81,9 +81,10 @@ const createAskDeps = (overrides = {}) => ({
       json: jest.fn().mockResolvedValue({ chunks: null, segments: [] }),
     });
 
-    const result = await manager.ask('play stop', { tourAction: 'jump', tourStopIndex: 2 });
+    await expect(manager.ask('play stop', { tourAction: 'jump', tourStopIndex: 2 })).rejects.toThrow(
+      'recording_stop_invalid_chunks'
+    );
 
-    expect(result).toBe('');
     expect(setAnswer).toHaveBeenCalledWith('');
     expect(setQueueStatus).toHaveBeenCalledWith('\u95ee\u7b54\u5931\u8d25: recording_stop_invalid_chunks');
     expect(setIsLoading).toHaveBeenLastCalledWith(false);
@@ -119,9 +120,10 @@ const createAskDeps = (overrides = {}) => ({
       }),
     });
 
-    const result = await manager.ask('play stop', { tourAction: 'jump', tourStopIndex: 0 });
+    await expect(manager.ask('play stop', { tourAction: 'jump', tourStopIndex: 0 })).rejects.toThrow(
+      'recording_playback_tts_enqueue_missing'
+    );
 
-    expect(result).toBe('');
     expect(setQueueStatus).toHaveBeenCalledWith('\u95ee\u7b54\u5931\u8d25: recording_playback_tts_enqueue_missing');
     expect(ttsMgr.markRagDone).not.toHaveBeenCalled();
   });
@@ -407,7 +409,7 @@ describe('AskWorkflowManager', () => {
       },
     });
 
-    await manager.ask('will fail');
+    await expect(manager.ask('will fail')).rejects.toThrow('RAGFlow HTTP error: 500');
 
     expect(setQueueStatus).toHaveBeenCalledWith(
       'RAGFlow \u95ee\u7b54\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u5f53\u524d\u8fde\u63a5\u6216\u7a0d\u540e\u91cd\u8bd5\u3002'
@@ -440,9 +442,8 @@ describe('AskWorkflowManager', () => {
       })
     );
 
-    const result = await manager.ask('test question');
+    await expect(manager.ask('test question')).rejects.toThrow('ask_stream_event_failed: state_write_failed');
 
-    expect(result).toBe('');
     expect(setQueueStatus).toHaveBeenCalledWith('问答失败: ask_stream_event_failed: state_write_failed');
     expect(setIsLoading).toHaveBeenLastCalledWith(false);
   });
@@ -468,10 +469,116 @@ describe('AskWorkflowManager', () => {
       })
     );
 
-    const result = await manager.ask('test question');
+    await expect(manager.ask('test question')).rejects.toThrow('ragflow_stream_done_missing');
 
     expect(setAnswer).toHaveBeenCalledWith('partial answer');
-    expect(result).toBe('');
     expect(setQueueStatus).toHaveBeenCalledWith('问答失败: ragflow_stream_done_missing');
+  });
+
+  test('does not swallow ask failures when interrupt epoch becomes stale during cleanup', async () => {
+    const setQueueStatus = jest.fn();
+    const chunkManager = {
+      fetchAskStream: jest.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        body: { getReader: jest.fn() },
+      }),
+      readSseStream: jest.fn(),
+    };
+    const interruptManager = {
+      snapshot: jest.fn(() => 1),
+      isCurrent: jest.fn().mockReturnValueOnce(true).mockReturnValue(false),
+    };
+    const manager = new AskWorkflowManager(
+      createAskDeps({
+        setQueueStatus,
+        interruptManagerRef: { current: interruptManager },
+        ragflowChunkManager: chunkManager,
+      })
+    );
+
+    await expect(manager.ask('test question')).rejects.toThrow('RAGFlow HTTP error: 500');
+    expect(setQueueStatus).not.toHaveBeenCalledWith(expect.stringContaining('RAGFlow HTTP error: 500'));
+  });
+
+  test('surfaces queued handoff failures scheduled after ask completion', async () => {
+    const setQueueStatus = jest.fn();
+    const queueFailure = new Error('queued start failed');
+    const chunkManager = {
+      fetchAskStream: jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        body: { getReader: jest.fn() },
+      }),
+      readSseStream: jest.fn(async (_response, handlers) => {
+        await handlers.onEvent({ done: true });
+      }),
+    };
+    const manager = new AskWorkflowManager(
+      createAskDeps({
+        setQueueStatus,
+        ragflowChunkManager: chunkManager,
+        runCoordinatorRef: {
+          current: {
+            maybeStartNextQueuedQuestion: jest.fn().mockRejectedValue(queueFailure),
+          },
+        },
+      })
+    );
+
+    const result = await manager.ask('test question');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await Promise.resolve();
+
+    expect(result).toBe('');
+    expect(setQueueStatus).toHaveBeenCalledWith('queued_question_start_failed: queued start failed');
+  });
+
+  test('surfaces tour recording archive failures from the final stop instead of swallowing them', async () => {
+    const setQueueStatus = jest.fn();
+    const setIsLoading = jest.fn();
+    const archiveFailure = new Error('archive_failed');
+    const finishTourRecordingArchive = jest.fn().mockRejectedValue(archiveFailure);
+    const ttsMgr = {
+      resetForRun: jest.fn(),
+      getTtsProfile: jest.fn(() => ({ provider: '', voice: '', speed: 1 })),
+      setRecordingId: jest.fn(),
+      hasAnySegment: jest.fn(() => false),
+      enqueueText: jest.fn(),
+      markRagDone: jest.fn(),
+      ensureRunning: jest.fn(),
+      waitForIdle: jest.fn().mockResolvedValue(undefined),
+    };
+    const chunkManager = {
+      fetchAskStream: jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        body: { getReader: jest.fn() },
+      }),
+      readSseStream: jest.fn(async (_response, handlers) => {
+        await handlers.onEvent({ done: true });
+      }),
+    };
+    const activeTourRecordingIdRef = { current: 'rec-1' };
+    const manager = new AskWorkflowManager(
+      createAskDeps({
+        setQueueStatus,
+        setIsLoading,
+        ttsEnabledRef: { current: true },
+        getTtsManager: () => ttsMgr,
+        ragflowChunkManager: chunkManager,
+        tourRecordingEnabledRef: { current: true },
+        activeTourRecordingIdRef,
+        getTourStops: () => [{ id: 'stop-0' }],
+        finishTourRecordingArchive,
+      })
+    );
+
+    await expect(manager.ask('tour stop', { tourAction: 'next', tourStopIndex: 0 })).rejects.toThrow('archive_failed');
+
+    expect(finishTourRecordingArchive).toHaveBeenCalledWith('rec-1');
+    expect(activeTourRecordingIdRef.current).toBe('rec-1');
+    expect(setQueueStatus).toHaveBeenCalledWith('问答失败: archive_failed');
+    expect(setIsLoading).toHaveBeenLastCalledWith(false);
   });
 });

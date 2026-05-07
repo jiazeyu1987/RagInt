@@ -58,7 +58,7 @@ def _maybe_stream_audio_cache_hit(
     if not qa_audio_cache_enabled:
         return None
     if qa_audio_matcher is None:
-        return None
+        raise RuntimeError(f"qa_audio_matcher_required request_id={request_id}")
 
     qa_match_started = False
     from backend.services.qa_audio_matcher import TtsProfile
@@ -84,22 +84,26 @@ def _maybe_stream_audio_cache_hit(
     if not hit:
         return None
 
-    answer = str((hit or {}).get("answer_text") or "").strip()
-    audio_url = str((hit or {}).get("audio_url") or "").strip()
+    if not isinstance(hit, dict):
+        raise ValueError(f"qa_audio_cache_hit_malformed request_id={request_id} field=hit")
+
+    answer = str(hit.get("answer_text") or "").strip()
+    audio_url = str(hit.get("audio_url") or "").strip()
     if not answer or not audio_url:
-        return None
+        missing = "answer_text" if not answer else "audio_url"
+        raise ValueError(f"qa_audio_cache_hit_malformed request_id={request_id} field={missing}")
 
     if getattr(safety_filter, "enabled", False) and safety_filter.match_text(answer):
         logger.warning(f"[{request_id}] safety_skip_audio_cache_hit")
         return None
 
     payload = {
-        "pair_id": int((hit or {}).get("pair_id") or 0),
+        "pair_id": int(hit.get("pair_id") or 0),
         "audio_url": audio_url,
         "answer_text": answer,
-        "confidence": float((hit or {}).get("confidence") or 0.0),
-        "recall_score": float((hit or {}).get("recall_score") or 0.0),
-        "reason": str((hit or {}).get("reason") or ""),
+        "confidence": float(hit.get("confidence") or 0.0),
+        "recall_score": float(hit.get("recall_score") or 0.0),
+        "reason": str(hit.get("reason") or ""),
     }
     yield make_chunk(answer, audio_hit=payload, cache={"hit": True, "type": "qa_audio"})
     yield make_done(cache={"hit": True, "type": "qa_audio"})

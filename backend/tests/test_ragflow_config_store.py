@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 import sqlite3
 
 import pytest
 
-from backend.services.ragflow_config_store import RagflowConfigStore
+from backend.services.ragflow_config_store import RagflowConfigStore, RagflowConfigStoreCorruptError
 
 
 def test_ragflow_config_store_roundtrip(tmp_path):
@@ -45,7 +44,7 @@ def test_ragflow_config_store_upsert_rejects_non_dict_config(tmp_path):
 
 
 @pytest.mark.parametrize("config_json", ["{bad", "[]", "null"])
-def test_ragflow_config_store_exposes_invalid_stored_config_json(tmp_path, config_json):
+def test_ragflow_config_store_raises_clear_error_for_invalid_stored_config_json(tmp_path, config_json):
     db_path = tmp_path / "ragflow_config.db"
     store = RagflowConfigStore(db_path)
     conn = sqlite3.connect(str(db_path))
@@ -61,5 +60,8 @@ def test_ragflow_config_store_exposes_invalid_stored_config_json(tmp_path, confi
     finally:
         conn.close()
 
-    with pytest.raises((json.JSONDecodeError, ValueError)):
+    with pytest.raises(RagflowConfigStoreCorruptError) as exc:
         store.get()
+
+    assert exc.value.code == "ragflow_config_store_corrupt"
+    assert "scope_id='global'" in str(exc.value)

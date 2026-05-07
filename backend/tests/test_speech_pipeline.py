@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from backend.api.speech_pipeline import AskContext, LifecycleStreamMiddleware, apply_stream_middlewares
+from backend.api.speech_pipeline import RecordingStreamMiddleware
 from backend.orchestrators.stream_payloads import make_chunk
 
 
@@ -46,6 +47,12 @@ class _Deps:
         self.event_store = _Events()
         self.request_registry = _Registry()
         self.logger = _Logger()
+        self.recording_store = None
+
+
+class _FailingRecordingStore:
+    def add_ask_event(self, *, recording_id: str, stop_index: int, request_id: str, kind: str, text: str | None):
+        raise RuntimeError("recording_write_failed")
 
 
 def _drain(gen):
@@ -126,4 +133,31 @@ def test_lifecycle_on_close_cancels_and_emits_disconnect():
     names = [e.get("name") for e in deps.event_store.events]
     assert "ask_client_disconnect" in names
     assert deps.request_registry.cancels == [("r1", "client_disconnect")]
+    assert deps.request_registry.clears == [("c1", "ask", "r1")]
+
+
+def test_recording_write_failure_marks_stream_failed_and_reraises():
+    deps = _Deps()
+    deps.recording_store = _FailingRecordingStore()
+    parsed = SimpleNamespace(
+        request_id="r1",
+        client_id="c1",
+        kind="ask",
+        agent_id="",
+        recording_id="rec1",
+        stop_index=2,
+        tour_action="go",
+    )
+    ctx = AskContext(deps=deps, parsed=parsed, data={}, t_submit=0.0)
+
+    out = apply_stream_middlewares(
+        ctx,
+        iter([make_chunk("x", done=False)]),
+        [RecordingStreamMiddleware(), LifecycleStreamMiddleware()],
+    )
+
+    with pytest.raises(RuntimeError, match="recording_write_failed"):
+        next(out)
+    names = [e.get("name") for e in deps.event_store.events]
+    assert "ask_stream_failed" in names
     assert deps.request_registry.clears == [("c1", "ask", "r1")]

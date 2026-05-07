@@ -1,30 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useVoiceInputManager } from './useVoiceInputManager';
+import {
+  CONVERSATION_START_TIMEOUT_MS,
+  errorMessage,
+  isE2eAsrMockEnabled,
+  safeTrim,
+  withTimeout,
+} from './voiceConversationUtils';
 
-const CONVERSATION_START_TIMEOUT_MS = 12000;
 const AUTO_RESUME_RETRY_MS = 500;
 const AUTO_SUBMIT_DEDUPE_MS = 1500;
 const AUTO_SUBMIT_SILENCE_MIN_MS = 500;
 const AUTO_SUBMIT_SILENCE_MAX_MS = 3000;
-
-function safeTrim(v) {
-  return String(v == null ? '' : v).trim();
-}
-
-function withTimeout(promise, timeoutMs) {
-  const ms = Math.max(1000, Number(timeoutMs) || CONVERSATION_START_TIMEOUT_MS);
-  return Promise.race([
-    Promise.resolve(promise),
-    new Promise((resolve) => {
-      setTimeout(() => resolve({ started: false, timeout: true }), ms);
-    }),
-  ]);
-}
-
-function isE2eAsrMockEnabled() {
-  if (typeof window === 'undefined') return false;
-  return !!(window.__RAGINT_E2E__ && window.__RAGINT_E2E__.enableAsrMock);
-}
 
 export function useVoiceConversationControls({
   asrProviderType = 'voicekit_ws',
@@ -145,8 +132,11 @@ export function useVoiceConversationControls({
         try {
           await continueTour();
           showTransientStatus('继续讲解', 1500);
-        } catch (_) {
-          // ignore
+        } catch (error) {
+          const message = errorMessage(error);
+          showTransientStatus(message ? `voice conversation resume failed: ${message}` : 'voice conversation resume failed', 3000);
+          // eslint-disable-next-line no-console
+          console.error('[ASR-UI] voice_conversation_resume_failed', error);
         }
       }
     },
@@ -274,7 +264,11 @@ export function useVoiceConversationControls({
             selectedAgentId,
             skipTourCommand: true,
           });
-        } catch (_) {
+        } catch (error) {
+          const message = errorMessage(error);
+          showTransientStatus(message ? `voice conversation submit failed: ${message}` : 'voice conversation submit failed', 3000);
+          // eslint-disable-next-line no-console
+          console.error('[ASR-UI] voice_conversation_submit_failed', error);
           if (resumeContextLikely && Number(resumeLatestSeqRef.current || 0) === seq) {
             resumeWantedRef.current = false;
             resumeLatestSeqRef.current = 0;
@@ -464,23 +458,36 @@ export function useVoiceConversationControls({
       if (e && typeof e.preventDefault === 'function') e.preventDefault();
       const text = String(inputText || '').trim();
       if (text && (!useAgentMode || !!selectedAgentId)) {
-        if (typeof submitUserText !== 'function') return;
-        await submitUserText({
-          text,
-          trigger: 'text',
-          groupMode,
-          speakerName,
-          priority: questionPriority,
-          useAgentMode,
-          selectedAgentId,
-        });
-        return;
+        if (typeof submitUserText !== 'function') {
+          const error = new Error('submitUserText dependency is required');
+          showTransientStatus(error.message, 3000);
+          // eslint-disable-next-line no-console
+          console.error('[TEXT-UI] submit_failed', error);
+          return { ok: false, kind: 'submit_failed', error };
+        }
+        try {
+          return await submitUserText({
+            text,
+            trigger: 'text',
+            groupMode,
+            speakerName,
+            priority: questionPriority,
+            useAgentMode,
+            selectedAgentId,
+          });
+        } catch (error) {
+          const message = errorMessage(error);
+          showTransientStatus(message ? `text submit failed: ${message}` : 'text submit failed', 3000);
+          // eslint-disable-next-line no-console
+          console.error('[TEXT-UI] submit_failed', error);
+          return { ok: false, kind: 'submit_failed', error };
+        }
       }
       if (text && useAgentMode && !selectedAgentId) {
         alert('请先选择智能体再提问');
       }
     },
-    [groupMode, inputText, questionPriority, selectedAgentId, speakerName, submitUserText, useAgentMode]
+    [groupMode, inputText, questionPriority, selectedAgentId, showTransientStatus, speakerName, submitUserText, useAgentMode]
   );
 
   const submitTextAuto = useCallback(
@@ -491,18 +498,32 @@ export function useVoiceConversationControls({
         alert('请先选择智能体再提问');
         return;
       }
-      if (typeof submitUserText !== 'function') return;
-      return submitUserText({
-        text: q,
-        trigger: trigger || 'quick',
-        groupMode: false,
-        speakerName,
-        priority: 'normal',
-        useAgentMode,
-        selectedAgentId,
-      });
+      if (typeof submitUserText !== 'function') {
+        const error = new Error('submitUserText dependency is required');
+        showTransientStatus(error.message, 3000);
+        // eslint-disable-next-line no-console
+        console.error('[TEXT-UI] quick_submit_failed', error);
+        return { ok: false, kind: 'submit_failed', error };
+      }
+      try {
+        return await submitUserText({
+          text: q,
+          trigger: trigger || 'quick',
+          groupMode: false,
+          speakerName,
+          priority: 'normal',
+          useAgentMode,
+          selectedAgentId,
+        });
+      } catch (error) {
+        const message = errorMessage(error);
+        showTransientStatus(message ? `text submit failed: ${message}` : 'text submit failed', 3000);
+        // eslint-disable-next-line no-console
+        console.error('[TEXT-UI] quick_submit_failed', error);
+        return { ok: false, kind: 'submit_failed', error };
+      }
     },
-    [selectedAgentId, speakerName, submitUserText, useAgentMode]
+    [selectedAgentId, showTransientStatus, speakerName, submitUserText, useAgentMode]
   );
 
   return {

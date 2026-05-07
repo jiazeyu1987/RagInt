@@ -107,6 +107,7 @@ export class AsrRecognitionSession {
   }
 
   resolveTimeoutText(fallbackText = '') {
-    return safeTrim(fallbackText) || safeTrim(this._assembler.getRecognizedText()) || this._lastRecognizedText;
+    if (safeTrim(fallbackText)) throw new Error('ASR timeout fallback text is not allowed');
+    return safeTrim(this._assembler.getRecognizedText()) || this._lastRecognizedText;
   }
 }

@@ -157,6 +157,56 @@ describe('RunCoordinator', () => {
     expect(askQuestion).not.toHaveBeenCalled();
   });
 
+  test('ask fails fast when askQuestion dependency is missing', async () => {
+    const c = new RunCoordinator({});
+
+    await expect(c.ask('hello')).rejects.toThrow('[RUN] askQuestion dependency missing');
+  });
+
+  test('prepareAsk propagates state preparation failures', () => {
+    const failure = new Error('input state failed');
+    const c = new RunCoordinator({
+      ttsEnabledRef: { current: false },
+      beginDebugRun: jest.fn(),
+      setInputText: jest.fn(() => {
+        throw failure;
+      }),
+    });
+
+    expect(() => c.prepareAsk('text')).toThrow(failure);
+  });
+
+  test('submitUserText fails tour commands when tour controller action is missing', async () => {
+    const askQuestion = jest.fn().mockResolvedValue('');
+    const c = new RunCoordinator({
+      askQuestion,
+      parseTourCommand: jest.fn().mockResolvedValue({
+        intent: 'tour_command',
+        action: 'next',
+        confidence: 0.99,
+      }),
+      guideEnabledRef: { current: true },
+      clientIdRef: { current: 'client-1' },
+      getTourStops: () => ['A'],
+      getTourController: () => ({}),
+    });
+
+    const res = await c.submitUserText({
+      text: 'next stop please',
+      trigger: 'wake_word',
+      groupMode: false,
+      useAgentMode: false,
+      selectedAgentId: '',
+    });
+
+    expect(res).toEqual({
+      ok: false,
+      kind: 'tour_command_failed',
+      error: expect.objectContaining({ message: '[RUN] tour action missing: next' }),
+    });
+    expect(askQuestion).not.toHaveBeenCalled();
+  });
+
   test('maybeStartNextQueuedQuestion propagates auto ask failures', async () => {
     const failure = new Error('ask failed');
     const queueRef = {

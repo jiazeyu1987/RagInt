@@ -444,7 +444,7 @@ export class TourController {
   }
 
   async continue() {
-    const { continuousTourRef, tourStateRef, buildTourPrompt, beginDebugRun, askQuestion, getTourStops, tourResumeRef } = this.deps;
+    const { continuousTourRef, tourStateRef, buildTourPrompt, beginDebugRun, askQuestion, tourResumeRef } = this.deps;
     this._ensurePreferredAudioContext();
     const { allow } = this._snapshotInterruptEpoch();
 

@@ -602,6 +602,8 @@ async def _run_sauc_proxy_async(
                                     pass
                             _queue_put_drop_oldest(events_queue, {"type": "error", "message": "sauc_upstream_ws_error"})
                             break
+                except ValueError:
+                    raise
                 except Exception as exc:
                     if not stop_event.is_set():
                         if callable(set_stage):
@@ -653,6 +655,9 @@ async def _run_sauc_proxy_async(
                     await asyncio.wait_for(recv_task, timeout=5.0)
                 except asyncio.TimeoutError:
                     recv_task.cancel()
+                except ValueError:
+                    recv_task.cancel()
+                    raise
                 except Exception:
                     recv_task.cancel()
 

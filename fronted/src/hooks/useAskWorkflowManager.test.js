@@ -43,5 +43,19 @@ describe('useAskWorkflowManager', () => {
 
     hook.unmount();
   });
+
+  test('interrupts the active manager on unmount', async () => {
+    const hook = renderHook((p) => useAskWorkflowManager(p), { name: 'd1' });
+
+    await act(async () => {
+      await hook.result().askQuestion('hello');
+    });
+
+    act(() => {
+      hook.unmount();
+    });
+
+    expect(mockInstances[0].interrupt).toHaveBeenCalledWith('hook_unmount');
+  });
 });
 

@@ -2,44 +2,7 @@ import { tourStateOnInterrupt, tourStateOnReady, tourStateOnTourAction, tourStat
 import { RUN_REASON } from './RunReasons';
 import { classifyInterrupt } from './RunPolicies';
 import { ragflowChunkManager } from './RagflowChunkManager';
-
-const MAX_CONTEXT_TURNS = 200;
-
-function safeTrim(value) {
-  return String(value == null ? '' : value).trim();
-}
-
-function nowWallMs() {
-  return Date.now();
-}
-
-
-function sanitizeTurns(turns) {
-  const src = Array.isArray(turns) ? turns : [];
-  const out = [];
-  for (const item of src) {
-    if (!item || typeof item !== 'object') continue;
-    const q = safeTrim(item.question);
-    const a = safeTrim(item.answer);
-    if (!q || !a) continue;
-    out.push({
-      question: q,
-      answer: a,
-      ts: Number(item.ts) || Date.now(),
-    });
-  }
-  return out.slice(-MAX_CONTEXT_TURNS);
-}
-
-function requireRecordingStopPayload(payload) {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    throw new Error('recording_stop_invalid_response');
-  }
-  if (!Array.isArray(payload.chunks)) throw new Error('recording_stop_invalid_chunks');
-  if (!Array.isArray(payload.segments)) throw new Error('recording_stop_invalid_segments');
-  return payload;
-}
-
+import { MAX_CONTEXT_TURNS, nowWallMs, requireRecordingStopPayload, safeTrim, sanitizeTurns } from './askWorkflowUtils';
 
 export class AskWorkflowManager {
   constructor(deps) {
@@ -771,6 +734,7 @@ export class AskWorkflowManager {
 
       let sawDone = false;
       let hasAudioHit = false;
+      let pendingRecordingArchiveFinishId = '';
       let traceFirstChunkLogged = false;
       let traceFirstSegmentLogged = false;
       let latestTraceMeta = {
@@ -998,22 +962,17 @@ export class AskWorkflowManager {
               }
 
               // Auto-finish a recording archive when the last stop finishes playing.
-              try {
-                if (recordingIdForThisAsk && options.tourAction && typeof getTourStops === 'function' && typeof finishTourRecordingArchive === 'function') {
-                  const stops = getTourStops() || [];
-                  const n = Array.isArray(stops) ? stops.length : 0;
-                  const curStopIndex = Number.isFinite(options.tourStopIndex)
-                    ? Number(options.tourStopIndex)
-                    : tourStateRef && tourStateRef.current
-                      ? Number(tourStateRef.current.stopIndex)
-                      : 0;
-                  if (n && curStopIndex >= 0 && curStopIndex === n - 1) {
-                    await finishTourRecordingArchive(recordingIdForThisAsk);
-                    if (activeTourRecordingIdRef) activeTourRecordingIdRef.current = '';
-                  }
+              if (recordingIdForThisAsk && options.tourAction && typeof getTourStops === 'function' && typeof finishTourRecordingArchive === 'function') {
+                const stops = getTourStops() || [];
+                const n = Array.isArray(stops) ? stops.length : 0;
+                const curStopIndex = Number.isFinite(options.tourStopIndex)
+                  ? Number(options.tourStopIndex)
+                  : tourStateRef && tourStateRef.current
+                    ? Number(tourStateRef.current.stopIndex)
+                    : 0;
+                if (n && curStopIndex >= 0 && curStopIndex === n - 1) {
+                  pendingRecordingArchiveFinishId = recordingIdForThisAsk;
                 }
-              } catch (_) {
-                // ignore
               }
               return false;
             }
@@ -1028,6 +987,11 @@ export class AskWorkflowManager {
       // Stream ended without explicit `done` event (e.g. client/server disconnect).
       if (allow() && !sawDone) {
         throw new Error('ragflow_stream_done_missing');
+      }
+
+      if (pendingRecordingArchiveFinishId) {
+        await finishTourRecordingArchive(pendingRecordingArchiveFinishId);
+        if (activeTourRecordingIdRef) activeTourRecordingIdRef.current = '';
       }
 
       return fullAnswer;
@@ -1051,7 +1015,7 @@ export class AskWorkflowManager {
         }
       }
       if (allow() && typeof setIsLoading === 'function') setIsLoading(false);
-      return '';
+      throw err;
     } finally {
       const isActiveRun = !!(activeAskRequestIdRef && activeAskRequestIdRef.current === requestId);
       const isAbortRun = !!(abortController && abortController.signal && abortController.signal.aborted);
@@ -1101,20 +1065,33 @@ export class AskWorkflowManager {
       }
 
       try {
-        if (!allow()) return;
-        const rc = runCoordinatorRef && runCoordinatorRef.current ? runCoordinatorRef.current : null;
-        const nextFn =
-          rc && typeof rc.maybeStartNextQueuedQuestion === 'function'
-            ? () => rc.maybeStartNextQueuedQuestion()
-            : maybeStartNextQueuedQuestion;
-        if (typeof nextFn === 'function') {
-          setTimeout(() => {
-            try {
-              nextFn();
-            } catch (_) {
-              // ignore
-            }
-          }, 0);
+        if (allow()) {
+          const rc = runCoordinatorRef && runCoordinatorRef.current ? runCoordinatorRef.current : null;
+          const nextFn =
+            rc && typeof rc.maybeStartNextQueuedQuestion === 'function'
+              ? () => rc.maybeStartNextQueuedQuestion()
+              : maybeStartNextQueuedQuestion;
+          if (typeof nextFn === 'function') {
+            setTimeout(() => {
+              try {
+                Promise.resolve(nextFn()).catch((err) => {
+                  const message = String((err && err.message) || err || '').trim();
+                  if (typeof setQueueStatus === 'function') {
+                    setQueueStatus(`queued_question_start_failed${message ? `: ${message}` : ''}`);
+                  }
+                  // eslint-disable-next-line no-console
+                  console.error('Queued question handoff failed:', err);
+                });
+              } catch (err) {
+                const message = String((err && err.message) || err || '').trim();
+                if (typeof setQueueStatus === 'function') {
+                  setQueueStatus(`queued_question_start_failed${message ? `: ${message}` : ''}`);
+                }
+                // eslint-disable-next-line no-console
+                console.error('Queued question handoff failed:', err);
+              }
+            }, 0);
+          }
         }
       } catch (_) {
         // ignore

@@ -183,8 +183,10 @@ class ConfigService:
         return items
 
     def write_config(self, cfg: dict) -> None:
+        if not isinstance(cfg, dict):
+            raise ValueError("config_not_object")
         self._config_path.parent.mkdir(parents=True, exist_ok=True)
-        text = json.dumps(cfg or {}, ensure_ascii=False, indent=2)
+        text = json.dumps(cfg, ensure_ascii=False, indent=2)
         self._config_path.write_text(text + "\n", encoding="utf-8")
 
     def import_config(self, cfg: dict) -> dict:

@@ -124,6 +124,12 @@ class _Deps:
         self.ragflow_default_chat_name = "chat-default"
 
 
+class _DepsMissingAsrFilterManager(_Deps):
+    def __init__(self):
+        super().__init__()
+        del self.ragflow_chat_manager
+
+
 def _app(deps: _Deps) -> Flask:
     app = Flask(__name__)
     app.register_blueprint(create_blueprint(deps))
@@ -143,6 +149,20 @@ def test_asr_filter_text_required_and_prompt_required():
     body = prompt_empty.get_json()
     assert body["ok"] is False
     assert body["error"] == "prompt_required"
+    assert deps.ragflow_service.calls == []
+
+
+def test_asr_filter_fails_fast_when_chat_manager_missing():
+    deps = _DepsMissingAsrFilterManager()
+    client = _app(deps).test_client()
+
+    resp = client.post("/api/asr/filter", json={"text": "hello", "prompt": "fix {ASR_TEXT}"})
+
+    assert resp.status_code == 500
+    body = resp.get_json()
+    assert body["ok"] is False
+    assert body["error"] == "asr_filter_dependency_missing"
+    assert body["dependency"] == "ragflow_chat_manager"
     assert deps.ragflow_service.calls == []
 
 

@@ -6,11 +6,12 @@
 // - Cache prefetched answers (for UI + seamless stop transition)
 
 import { ragflowChunkManager } from './RagflowChunkManager';
+import { normalizeBaseUrl, requirePositiveNumber } from './tourPipelineUtils';
 
 export class TourPipelineManager {
   constructor(opts) {
     const options = opts && typeof opts === 'object' ? opts : {};
-    this._baseUrl = String(options.baseUrl || '');
+    this._baseUrl = normalizeBaseUrl(options.baseUrl);
     this._getClientId = typeof options.getClientId === 'function' ? options.getClientId : () => '';
     this._getStops = typeof options.getStops === 'function' ? options.getStops : () => [];
     this._getLastAnswerTail = typeof options.getLastAnswerTail === 'function' ? options.getLastAnswerTail : () => '';
@@ -47,6 +48,25 @@ export class TourPipelineManager {
     this._prefetchStore = new Map(); // stopIndex -> { answerText, tail, createdAt, segments }
     this._stopsOverride = null;
     this._currentStopIndex = -1;
+  }
+
+  _url(path) {
+    const p = String(path || '');
+    const normalized = p.startsWith('/') ? p : `/${p}`;
+    return this._baseUrl ? `${this._baseUrl}${normalized}` : normalized;
+  }
+
+  _observeAsyncPrefetch(task, warningPrefix) {
+    try {
+      const result = task();
+      if (result && typeof result.catch === 'function') {
+        result.catch((e) => {
+          this._warn(warningPrefix, e);
+        });
+      }
+    } catch (e) {
+      this._warn(warningPrefix, e);
+    }
   }
 
   isActive() {
@@ -210,8 +230,8 @@ export class TourPipelineManager {
 
     const durs = this._getPerStopDurations() || [];
     const targets = this._getPerStopTargetChars() || [];
-    const fallbackDur = Math.max(1, Number(this._getGuideDuration() || 10) || 10);
-    const dur = Number.isFinite(Number(durs[idx])) && Number(durs[idx]) > 0 ? Number(durs[idx]) : fallbackDur;
+    const guideDuration = requirePositiveNumber(this._getGuideDuration(), 'guide_duration_required');
+    const dur = Number.isFinite(Number(durs[idx])) && Number(durs[idx]) > 0 ? Number(durs[idx]) : guideDuration;
     const targetChars =
       Number.isFinite(Number(targets[idx])) && Number(targets[idx]) > 0
         ? Number(targets[idx])
@@ -294,7 +314,10 @@ export class TourPipelineManager {
 
     const epoch = this._getInterruptEpoch();
     setTimeout(() => {
-      this.prefetchStopTextToQueue({ stopIndex: nextIndex, tail, epoch, enqueueSegment, ensureTtsRunning });
+      this._observeAsyncPrefetch(
+        () => this.prefetchStopTextToQueue({ stopIndex: nextIndex, tail, epoch, enqueueSegment, ensureTtsRunning }),
+        '[PREFETCH] async failed'
+      );
     }, 0);
   }
 
@@ -319,13 +342,17 @@ export class TourPipelineManager {
 
     const epoch = this._getInterruptEpoch();
     setTimeout(() => {
-      this.prefetchStopFromRecordingToQueue({
-        recordingId: rid,
-        stopIndex: nextIndex,
-        epoch,
-        enqueueAudioSegment,
-        ensureTtsRunning,
-      });
+      this._observeAsyncPrefetch(
+        () =>
+          this.prefetchStopFromRecordingToQueue({
+            recordingId: rid,
+            stopIndex: nextIndex,
+            epoch,
+            enqueueAudioSegment,
+            ensureTtsRunning,
+          }),
+        '[PREFETCH_REC] async failed'
+      );
     }, 0);
   }
 
@@ -349,7 +376,10 @@ export class TourPipelineManager {
 
     const epoch = this._getInterruptEpoch();
     setTimeout(() => {
-      this.prefetchStopTextToQueue({ stopIndex: nextIndex, tail, epoch, enqueueSegment, ensureTtsRunning });
+      this._observeAsyncPrefetch(
+        () => this.prefetchStopTextToQueue({ stopIndex: nextIndex, tail, epoch, enqueueSegment, ensureTtsRunning }),
+        '[PREFETCH] async failed'
+      );
     }, 0);
   }
 
@@ -371,13 +401,17 @@ export class TourPipelineManager {
 
     const epoch = this._getInterruptEpoch();
     setTimeout(() => {
-      this.prefetchStopFromRecordingToQueue({
-        recordingId: rid,
-        stopIndex: nextIndex,
-        epoch,
-        enqueueAudioSegment,
-        ensureTtsRunning,
-      });
+      this._observeAsyncPrefetch(
+        () =>
+          this.prefetchStopFromRecordingToQueue({
+            recordingId: rid,
+            stopIndex: nextIndex,
+            epoch,
+            enqueueAudioSegment,
+            ensureTtsRunning,
+          }),
+        '[PREFETCH_REC] async failed'
+      );
     }, 0);
   }
 
@@ -418,7 +452,7 @@ export class TourPipelineManager {
           agent_id: conv.useAgentMode ? conv.selectedAgentId || null : null,
           guide: {
             enabled: !!this._getGuideEnabled(),
-            duration_s: Math.max(1, Number(this._getGuideDuration() || 10) || 10),
+            duration_s: requirePositiveNumber(this._getGuideDuration(), 'guide_duration_required'),
             continuous: true,
             style: String(this._getGuideStyle() || 'friendly'),
             audience_profile: String(this._getAudienceProfile() || ''),
@@ -474,13 +508,25 @@ export class TourPipelineManager {
         const base = cur >= 0 ? cur : idx;
         if (nextIndex <= base + this._maxPrefetchAhead && !this._prefetchStore.has(nextIndex)) {
           setTimeout(() => {
-            this.prefetchStopTextToQueue({ stopIndex: nextIndex, tail: tailOut, epoch, enqueueSegment, ensureTtsRunning, force });
+            this._observeAsyncPrefetch(
+              () =>
+                this.prefetchStopTextToQueue({
+                  stopIndex: nextIndex,
+                  tail: tailOut,
+                  epoch,
+                  enqueueSegment,
+                  ensureTtsRunning,
+                  force,
+                }),
+              '[PREFETCH] async failed'
+            );
           }, 0);
         }
       }
     } catch (e) {
       if (ctl.signal.aborted || String(e && e.name) === 'AbortError') return;
       this._warn('[PREFETCH] failed', e);
+      throw e;
     } finally {
       if (this._prefetchAbort === ctl) this._prefetchAbort = null;
     }
@@ -501,7 +547,7 @@ export class TourPipelineManager {
     const ctl = new AbortController();
     this._prefetchAbort = ctl;
 
-    const url = `${this._baseUrl}/api/recordings/${encodeURIComponent(rid)}/stop/${encodeURIComponent(String(idx))}`;
+    const url = this._url(`/api/recordings/${encodeURIComponent(rid)}/stop/${encodeURIComponent(String(idx))}`);
     this._log('[PREFETCH_REC] start', `stopIndex=${idx}`, `recording=${rid}`);
 
     try {
@@ -535,19 +581,24 @@ export class TourPipelineManager {
         const base = cur >= 0 ? cur : idx;
         if (nextIndex <= base + this._maxPrefetchAhead && !this._prefetchStore.has(nextIndex)) {
           setTimeout(() => {
-            this.prefetchStopFromRecordingToQueue({
-              recordingId: rid,
-              stopIndex: nextIndex,
-              epoch,
-              enqueueAudioSegment,
-              ensureTtsRunning,
-            });
+            this._observeAsyncPrefetch(
+              () =>
+                this.prefetchStopFromRecordingToQueue({
+                  recordingId: rid,
+                  stopIndex: nextIndex,
+                  epoch,
+                  enqueueAudioSegment,
+                  ensureTtsRunning,
+                }),
+              '[PREFETCH_REC] async failed'
+            );
           }, 0);
         }
       }
     } catch (e) {
       if (ctl.signal.aborted || String(e && e.name) === 'AbortError') return;
       this._warn('[PREFETCH_REC] failed', e);
+      throw e;
     } finally {
       if (this._prefetchAbort === ctl) this._prefetchAbort = null;
     }

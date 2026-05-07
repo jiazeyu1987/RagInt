@@ -1,16 +1,34 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { getBreakpoint, setBreakpoint } from '../api/breakpoint';
 
-export function useBreakpointSync({ clientId, kind = 'tour', enabled = true, state, onRestore, debounceMs = 800 } = {}) {
+function errorFromResponse(res, fallback) {
+  const message = String((res && (res.error || res.detail)) || fallback || '').trim();
+  return new Error(message || fallback || 'breakpoint_sync_failed');
+}
+
+export function useBreakpointSync({ clientId, kind = 'tour', enabled = true, state, onRestore, onError, debounceMs = 800 } = {}) {
   const restoredRef = useRef(false);
   const restoreInFlightRef = useRef(false);
   const onRestoreRef = useRef(onRestore);
+  const onErrorRef = useRef(onError);
   const lastSavedRef = useRef('');
   const saveTimerRef = useRef(null);
 
   useEffect(() => {
     onRestoreRef.current = onRestore;
   }, [onRestore]);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
+
+  const reportError = useCallback((phase, error) => {
+    if (typeof onErrorRef.current === 'function') {
+      onErrorRef.current({ phase, error });
+      return;
+    }
+    throw error;
+  }, []);
 
   useEffect(() => {
     if (!enabled) return () => {};
@@ -23,8 +41,8 @@ export function useBreakpointSync({ clientId, kind = 'tour', enabled = true, sta
       try {
         const res = await getBreakpoint({ clientId, kind, signal: ac.signal });
         if (ac.signal.aborted) return;
-        if (!res || typeof res !== 'object') return;
-        if (!res.ok) return;
+        if (!res || typeof res !== 'object') throw new Error('breakpoint_restore_invalid_response');
+        if (!res.ok) throw errorFromResponse(res, 'breakpoint_restore_failed');
         if (res.state && typeof res.state === 'object') {
           restoredRef.current = true;
           lastSavedRef.current = JSON.stringify(res.state);
@@ -32,9 +50,9 @@ export function useBreakpointSync({ clientId, kind = 'tour', enabled = true, sta
         } else {
           restoredRef.current = true;
         }
-      } catch (_) {
+      } catch (error) {
         if (ac.signal.aborted) return;
-        restoredRef.current = true;
+        reportError('restore', error instanceof Error ? error : new Error(String(error || 'breakpoint_restore_failed')));
       } finally {
         restoreInFlightRef.current = false;
       }
@@ -43,7 +61,7 @@ export function useBreakpointSync({ clientId, kind = 'tour', enabled = true, sta
       ac.abort();
       restoreInFlightRef.current = false;
     };
-  }, [clientId, enabled, kind]);
+  }, [clientId, enabled, kind, reportError]);
 
   useEffect(() => {
     if (!enabled) return () => {};
@@ -56,10 +74,12 @@ export function useBreakpointSync({ clientId, kind = 'tour', enabled = true, sta
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
       try {
-        await setBreakpoint({ clientId, kind, state: state && typeof state === 'object' ? state : {} });
+        const res = await setBreakpoint({ clientId, kind, state: state && typeof state === 'object' ? state : {} });
+        if (!res || typeof res !== 'object') throw new Error('breakpoint_save_invalid_response');
+        if (!res.ok) throw errorFromResponse(res, 'breakpoint_save_failed');
         lastSavedRef.current = nextStr;
-      } catch (_) {
-        // ignore
+      } catch (error) {
+        reportError('save', error instanceof Error ? error : new Error(String(error || 'breakpoint_save_failed')));
       }
     }, Math.max(200, Number(debounceMs) || 800));
 
@@ -67,5 +87,5 @@ export function useBreakpointSync({ clientId, kind = 'tour', enabled = true, sta
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     };
-  }, [clientId, debounceMs, enabled, kind, state]);
+  }, [clientId, debounceMs, enabled, kind, reportError, state]);
 }

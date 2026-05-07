@@ -2,6 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { PressToTalkAsrModule } from '../voice/PressToTalkAsrModule';
 import { VOICE_DEBUG, WAKE_HOLD_MS } from '../config/features';
 
+function requireFunction(value, name) {
+  if (typeof value !== 'function') throw new Error(`useVoiceInputManager requires ${name}`);
+}
+
 export function useVoiceInputManager({
   providerType = 'voicekit_ws',
   baseUrl,
@@ -38,6 +42,7 @@ export function useVoiceInputManager({
   submitText,
   isLoading,
 } = {}) {
+  requireFunction(setInputText, 'setInputText');
   const [isRecording, setIsRecording] = useState(false);
   const [isRecognizing, setIsRecognizing] = useState(false);
   const [recognitionStage, setRecognitionStage] = useState('idle');

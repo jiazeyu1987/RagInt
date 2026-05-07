@@ -123,6 +123,36 @@ def test_ragflow_clear_chat_sessions_route():
     assert data["chat_name"] == "exhibit_chat"
 
 
+def test_ragflow_clear_chat_sessions_preserves_structured_chat_not_found_error():
+    class _MissingChatManager:
+        def clear_chat_sessions(self, chat_name: str):
+            return {
+                "ok": False,
+                "deleted": 0,
+                "chat_name": str(chat_name),
+                "session_ids": [],
+                "chat_found": False,
+                "error": "ragflow_chat_not_found",
+            }
+
+    deps = _Deps()
+    deps.ragflow_chat_manager = _MissingChatManager()
+    app = Flask(__name__)
+    app.register_blueprint(create_blueprint(deps))
+
+    resp = app.test_client().post("/api/ragflow/chats/clear_sessions", json={"chat_name": "missing_chat"})
+
+    assert resp.status_code == 500
+    assert resp.get_json() == {
+        "ok": False,
+        "deleted": 0,
+        "chat_name": "missing_chat",
+        "session_ids": [],
+        "chat_found": False,
+        "error": "ragflow_chat_not_found",
+    }
+
+
 def test_ragflow_create_chat_session_route():
     client = _app().test_client()
     resp = client.post("/api/ragflow/chats/new_session", json={"chat_name": "exhibit_chat"})

@@ -49,6 +49,15 @@ describe('TourPipelineManager', () => {
     expect(prompt).toContain('重点说明导丝与导管差异，避免混淆。');
   });
 
+  test('buildTourPrompt rejects missing guide duration instead of using fallback duration', () => {
+    const mgr = createManager({
+      getGuideDuration: () => '',
+      getPerStopDurations: () => [],
+    });
+
+    expect(() => mgr.buildTourPrompt('start', 1)).toThrow('guide_duration_required');
+  });
+
   test('replayPrefetchToQueue replays cached segments in order', () => {
     const mgr = createManager();
     const queued = [];
@@ -192,7 +201,7 @@ describe('TourPipelineManager', () => {
     expect(mgr.isActive()).toBe(true);
   });
 
-  test('prefetchStopTextToQueue does not mark ready when enqueue callback fails', async () => {
+  test('prefetchStopTextToQueue rejects and does not mark ready when enqueue callback fails', async () => {
     const enqueueError = new Error('enqueue unavailable');
     const warn = jest.fn();
     const ragflowChunkManager = {
@@ -210,21 +219,49 @@ describe('TourPipelineManager', () => {
     });
     mgr._active = true;
 
-    await mgr.prefetchStopTextToQueue({
-      stopIndex: 1,
-      tail: '',
-      epoch: 3,
-      enqueueSegment: () => {
-        throw enqueueError;
-      },
-      ensureTtsRunning: jest.fn(),
-    });
+    await expect(
+      mgr.prefetchStopTextToQueue({
+        stopIndex: 1,
+        tail: '',
+        epoch: 3,
+        enqueueSegment: () => {
+          throw enqueueError;
+        },
+        ensureTtsRunning: jest.fn(),
+      })
+    ).rejects.toThrow(enqueueError);
 
     expect(mgr.getPrefetch(1)).toBeNull();
     expect(warn).toHaveBeenCalledWith('[PREFETCH] failed', expect.any(Error));
   });
 
-  test('prefetchStopFromRecordingToQueue does not mark ready when ensure callback fails', async () => {
+  test('maybePrefetchNextStop observes fire-and-forget prefetch rejection', async () => {
+    jest.useFakeTimers();
+    const prefetchError = new Error('prefetch dependency unavailable');
+    const warn = jest.fn();
+    const mgr = createManager({
+      onWarn: warn,
+      getInterruptEpoch: () => 9,
+      isInterruptEpochCurrent: (epoch) => Number(epoch) === 9,
+    });
+    mgr._active = true;
+    mgr.prefetchStopTextToQueue = jest.fn().mockRejectedValue(prefetchError);
+
+    mgr.maybePrefetchNextStop({
+      currentStopIndex: 0,
+      tail: '',
+      enqueueSegment: jest.fn(),
+      ensureTtsRunning: jest.fn(),
+    });
+
+    jest.runOnlyPendingTimers();
+    await Promise.resolve();
+
+    expect(warn).toHaveBeenCalledWith('[PREFETCH] async failed', prefetchError);
+    jest.useRealTimers();
+  });
+
+  test('prefetchStopFromRecordingToQueue rejects and does not mark ready when ensure callback fails', async () => {
     const ensureError = new Error('tts queue unavailable');
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
@@ -243,17 +280,45 @@ describe('TourPipelineManager', () => {
     });
     mgr._active = true;
 
-    await mgr.prefetchStopFromRecordingToQueue({
-      recordingId: 'rec-1',
-      stopIndex: 1,
-      epoch: 4,
-      enqueueAudioSegment: jest.fn(),
-      ensureTtsRunning: () => {
-        throw ensureError;
-      },
-    });
+    await expect(
+      mgr.prefetchStopFromRecordingToQueue({
+        recordingId: 'rec-1',
+        stopIndex: 1,
+        epoch: 4,
+        enqueueAudioSegment: jest.fn(),
+        ensureTtsRunning: () => {
+          throw ensureError;
+        },
+      })
+    ).rejects.toThrow(ensureError);
 
     expect(mgr.getPrefetch(1)).toBeNull();
     expect(warn).toHaveBeenCalledWith('[PREFETCH_REC] failed', expect.any(Error));
+  });
+
+  test('prefetchStopFromRecordingToQueue builds recording URL without double slash fallback', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        answer_text: '录音讲解',
+        tail: '录音讲解',
+        segments: [],
+      }),
+    });
+    const mgr = createManager({
+      baseUrl: 'http://localhost:8101/',
+      getPlaybackRecordingId: () => 'rec-1',
+      getInterruptEpoch: () => 5,
+      isInterruptEpochCurrent: (epoch) => Number(epoch) === 5,
+    });
+    mgr._active = true;
+
+    await mgr.prefetchStopFromRecordingToQueue({
+      recordingId: 'rec-1',
+      stopIndex: 1,
+      epoch: 5,
+    });
+
+    expect(global.fetch.mock.calls[0][0]).toBe('http://localhost:8101/api/recordings/rec-1/stop/1');
   });
 });

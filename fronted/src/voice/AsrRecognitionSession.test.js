@@ -29,4 +29,11 @@ describe('AsrRecognitionSession', () => {
     expect(session.getRecognizedText()).toBe('today weather is nice i will go shopping buy some things');
     expect(session.resolveTimeoutText('')).toBe('today weather is nice i will go shopping buy some things');
   });
+
+  test('rejects external timeout fallback text when no ASR transcript exists', () => {
+    const session = new AsrRecognitionSession();
+    session.reset('base text');
+
+    expect(() => session.resolveTimeoutText('manual fallback')).toThrow('ASR timeout fallback text is not allowed');
+  });
 });

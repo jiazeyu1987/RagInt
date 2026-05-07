@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from backend.config.tts_resolver import resolve_tts_request
 from backend.config.env import env_bool, env_float, env_int
 
 
@@ -26,3 +27,23 @@ def test_env_helpers_reject_explicit_invalid_values(monkeypatch):
         env_float("RAGINT_TEST_FLOAT", 1.5)
     with pytest.raises(ValueError, match="RAGINT_TEST_BOOL"):
         env_bool("RAGINT_TEST_BOOL", False)
+
+
+class _BrokenHeaders:
+    def get(self, key, default=None):  # noqa: ARG002
+        raise RuntimeError("headers_unavailable")
+
+
+class _BrokenRequestData:
+    def get(self, key, default=None):  # noqa: ARG002
+        raise RuntimeError("request_body_unavailable")
+
+
+def test_tts_resolver_exposes_broken_request_data_instead_of_using_config_default():
+    with pytest.raises(RuntimeError, match="request_body_unavailable"):
+        resolve_tts_request({"tts": {"provider": "edge"}}, data=_BrokenRequestData(), headers={})  # type: ignore[arg-type]
+
+
+def test_tts_resolver_exposes_broken_headers_instead_of_using_config_default():
+    with pytest.raises(RuntimeError, match="headers_unavailable"):
+        resolve_tts_request({"tts": {"provider": "edge"}}, data={}, headers=_BrokenHeaders())

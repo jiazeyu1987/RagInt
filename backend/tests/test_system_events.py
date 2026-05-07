@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from backend.api.system_events import build_status_payload, ingest_client_event, parse_client_event, parse_status_request_id
 
 
@@ -104,7 +106,8 @@ def test_ingest_client_event_fails_when_event_store_write_fails():
         data={"name": "play_end", "fields": {"t_client_wall_ms": 1760000000123}},
     )
 
-    assert ingest_client_event(deps=deps, event=event) is False
+    with pytest.raises(RuntimeError, match="event_store_down"):
+        ingest_client_event(deps=deps, event=event)
 
 
 def test_ingest_client_event_fails_when_required_timing_write_fails():
@@ -115,7 +118,8 @@ def test_ingest_client_event_fails_when_required_timing_write_fails():
         data={"name": "play_end", "fields": {"t_client_wall_ms": 1760000000123}},
     )
 
-    assert ingest_client_event(deps=deps, event=event) is False
+    with pytest.raises(RuntimeError, match="timings_down"):
+        ingest_client_event(deps=deps, event=event)
 
 
 def test_parse_status_request_id_from_header_or_query():

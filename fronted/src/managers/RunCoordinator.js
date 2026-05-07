@@ -25,7 +25,7 @@ export class RunCoordinator {
 
   async ask(text, opts) {
     const { askQuestion } = this.deps;
-    if (typeof askQuestion !== 'function') return '';
+    if (typeof askQuestion !== 'function') throw new Error('[RUN] askQuestion dependency missing');
     return askQuestion(text, opts);
   }
 
@@ -46,33 +46,21 @@ export class RunCoordinator {
 
   prepareAsk(trigger) {
     const { ttsEnabledRef, audioContextRef, unlockAudio, beginDebugRun, setInputText } = this.deps;
-    try {
-      if (ttsEnabledRef && ttsEnabledRef.current) {
-        if (audioContextRef && audioContextRef.current) {
-          try {
-            audioContextRef.current.close().catch(() => {});
-          } catch (_) {
-            // ignore
-          }
-          audioContextRef.current = null;
+    if (ttsEnabledRef && ttsEnabledRef.current) {
+      if (audioContextRef && audioContextRef.current) {
+        try {
+          audioContextRef.current.close().catch(() => {});
+        } catch (_) {
+          // ignore
         }
-        if (typeof unlockAudio === 'function') unlockAudio();
+        audioContextRef.current = null;
       }
-    } catch (_) {
-      // ignore
+      if (typeof unlockAudio === 'function') unlockAudio();
     }
 
-    try {
-      if (typeof beginDebugRun === 'function') beginDebugRun(trigger || 'unknown');
-    } catch (_) {
-      // ignore
-    }
+    if (typeof beginDebugRun === 'function') beginDebugRun(trigger || 'unknown');
 
-    try {
-      if (typeof setInputText === 'function') setInputText('');
-    } catch (_) {
-      // ignore
-    }
+    if (typeof setInputText === 'function') setInputText('');
   }
 
   _isActiveRun() {
@@ -235,32 +223,43 @@ export class RunCoordinator {
   }
 
   async startTour() {
-    const c = this._tour();
-    if (c && typeof c.start === 'function') return c.start();
+    return this._requireTourAction('start')();
   }
 
   async continueTour() {
-    const c = this._tour();
-    if (c && typeof c.continue === 'function') return c.continue();
+    return this._requireTourAction('resume')();
   }
 
   async prevTourStop() {
-    const c = this._tour();
-    if (c && typeof c.prevStop === 'function') return c.prevStop();
+    return this._requireTourAction('prev')();
   }
 
   async nextTourStop() {
-    const c = this._tour();
-    if (c && typeof c.nextStop === 'function') return c.nextStop();
+    return this._requireTourAction('next')();
   }
 
   async jumpTourStop(idx) {
-    const c = this._tour();
-    if (c && typeof c.jumpTo === 'function') return c.jumpTo(idx);
+    return this._requireTourAction('jump')(idx);
   }
 
   resetTour() {
+    return this._requireTourAction('restart')();
+  }
+
+  _requireTourAction(action) {
+    const methodByAction = {
+      start: 'start',
+      resume: 'continue',
+      prev: 'prevStop',
+      next: 'nextStop',
+      jump: 'jumpTo',
+      restart: 'reset',
+    };
+    const method = methodByAction[action];
     const c = this._tour();
-    if (c && typeof c.reset === 'function') return c.reset();
+    if (!c || !method || typeof c[method] !== 'function') {
+      throw new Error(`[RUN] tour action missing: ${action}`);
+    }
+    return c[method].bind(c);
   }
 }

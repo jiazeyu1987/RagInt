@@ -356,9 +356,11 @@ class RagflowService:
                     self._last_loaded_revision = revision
                     return self._last_loaded_cfg
 
-            # DB empty: bootstrap from env (and optional legacy file), then persist.
-            file_raw, file_mtime_ns = self._read_file_raw()
             if self._config_store is not None:
+                # DB empty: bootstrap from env, plus legacy file only when explicitly enabled.
+                file_raw = {}
+                if self._legacy_file_bootstrap_enabled():
+                    file_raw, _file_mtime_ns = self._read_file_raw()
                 seed_cfg = self._build_bootstrap_seed(file_raw=file_raw)
                 if seed_cfg:
                     try:
@@ -381,6 +383,7 @@ class RagflowService:
                 self._last_loaded_revision = revision
                 return self._last_loaded_cfg
 
+            file_raw, file_mtime_ns = self._read_file_raw()
             revision = ("file", int(file_mtime_ns))
             if not force and self._last_loaded_cfg is not None and revision == self._last_loaded_revision:
                 return self._last_loaded_cfg
@@ -392,7 +395,9 @@ class RagflowService:
         return self.load_config(force=True)
 
     def save_config(self, cfg: dict) -> dict:
-        data = self._clean_cfg(cfg if isinstance(cfg, dict) else {})
+        if not isinstance(cfg, dict):
+            raise ValueError("RAGFlow config must be a dict")
+        data = self._clean_cfg(cfg)
         if self._config_store is not None:
             self._config_store.upsert(scope_id=self._config_scope_id, config=data)
             return self.load_config(force=True)
@@ -613,9 +618,14 @@ class RagflowService:
 
         chat = find_chat_by_name(self.client, name)
         if not chat:
-            with self._lock:
-                self._sessions.pop(name, None)
-            return {"ok": True, "deleted": 0, "chat_name": name, "session_ids": [], "chat_found": False}
+            return {
+                "ok": False,
+                "deleted": 0,
+                "chat_name": name,
+                "session_ids": [],
+                "chat_found": False,
+                "error": "ragflow_chat_not_found",
+            }
 
         chat_id = getattr(chat, "id", None) if not isinstance(chat, dict) else chat.get("id")
         if not chat_id:

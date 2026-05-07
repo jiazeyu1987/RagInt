@@ -10,16 +10,9 @@ def _s(v: Any, default: str = "") -> str:
 
 
 def _parse_tts_provider(*, app_config: dict, data: dict | None, headers) -> str:
-    provider = None
-    try:
-        provider = (data or {}).get("tts_provider")
-    except Exception:
-        provider = None
+    provider = (data or {}).get("tts_provider")
     if provider is None:
-        try:
-            provider = headers.get("X-TTS-Provider") if headers is not None else None
-        except Exception:
-            provider = None
+        provider = headers.get("X-TTS-Provider") if headers is not None else None
     if provider is None:
         provider = get_nested(app_config or {}, ["tts", "provider"], "modelscope")
     return _s(provider, "modelscope") or "modelscope"
@@ -29,19 +22,10 @@ def _parse_tts_voice_model(*, provider: str, data: dict | None, headers) -> tupl
     provider_norm = _s(provider, "").lower()
     voice = ""
     model = ""
-    try:
-        voice = _s((data or {}).get("tts_voice"), "")
-    except Exception:
-        voice = ""
+    voice = _s((data or {}).get("tts_voice"), "")
     if not voice:
-        try:
-            voice = _s(headers.get("X-TTS-Voice") if headers is not None else "", "")
-        except Exception:
-            voice = ""
-    try:
-        model = _s((data or {}).get("tts_model"), "")
-    except Exception:
-        model = ""
+        voice = _s(headers.get("X-TTS-Voice") if headers is not None else "", "")
+    model = _s((data or {}).get("tts_model"), "")
 
     # Provider-specific preset: "flash" means use cosyvoice-v3-flash with a reasonable default system voice.
     if provider_norm == "flash":
@@ -54,16 +38,9 @@ def _parse_tts_voice_model(*, provider: str, data: dict | None, headers) -> tupl
 
 
 def _parse_tts_speed(*, data: dict | None, headers) -> float | None:
-    raw = None
-    try:
-        raw = (data or {}).get("tts_speed")
-    except Exception:
-        raw = None
+    raw = (data or {}).get("tts_speed")
     if raw is None:
-        try:
-            raw = headers.get("X-TTS-Speed") if headers is not None else None
-        except Exception:
-            raw = None
+        raw = headers.get("X-TTS-Speed") if headers is not None else None
     if raw is None:
         return None
     try:

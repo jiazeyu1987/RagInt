@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import json
 import time
 import zipfile
@@ -340,22 +339,19 @@ def find_ask_context(*, event_store, request_id: str) -> dict:
     stop_id = None
     stop_name = None
     action_type = None
-    with contextlib.suppress(Exception):
-        for e in reversed(event_store.list_events(request_id=request_id, limit=200)):
-            if e.get("name") != "ask_received":
-                continue
-            fields = e.get("fields") if isinstance(e.get("fields"), dict) else {}
-            stop_id = fields.get("stop_id") or fields.get("stop_index")
-            stop_name = fields.get("stop_name")
-            action_type = fields.get("action_type")
-            break
+    for e in reversed(event_store.list_events(request_id=request_id, limit=200)):
+        if e.get("name") != "ask_received":
+            continue
+        fields = e.get("fields") if isinstance(e.get("fields"), dict) else {}
+        stop_id = fields.get("stop_id") or fields.get("stop_index")
+        stop_name = fields.get("stop_name")
+        action_type = fields.get("action_type")
+        break
     return {"stop_id": stop_id, "stop_name": stop_name, "action_type": action_type}
 
 
 def build_health_payload(*, deps, cfg_loader) -> dict:
-    cfg = {}
-    with contextlib.suppress(Exception):
-        cfg = cfg_loader(deps=deps)
+    cfg = cfg_loader(deps=deps)
     key = str(get_nested(cfg, ["asr", "dashscope", "api_key"], "") or "").strip()
     if not key:
         key = str(get_nested(cfg, ["tts", "bailian", "api_key"], "") or "").strip()

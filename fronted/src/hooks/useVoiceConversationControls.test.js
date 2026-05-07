@@ -221,6 +221,109 @@ describe('useVoiceConversationControls', () => {
     hook.unmount();
   });
 
+  test('surfaces missing submit dependency on manual text submit without leaking rejection', async () => {
+    const props = buildHookProps({ inputText: 'manual question', submitUserText: undefined });
+    const hook = renderHook((p) => useVoiceConversationControls(p), props);
+
+    await expect(hook.result().handleTextSubmit({ preventDefault: jest.fn() })).resolves.toEqual(
+      expect.objectContaining({
+        ok: false,
+        kind: 'submit_failed',
+        error: expect.objectContaining({ message: 'submitUserText dependency is required' }),
+      })
+    );
+
+    expect(props.setQueueStatus).toHaveBeenCalledWith('submitUserText dependency is required');
+    hook.unmount();
+  });
+
+  test('surfaces manual text submit failures without leaking rejection', async () => {
+    const props = buildHookProps({
+      inputText: 'manual question',
+      submitUserText: jest.fn().mockRejectedValue(new Error('ask failed')),
+    });
+    const hook = renderHook((p) => useVoiceConversationControls(p), props);
+
+    await expect(hook.result().handleTextSubmit({ preventDefault: jest.fn() })).resolves.toEqual(
+      expect.objectContaining({
+        ok: false,
+        kind: 'submit_failed',
+        error: expect.objectContaining({ message: 'ask failed' }),
+      })
+    );
+
+    expect(props.setQueueStatus).toHaveBeenCalledWith('text submit failed: ask failed');
+    hook.unmount();
+  });
+
+  test('surfaces quick text submit failures without leaking rejection', async () => {
+    const props = buildHookProps({
+      submitUserText: jest.fn().mockRejectedValue(new Error('quick failed')),
+    });
+    const hook = renderHook((p) => useVoiceConversationControls(p), props);
+
+    await expect(hook.result().submitTextAuto('quick question', 'quick')).resolves.toEqual(
+      expect.objectContaining({
+        ok: false,
+        kind: 'submit_failed',
+        error: expect.objectContaining({ message: 'quick failed' }),
+      })
+    );
+
+    expect(props.setQueueStatus).toHaveBeenCalledWith('text submit failed: quick failed');
+    hook.unmount();
+  });
+
+  test('surfaces auto-submit failures instead of swallowing them', async () => {
+    const props = buildHookProps({
+      submitUserText: jest.fn().mockRejectedValue(new Error('submit failed')),
+    });
+    const hook = renderHook((p) => useVoiceConversationControls(p), props);
+
+    await act(async () => {
+      await hook.result().onToggleConversation();
+    });
+
+    await act(async () => {
+      await mockState.latestArgs.onAsrFinalText('failing question');
+    });
+
+    act(() => {
+      jest.advanceTimersByTime(1201);
+    });
+    await hook.flush();
+
+    expect(props.setQueueStatus).toHaveBeenCalledWith('voice conversation submit failed: submit failed');
+    hook.unmount();
+  });
+
+  test('surfaces tour resume failures instead of swallowing them', async () => {
+    const props = buildHookProps({
+      continueTour: jest.fn().mockRejectedValue(new Error('resume failed')),
+    });
+    const hook = renderHook((p) => useVoiceConversationControls(p), props);
+
+    await act(async () => {
+      await hook.result().onToggleConversation();
+    });
+
+    await act(async () => {
+      await mockState.latestArgs.onAsrFinalText('resume question');
+    });
+    act(() => {
+      jest.advanceTimersByTime(1201);
+    });
+    await hook.flush();
+
+    act(() => {
+      jest.advanceTimersByTime(301);
+    });
+    await hook.flush();
+
+    expect(props.setQueueStatus).toHaveBeenCalledWith('voice conversation resume failed: resume failed');
+    hook.unmount();
+  });
+
   test('exposes e2e bridge methods when mock flag is enabled', async () => {
     window.__RAGINT_E2E__ = { enableAsrMock: true };
     const props = buildHookProps();

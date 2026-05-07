@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from backend.api.system_utils import (
+    build_health_payload,
     build_diagnostics_zip,
     build_recent_asr_timeline_report,
     derive_status_metrics,
@@ -171,6 +172,26 @@ def test_find_ask_context_from_recent_events():
     assert got["stop_name"] == "A"
     assert got["stop_id"] == "stop_1"
     assert got["action_type"] == "continue"
+
+
+class _FailingListEvents:
+    def list_events(self, *, request_id: str, limit: int):  # noqa: ARG002
+        raise RuntimeError("system_events_unavailable")
+
+
+def test_find_ask_context_exposes_event_store_failures():
+    with pytest.raises(RuntimeError, match="system_events_unavailable"):
+        find_ask_context(event_store=_FailingListEvents(), request_id="r1")
+
+
+def test_build_health_payload_exposes_config_loader_failures():
+    def cfg_loader(*, deps):  # noqa: ARG001
+        raise RuntimeError("config_damaged")
+
+    deps = SimpleNamespace(session=None)
+
+    with pytest.raises(RuntimeError, match="config_damaged"):
+        build_health_payload(deps=deps, cfg_loader=cfg_loader)
 
 
 def test_build_recent_asr_timeline_report_groups_and_durations():

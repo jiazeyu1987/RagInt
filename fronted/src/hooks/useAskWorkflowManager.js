@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { AskWorkflowManager } from '../managers/AskWorkflowManager';
 
 export function useAskWorkflowManager(deps) {
@@ -27,6 +27,11 @@ export function useAskWorkflowManager(deps) {
     [getAskWorkflow]
   );
 
+  useEffect(() => {
+    return () => {
+      if (askWorkflowRef.current) askWorkflowRef.current.interrupt('hook_unmount');
+    };
+  }, []);
+
   return { getAskWorkflow, interruptCurrentRun, askQuestion };
 }
-

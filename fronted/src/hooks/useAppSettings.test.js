@@ -34,7 +34,7 @@ describe('useAppSettings', () => {
     fetchAppSettings.mockResolvedValueOnce({
       settings: {
         ttsMode: 'online',
-        ttsFetchConcurrency: 9,
+        ttsFetchConcurrency: 8,
         wakeWordEnabled: 'true',
         asrAutoSubmitOnWakeEnabled: false,
         asrAutoResumeAfterAnswerDelayMs: 300,
@@ -52,7 +52,7 @@ describe('useAppSettings', () => {
 
     expect(fetchAppSettings).toHaveBeenCalledWith({ clientId: 'client-1' });
     expect(hook.result().ttsMode).toBe('modelscope');
-    expect(hook.result().ttsFetchConcurrency).toBe(4);
+    expect(hook.result().ttsFetchConcurrency).toBe(8);
     expect(hook.result().wakeWordEnabled).toBe(true);
     expect(hook.result().asrAutoSubmitOnWakeEnabled).toBeUndefined();
     expect(hook.result().asrAutoResumeAfterAnswerDelayMs).toBe(300);
@@ -132,6 +132,62 @@ describe('useAppSettings', () => {
     saveAppSettings.mockResolvedValue({ ok: true });
 
     const hook = renderHook(() => useAppSettings('client-invalid-server-settings'));
+    await waitUntilReady(hook);
+
+    expect(hook.result().settingsError).toEqual(
+      expect.objectContaining({
+        phase: 'load',
+        message: expect.stringContaining('Failed to load application settings'),
+      })
+    );
+    expect(hook.result().settingsError.cause.message).toContain('Invalid persisted application setting');
+    act(() => {
+      jest.advanceTimersByTime(301);
+    });
+    await hook.flush();
+    expect(saveAppSettings).not.toHaveBeenCalled();
+    hook.unmount();
+  });
+
+  test('exposes a load error when server settings contain explicit invalid enum values', async () => {
+    fetchAppSettings.mockResolvedValueOnce({
+      settings: {
+        ttsMode: 'unknown-provider',
+        ttsFetchConcurrency: 3,
+        asrProviderType: 'browser',
+        asrFinalTimeoutStrategy: 'drop_input',
+        asrConversationContextStrategy: 'latest_only',
+        settingsActiveTab: 'missing-tab',
+      },
+    });
+    saveAppSettings.mockResolvedValue({ ok: true });
+
+    const hook = renderHook(() => useAppSettings('client-invalid-server-enums'));
+    await waitUntilReady(hook);
+
+    expect(hook.result().settingsError).toEqual(
+      expect.objectContaining({
+        phase: 'load',
+        message: expect.stringContaining('Failed to load application settings'),
+      })
+    );
+    expect(hook.result().settingsError.cause.message).toContain('Invalid persisted application setting');
+    act(() => {
+      jest.advanceTimersByTime(301);
+    });
+    await hook.flush();
+    expect(saveAppSettings).not.toHaveBeenCalled();
+    hook.unmount();
+  });
+
+  test('exposes a load error when legacy settings contain explicit invalid numeric text', async () => {
+    fetchAppSettings.mockResolvedValueOnce({ settings: {} });
+    saveAppSettings.mockResolvedValue({ ok: true });
+    window.localStorage.setItem('guideDuration', 'abc');
+    window.localStorage.setItem('qaAnswerTargetChars', 'none');
+    window.localStorage.setItem('qaAudioCacheConfidenceThreshold', 'high');
+
+    const hook = renderHook(() => useAppSettings('client-invalid-legacy-numeric-text'));
     await waitUntilReady(hook);
 
     expect(hook.result().settingsError).toEqual(

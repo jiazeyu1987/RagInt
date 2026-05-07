@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import contextlib
-
-
 def apply_qa_requirements(
     question_for_rag: str,
     *,
@@ -39,16 +36,13 @@ def apply_selling_points_topn_hint(
     if not isinstance(guide, dict) or not bool(guide.get("enabled", False)):
         return question_for_rag
     if selling_points_store is None:
-        return question_for_rag
+        raise ValueError("selling_points_store_required")
 
     stop_name = str((guide.get("stop_name") or "")).strip()
     if not stop_name:
-        return question_for_rag
+        raise ValueError("guide_stop_name_required")
 
-    try:
-        duration_s = int(guide.get("duration_s") or 0)
-    except Exception:
-        duration_s = 0
+    duration_s = int(guide.get("duration_s") or 0)
     profile = str((guide.get("audience_profile") or "")).strip()
 
     try:
@@ -57,20 +51,24 @@ def apply_selling_points_topn_hint(
             n += 1
         n = max(1, min(int(n), 8))
     except Exception:
-        n = 3
+        raise
 
     pts = selling_points_store.list(stop_name=stop_name, limit=max(50, n))
     picked = selling_points_store.pick_topn(points=pts, n=n)
 
     if not picked:
-        return question_for_rag
-    lines = [f"- {p.text}" for p in picked if getattr(p, "text", None)]
-    if not lines:
-        return question_for_rag
+        raise ValueError(f"selling_points_required stop_name={stop_name!r}")
+
+    lines: list[str] = []
+    for p in picked:
+        raw_text = getattr(p, "text", None)
+        text = str(raw_text).strip() if raw_text is not None else ""
+        if not text:
+            raise ValueError(f"selling_point_text_required stop_name={stop_name!r}")
+        lines.append(f"- {text}")
 
     if logger is not None:
-        with contextlib.suppress(Exception):
-            logger.info(f"selling_points_injected stop_name={stop_name!r} n={len(lines)}")
+        logger.info(f"selling_points_injected stop_name={stop_name!r} n={len(lines)}")
 
     return f"{question_for_rag}\n\n【本展柜卖点 Top{len(lines)}】\n" + "\n".join(lines) + "\n"
 

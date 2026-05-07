@@ -123,8 +123,8 @@ export class RecordingWorkflowManager {
     return providerType === 'sauc_ws';
   }
 
-  _handleFinalTimeout(partialText) {
-    const partial = this._session.resolveTimeoutText(partialText);
+  _handleFinalTimeout() {
+    const partial = this._session.resolveTimeoutText();
     const strategy = this._getFinalTimeoutStrategy();
 
     this._setLoading(false);
@@ -458,9 +458,13 @@ export class RecordingWorkflowManager {
     let stopTimer = null;
     let timeoutTimer = null;
     try {
-      const p = new Promise((resolve) => {
+      const p = new Promise((resolve, reject) => {
         this._pendingFinalText.push(resolve);
-        timeoutTimer = setTimeout(() => resolve(''), totalMs);
+        timeoutTimer = setTimeout(() => {
+          const idx = this._pendingFinalText.indexOf(resolve);
+          if (idx >= 0) this._pendingFinalText.splice(idx, 1);
+          reject(new Error('record_once_timeout'));
+        }, totalMs);
       });
 
       const started = await this.start();
