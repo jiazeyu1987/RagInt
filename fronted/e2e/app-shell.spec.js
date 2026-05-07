@@ -265,10 +265,10 @@ test('app shell loads and shows input controls', async ({ page }) => {
 
 test('asr tab renders silence timing and auto resume controls', async ({ page }) => {
   await page.goto('/ragint/');
-  await page.getByRole('tab', { name: /ASR/i }).click();
+  await page.getByRole('tab', { name: '语音识别设置' }).click();
 
   const panel = page.locator('.settings-tab-panel');
-  await expect(panel).toContainText('静音判定时长(ms)');
+  await expect(panel).toContainText('静音判定时长（毫秒）');
   await expect(panel).not.toContainText('语音结束后自动发送问题');
   await expect(panel).not.toContainText('自动发送范围');
 
@@ -295,7 +295,8 @@ test('ragint subpath entry opens simple mode and can return to product explainer
 
   await page.getByRole('button', { name: '返回产品讲解' }).click();
   await expect(page.locator('.pad-shell')).toBeVisible();
-  await expect(page.getByTestId('hall-name')).toContainText('心内介植入展厅');
+  await expect(page.getByTestId('demo-item-list')).toBeVisible();
+  await expect(page.getByTestId('demo-item-product_001')).toContainText('产品甲');
 
   const clientIdAfter = await page.evaluate(() => window.localStorage.getItem('clientId') || '');
   expect(clientIdAfter).toBe(clientIdBefore);

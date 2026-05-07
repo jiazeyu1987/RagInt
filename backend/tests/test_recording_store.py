@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import sqlite3
 import time
 import uuid
 import wave
@@ -88,6 +89,52 @@ def test_create_rejects_blank_stops_and_non_object_metadata(work_dir: Path):
 
     with pytest.raises(ValueError, match="metadata_invalid"):
         store.create(recording_id="rec_bad_metadata", stops=["Stop A"], metadata="not-object")  # type: ignore[arg-type]
+
+
+def test_schema_migration_backfills_missing_metadata_json_for_legacy_recordings(work_dir: Path):
+    root = work_dir / "recordings"
+    root.mkdir(parents=True, exist_ok=True)
+    db_path = root / "recordings.db"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            """
+            CREATE TABLE recordings (
+                recording_id TEXT PRIMARY KEY,
+                created_at_ms INTEGER NOT NULL,
+                finished_at_ms INTEGER,
+                stops_json TEXT NOT NULL,
+                display_name TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO recordings (recording_id, created_at_ms, finished_at_ms, stops_json, display_name)
+            VALUES (?, ?, NULL, ?, NULL)
+            """,
+            ("rec_legacy", 123, '["Stop A"]'),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    store = _store(work_dir)
+
+    listed = store.list(limit=10)
+    assert listed == [
+        {
+            "recording_id": "rec_legacy",
+            "created_at_ms": 123,
+            "finished_at_ms": None,
+            "display_name": None,
+            "metadata": {},
+            "stop_count": 1,
+        }
+    ]
+    rec = store.get("rec_legacy")
+    assert rec is not None
+    assert rec["metadata"] == {}
 
 
 def test_create_existing_recording_id_clears_stale_events_and_audio(work_dir: Path):

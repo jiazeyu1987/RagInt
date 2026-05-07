@@ -2243,6 +2243,9 @@ function renderStationVisualPanelV4() {
 
 function renderDemoShellV4(hallName, productCount, snapshotBadge) {
   const fullscreen = appSelectors.getFullscreenSceneViewModel();
+  if (!fullscreen.hasScene) {
+    return renderDemoShell(hallName, productCount, snapshotBadge);
+  }
   return (
     '<main class="pad-shell pad-shell--demo pad-shell--demo-fullscreen">' +
     '<section class="pad-demo-workspace pad-demo-workspace--full">' +

@@ -68,6 +68,7 @@ class RecordingStore:
                     conn.execute("ALTER TABLE recordings ADD COLUMN display_name TEXT;")
                 if "metadata_json" not in cols:
                     conn.execute("ALTER TABLE recordings ADD COLUMN metadata_json TEXT;")
+                conn.execute("UPDATE recordings SET metadata_json='{}' WHERE metadata_json IS NULL;")
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS recording_ask_events (
